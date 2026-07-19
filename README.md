@@ -1,12 +1,12 @@
 # NativeFrame UI
 
-NativeFrame UI is a planned pure Win32 C++ static UI framework for native Windows desktop applications. The project is currently in the documentation and architecture-baseline stage: there is no source tree, build system, sample application, or test suite yet.
+NativeFrame UI is a pure Win32 C++20 static UI framework for native Windows desktop applications. The repository contains the CMake build, static library, Workbench sample, automated smoke test, resource templates, and Phase 1-8 engineering baseline.
 
 The goal is to provide a lightweight framework around native `HWND`, Windows resources, Common Controls, command routing, DPI, layout, theme, and persistence while avoiding dependencies on MFC, ATL/WTL, BCGControlBar Pro, or BCG-compatible APIs.
 
 ## Current Status
 
-This repository currently contains the project plan and architecture baseline only. Implementation work should start after the V1 baseline and feasibility spike are reviewed.
+The engineering baseline is implemented and validated in Debug and Release. The repository now also includes a product-growth sample portfolio: `NativeFrameUIShowcase`, `NativeFrameUIDarkStudio`, `NativeFrameUISettingsDemo`, and `NativeFrameUIResourceGallery`.
 
 ## V1 Baseline
 
@@ -48,6 +48,23 @@ V1 explicitly does not include Ribbon, full docking, a visual designer, complete
 - [Architecture](docs/ARCHITECTURE.md)
 - [Feasibility](docs/FEASIBILITY.md)
 - [Roadmap](docs/ROADMAP.md)
+- [Product Growth Roadmap](docs/PRODUCT_GROWTH_ROADMAP.md)
+- [Validation Matrix](docs/VALIDATION_MATRIX.md)
+- [Showcase Guide](docs/SHOWCASE_GUIDE.md)
+- [Demo Matrix](docs/DEMO_MATRIX.md)
+- [Integration Guide](docs/INTEGRATION.md)
+- [Resource Guide](docs/RESOURCE_GUIDE.md)
+- [Theme Guide](docs/THEME_GUIDE.md)
+- [Workbench Walkthrough](docs/WORKBENCH_WALKTHROUGH.md)
+- [DarkStudio Walkthrough](docs/DARK_STUDIO_WALKTHROUGH.md)
+- [SettingsDemo Walkthrough](docs/SETTINGS_DEMO_WALKTHROUGH.md)
+- [ResourceGallery Walkthrough](docs/RESOURCE_GALLERY_WALKTHROUGH.md)
+- [Known Limitations](docs/KNOWN_LIMITATIONS.md)
+- [Contributing](docs/CONTRIBUTING.md)
+- [Security](docs/SECURITY.md)
+- [Support](docs/SUPPORT.md)
+- [Governance](docs/GOVERNANCE.md)
+- [Release Checklist](docs/RELEASE_CHECKLIST.md)
 - [Original planning sources](docs/source/)
 - [Agent guide](AGENTS.md)
 
@@ -80,13 +97,45 @@ Generated Visual Studio `.sln` and `.vcxproj` files should not become hand-maint
 
 ## Build
 
-There is no build command yet. After the CMake skeleton is created, the expected validation path should be documented here, for example:
+Configure, build, and test with CMake Presets:
 
 ```powershell
 cmake --preset x64-debug
 cmake --build --preset x64-debug
 ctest --preset x64-debug
 ```
+
+Use `x64-release` for Release validation:
+
+```powershell
+cmake --preset x64-release
+cmake --build --preset x64-release
+ctest --preset x64-release
+```
+
+The current smoke test validates the initial CMake/static-library path, Per-Monitor DPI V2 and Common Controls initialization, explicit framework resources, diagnostics result types, explicit `HWND` ownership wrappers, safe window `GWLP_USERDATA` binding and `WM_NCDESTROY` cleanup, string resource loading, modeless dialog creation, command routing, `WM_COMMAND`/`WM_NOTIFY` dispatch hooks, basic control wrapper creation, native `HWND` access, and basic USER/GDI resource-count stability.
+
+`NativeFrameUISmokeTest.exe` is an automated console/CTest executable and exits immediately on success. It now also verifies that Showcase and focused-demo targets are emitted by the generated build artifacts. Use the visible sample executables for manual visual validation.
+
+Phase 6 baseline coverage includes pure DPI conversion helpers, splitter and horizontal layout calculations, light/dark/high-contrast theme token selection, and validated workbench state persistence round-tripping.
+
+See [Validation Matrix](docs/VALIDATION_MATRIX.md) for automated and manual compatibility checks.
+
+## Quick Evaluation Path
+
+1. Configure, build, and run `ctest` with the commands above.
+2. Launch the visual samples from `out\build\x64-debug\Debug\` or `out\build\x64-release\Release\`.
+3. Use the walkthroughs and matrix docs to decide whether you need the integration-focused Workbench or one of the product-growth demos.
+
+| Executable | Purpose | Key evidence |
+| --- | --- | --- |
+| `NativeFrameUIWorkbench.exe` | Integration baseline for menus, splitters, controls, status, and command routing | [Workbench Walkthrough](docs/WORKBENCH_WALKTHROUGH.md) |
+| `NativeFrameUIShowcase.exe` | Modern dashboard shell with light/dark toggle and DPI-aware painting | [Showcase Guide](docs/SHOWCASE_GUIDE.md) |
+| `NativeFrameUIDarkStudio.exe` | Dark navigation shell with preview canvas and native status bar | [DarkStudio Walkthrough](docs/DARK_STUDIO_WALKTHROUGH.md) |
+| `NativeFrameUISettingsDemo.exe` | Category navigation with native edit/combo/check inputs and save-state feedback | [SettingsDemo Walkthrough](docs/SETTINGS_DEMO_WALKTHROUGH.md) |
+| `NativeFrameUIResourceGallery.exe` | Explicit string/menu/dialog/icon/bitmap resource loading gallery | [ResourceGallery Walkthrough](docs/RESOURCE_GALLERY_WALKTHROUGH.md) |
+
+Showcase and demo visuals are sample-local evaluation surfaces. Stable framework guarantees remain the documented `nfui` APIs: application startup, HWND-oriented windows and controls, commands, layout, DPI helpers, persistence, and explicit resource handling.
 
 ## License
 

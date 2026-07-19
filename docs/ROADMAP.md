@@ -69,3 +69,13 @@
 - Floating Pane
 - Advanced layout restoration
 - Ribbon feasibility review
+
+## Product Growth Roadmap
+
+The post-baseline product and community plan is defined in [PRODUCT_GROWTH_ROADMAP.md](PRODUCT_GROWTH_ROADMAP.md):
+
+- **Phase 9:** Product credibility and community foundation.
+- **Phase 10:** Showcase visual system and modern Workbench presentation.
+- **Phase 11:** Focused demo portfolio and adoption examples.
+
+Execution is sequential: Phase 9 repository trust and CI, Phase 10 visual showcase, then Phase 11 demo portfolio and adoption.

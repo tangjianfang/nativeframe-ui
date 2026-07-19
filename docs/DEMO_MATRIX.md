@@ -1,0 +1,9 @@
+# NativeFrame UI Demo Matrix
+
+| Executable | Source | Purpose | Relevant APIs | Visual expectation | Known limitation |
+| --- | --- | --- | --- | --- | --- |
+| `NativeFrameUIShowcase.exe` | `samples/NativeFrameUIShowcase/` | Product-level dashboard shell for screenshots and theme comparison | `nfui::Application`, `nfui::Window`, `nfui::DpiScale`, `nfui::theme_tokens` | Sidebar, cards, badges, inspector, light/dark toggle | Showcase visuals are sample-local, not stable framework API |
+| `NativeFrameUIDarkStudio.exe` | `samples/NativeFrameUIDarkStudio/` | Dark navigation shell with preview-heavy center canvas | `nfui::Application`, `nfui::Window`, `nfui::StatusBar`, `nfui::DpiScale` | Dark chrome, left navigation, preview canvas, native status bar | Keyboard navigation is intentionally minimal in the first sample cut |
+| `NativeFrameUISettingsDemo.exe` | `samples/NativeFrameUISettingsDemo/` | Native settings forms with category navigation and visible save-state feedback | `nfui::ListBox`, `nfui::Edit`, `nfui::ComboBox`, `nfui::CheckBox`, `nfui::Button`, `nfui::StatusBar` | Light shell, category list, saved-state label, native inputs | Validation is workflow-oriented, not full preferences persistence |
+| `NativeFrameUIResourceGallery.exe` | `samples/NativeFrameUIResourceGallery/` | Explicit resource-loading walkthrough for strings, menus, dialogs, icons, and bitmaps | `nfui::ResourceContext`, raw Win32 resource APIs, `nfui::StatusBar` | Resource summary, bitmap/icon preview, resource menu, dialog launch button | Uses the shared framework resource file; no sample-specific assets yet |
+| `NativeFrameUIWorkbench.exe` | `samples/NativeFrameUIWorkbench/` | Integration and acceptance baseline for core framework behaviors | Menus, commands, controls, splitters, persistence, theme tokens | Workbench panes, status bar, context menu, tabs, list workspace | Less polished than the showcase-oriented demos by design |
