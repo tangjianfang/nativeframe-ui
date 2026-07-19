@@ -9,6 +9,12 @@ This repository is currently in a planning and architecture-baseline state. Ther
 - [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md): architecture baseline, dependency rules, resource strategy, and review questions.
 - [docs/FEASIBILITY.md](docs/FEASIBILITY.md): feasibility analysis, BCGControlBar Pro boundary, and technical risks.
 - [docs/ROADMAP.md](docs/ROADMAP.md): version roadmap from `v0.1` through post-V1 work.
+- [docs/VALIDATION_MATRIX.md](docs/VALIDATION_MATRIX.md): automated and manual validation matrix.
+- [docs/INTEGRATION.md](docs/INTEGRATION.md): CMake integration, initialization, and native handle guidance.
+- [docs/RESOURCE_GUIDE.md](docs/RESOURCE_GUIDE.md): explicit resource integration and resource ID rules.
+- [docs/THEME_GUIDE.md](docs/THEME_GUIDE.md): current theme token guidance.
+- [docs/WORKBENCH_WALKTHROUGH.md](docs/WORKBENCH_WALKTHROUGH.md): manual visual sample walkthrough.
+- [docs/KNOWN_LIMITATIONS.md](docs/KNOWN_LIMITATIONS.md): current limitations and deferred features.
 - [docs/source/](docs/source/): original long-form planning sources retained for traceability.
 
 Link to these documents instead of duplicating their full content in new instructions or plans.
@@ -181,12 +187,24 @@ Generated Visual Studio `.sln` and `.vcxproj` files should not become hand-maint
 
 ## Current Validation State
 
-No executable build or test command exists in this repository yet. If a workspace task such as `dotnet build` appears, do not assume it applies to this C++ Win32 project unless matching .NET project files are present.
+The initial CMake skeleton, static library, workbench sample, explicit framework resources, and smoke test exist. The smoke test verifies Per-Monitor DPI V2 initialization, Common Controls initialization, explicit Dialog/Menu/Toolbar/String/Icon/Bitmap resource loading, diagnostics result types, explicit `HWND` ownership wrappers, safe window `GWLP_USERDATA` binding and `WM_NCDESTROY` cleanup, string resource loading, modeless dialog creation, command routing, `WM_COMMAND`/`WM_NOTIFY` dispatch hooks, basic control wrapper creation, native `HWND` access, and a basic hidden-window create/destroy resource-count check.
 
-After the CMake skeleton exists, expected validation commands should be documented here, for example:
+`NativeFrameUISmokeTest.exe` is an automated console/CTest executable and exits immediately on success. Use `NativeFrameUIWorkbench.exe` for manual visual validation; it opens a visible workbench window with menu commands, left tree/search pane, center tab/list workspace, right inspector pane, splitters, progress bar, context menu, and status bar.
+
+Phase 6 baseline coverage includes pure DPI conversion helpers, splitter and horizontal layout calculations, light/dark/high-contrast theme token selection, and validated workbench state persistence round-tripping.
+
+Configure, build, and test with CMake Presets:
 
 ```powershell
 cmake --preset x64-debug
 cmake --build --preset x64-debug
 ctest --preset x64-debug
+```
+
+Use `x64-release` for Release validation:
+
+```powershell
+cmake --preset x64-release
+cmake --build --preset x64-release
+ctest --preset x64-release
 ```
