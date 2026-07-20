@@ -8,6 +8,8 @@
 
 namespace {
 
+enum class FontWeight { regular, semibold };
+
 struct ShowcasePalette {
     nfui::Color window;
     nfui::Color sidebar;
@@ -99,6 +101,14 @@ constexpr std::array<std::wstring_view, 3> inspector_values{
     return inset;
 }
 
+[[nodiscard]] HFONT fetch_font(nfui::FontCache& fonts,
+                               int dpi,
+                               FontWeight weight,
+                               int point_size) noexcept {
+    return weight == FontWeight::semibold ? fonts.semibold(dpi, point_size)
+                                          : fonts.regular(dpi, point_size);
+}
+
 [[nodiscard]] ShowcasePalette palette_for(nfui::ThemeMode mode) noexcept {
     const nfui::ThemePalette p = nfui::theme_palette(mode);
     const bool dark = mode == nfui::ThemeMode::dark;
@@ -106,7 +116,7 @@ constexpr std::array<std::wstring_view, 3> inspector_values{
     ShowcasePalette palette{};
     palette.window = p.background;
     palette.sidebar = dark ? nfui::darken(p.background, 0.22f)
-                           : nfui::lighten(p.background, 0.04f);
+                           : nfui::alpha_blend(p.border, p.background, 0.08f);
     palette.command_bar = dark ? nfui::darken(p.background, 0.24f)
                                : nfui::alpha_blend(p.border, p.background, 0.06f);
     palette.surface = p.surface;
@@ -114,7 +124,7 @@ constexpr std::array<std::wstring_view, 3> inspector_values{
                                : nfui::alpha_blend(p.border, p.background, 0.10f);
     palette.border = p.border;
     palette.accent = p.accent;
-    palette.accent_soft = nfui::alpha_blend(p.accent, p.background, dark ? 0.70f : 0.78f);
+    palette.accent_soft = nfui::alpha_blend(p.background, p.accent, dark ? 0.70f : 0.78f);
     palette.text = p.text;
     palette.muted_text = p.text_secondary;
     palette.success = p.success;
@@ -122,18 +132,23 @@ constexpr std::array<std::wstring_view, 3> inspector_values{
     return palette;
 }
 
-void fill_rect_color(HDC hdc, const RECT& rect, nfui::Color color) {
-    HBRUSH brush = CreateSolidBrush(color.rgb);
-    FillRect(hdc, &rect, brush);
-    DeleteObject(brush);
+void fill_rect_color(HDC hdc, const RECT& rect, nfui::Color color) noexcept {
+    if (HBRUSH brush = CreateSolidBrush(color.rgb)) {
+        FillRect(hdc, &rect, brush);
+        DeleteObject(brush);
+    }
 }
 
 void draw_text_block(HDC hdc,
                      const RECT& rect,
                      std::wstring_view text,
+                     nfui::FontCache& fonts,
+                     int dpi,
+                     FontWeight weight,
+                     int point_size,
                      nfui::Color color,
-                     HFONT font,
-                     UINT format) {
+                     UINT format) noexcept {
+    const HFONT font = fetch_font(fonts, dpi, weight, point_size);
     nfui::draw_text(hdc, rect, text, font, color, format);
 }
 
@@ -295,7 +310,7 @@ bool ShowcaseView::clear_hover() noexcept {
     return true;
 }
 
-void ShowcaseView::paint(HDC hdc, nfui::FontCache& fonts) const {
+void ShowcaseView::paint(HDC hdc, nfui::FontCache& fonts) const noexcept {
     const ShowcasePalette palette = palette_for(theme_mode_);
     const ShowcaseLayout layout = build_layout(client_rect_, dpi_scale_);
     const int radius = dpi_scale_.logical_to_pixels(9);
@@ -309,12 +324,6 @@ void ShowcaseView::paint(HDC hdc, nfui::FontCache& fonts) const {
     fill_rect_color(hdc, layout.divider_left, palette.border);
     fill_rect_color(hdc, layout.divider_right, palette.border);
 
-    HFONT title_font = fonts.semibold(dpi(), 21);
-    HFONT section_font = fonts.semibold(dpi(), 14);
-    HFONT body_font = fonts.regular(dpi(), 11);
-    HFONT metric_font = fonts.semibold(dpi(), 20);
-    HFONT badge_font = fonts.semibold(dpi(), 10);
-
     const RECT brand_rect = make_rect(layout.sidebar.left + gap,
                                       layout.sidebar.top + gap,
                                       rect_width(layout.sidebar) - gap * 2,
@@ -322,8 +331,11 @@ void ShowcaseView::paint(HDC hdc, nfui::FontCache& fonts) const {
     draw_text_block(hdc,
                     brand_rect,
                     L"NativeFrame UI",
+                    fonts,
+                    dpi(),
+                    FontWeight::semibold,
+                    21,
                     palette.text,
-                    title_font,
                     DT_LEFT | DT_TOP | DT_SINGLELINE | DT_NOPREFIX);
 
     RECT tagline_rect = brand_rect;
@@ -331,8 +343,11 @@ void ShowcaseView::paint(HDC hdc, nfui::FontCache& fonts) const {
     draw_text_block(hdc,
                     tagline_rect,
                     L"Modern Win32 showcase with stable HWND-centered boundaries.",
+                    fonts,
+                    dpi(),
+                    FontWeight::regular,
+                    11,
                     palette.muted_text,
-                    body_font,
                     DT_LEFT | DT_TOP | DT_WORDBREAK | DT_NOPREFIX);
 
     for (std::size_t index = 0; index < layout.navigation.size(); ++index) {
@@ -347,8 +362,11 @@ void ShowcaseView::paint(HDC hdc, nfui::FontCache& fonts) const {
         draw_text_block(hdc,
                         label_rect,
                         navigation_labels[index],
+                        fonts,
+                        dpi(),
+                        FontWeight::semibold,
+                        14,
                         selected ? palette.text : palette.muted_text,
-                        section_font,
                         DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX);
     }
 
@@ -356,15 +374,21 @@ void ShowcaseView::paint(HDC hdc, nfui::FontCache& fonts) const {
     draw_text_block(hdc,
                     command_title,
                     L"Product Growth Showcase",
+                    fonts,
+                    dpi(),
+                    FontWeight::semibold,
+                    14,
                     palette.text,
-                    section_font,
                     DT_LEFT | DT_TOP | DT_SINGLELINE | DT_NOPREFIX);
     command_title.top += dpi_scale_.logical_to_pixels(34);
     draw_text_block(hdc,
                     command_title,
                     L"Focused on evaluation-ready light and dark shells, explicit resources, and DPI-aware composition.",
+                    fonts,
+                    dpi(),
+                    FontWeight::regular,
+                    11,
                     palette.muted_text,
-                    body_font,
                     DT_LEFT | DT_WORDBREAK | DT_NOPREFIX);
 
     nfui::fill_rounded_rect(hdc, layout.theme_toggle, small_radius, palette.surface, palette.border);
@@ -374,14 +398,17 @@ void ShowcaseView::paint(HDC hdc, nfui::FontCache& fonts) const {
     draw_text_block(hdc,
                     toggle_label,
                     toggle_text,
+                    fonts,
+                    dpi(),
+                    FontWeight::semibold,
+                    10,
                     palette.text,
-                    badge_font,
                     DT_CENTER | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX);
 
     for (std::size_t index = 0; index < layout.cards.size(); ++index) {
         const bool hovered = hovered_card_ == static_cast<int>(index);
         const nfui::Color fill = hovered
-                                     ? nfui::alpha_blend(palette.accent, palette.surface, 0.22f)
+                                     ? nfui::alpha_blend(palette.surface, palette.accent, 0.22f)
                                      : palette.surface;
         const nfui::Color border = hovered ? palette.accent : palette.border;
         nfui::fill_rounded_rect(hdc, layout.cards[index], radius, fill, border);
@@ -390,16 +417,22 @@ void ShowcaseView::paint(HDC hdc, nfui::FontCache& fonts) const {
         draw_text_block(hdc,
                         card_text,
                         card_titles[index],
+                        fonts,
+                        dpi(),
+                        FontWeight::regular,
+                        11,
                         palette.muted_text,
-                        body_font,
                         DT_LEFT | DT_TOP | DT_SINGLELINE | DT_NOPREFIX);
 
         card_text.top += dpi_scale_.logical_to_pixels(28);
         draw_text_block(hdc,
                         card_text,
                         card_values[index],
+                        fonts,
+                        dpi(),
+                        FontWeight::semibold,
+                        20,
                         palette.text,
-                        metric_font,
                         DT_LEFT | DT_TOP | DT_SINGLELINE | DT_NOPREFIX);
 
         RECT badge_rect = make_rect(layout.cards[index].left + gap,
@@ -407,18 +440,21 @@ void ShowcaseView::paint(HDC hdc, nfui::FontCache& fonts) const {
                                     dpi_scale_.logical_to_pixels(130),
                                     dpi_scale_.logical_to_pixels(30));
         const nfui::Color badge_fill = index == 1
-                                           ? nfui::alpha_blend(palette.success, palette.window, 0.72f)
+                                           ? nfui::alpha_blend(palette.window, palette.success, 0.72f)
                                            : (index == 2
-                                                  ? nfui::alpha_blend(palette.warning, palette.window, 0.78f)
-                                                  : nfui::alpha_blend(palette.accent, palette.window, 0.82f));
+                                                  ? nfui::alpha_blend(palette.window, palette.warning, 0.78f)
+                                                  : nfui::alpha_blend(palette.window, palette.accent, 0.82f));
         const nfui::Color badge_border = index == 1 ? palette.success : (index == 2 ? palette.warning : palette.accent);
         nfui::fill_rounded_rect(hdc, badge_rect, small_radius, badge_fill, badge_border);
         RECT badge_text = inset_rect(badge_rect, dpi_scale_.logical_to_pixels(8));
         draw_text_block(hdc,
                         badge_text,
                         card_badges[index],
+                        fonts,
+                        dpi(),
+                        FontWeight::semibold,
+                        10,
                         palette.text,
-                        badge_font,
                         DT_CENTER | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX);
     }
 
@@ -431,8 +467,11 @@ void ShowcaseView::paint(HDC hdc, nfui::FontCache& fonts) const {
     draw_text_block(hdc,
                     note_text,
                     L"Showcase-only visuals: card styling, badges, command-bar treatment, and inspector composition live entirely in samples/NativeFrameUIShowcase. Stable framework guarantees remain HWND access, DPI helpers, resources, controls, and command routing.",
+                    fonts,
+                    dpi(),
+                    FontWeight::regular,
+                    11,
                     palette.text,
-                    body_font,
                     DT_LEFT | DT_WORDBREAK | DT_NOPREFIX);
 
     RECT inspector_header = make_rect(layout.inspector.left + gap,
@@ -442,15 +481,21 @@ void ShowcaseView::paint(HDC hdc, nfui::FontCache& fonts) const {
     draw_text_block(hdc,
                     inspector_header,
                     L"Inspector",
+                    fonts,
+                    dpi(),
+                    FontWeight::semibold,
+                    14,
                     palette.text,
-                    section_font,
                     DT_LEFT | DT_TOP | DT_SINGLELINE | DT_NOPREFIX);
     inspector_header.top += dpi_scale_.logical_to_pixels(30);
     draw_text_block(hdc,
                     inspector_header,
                     L"Readable implementation notes for reviewers and release screenshots.",
+                    fonts,
+                    dpi(),
+                    FontWeight::regular,
+                    11,
                     palette.muted_text,
-                    body_font,
                     DT_LEFT | DT_WORDBREAK | DT_NOPREFIX);
 
     for (std::size_t index = 0; index < layout.inspector_rows.size(); ++index) {
@@ -459,15 +504,21 @@ void ShowcaseView::paint(HDC hdc, nfui::FontCache& fonts) const {
         draw_text_block(hdc,
                         row_text,
                         inspector_labels[index],
+                        fonts,
+                        dpi(),
+                        FontWeight::semibold,
+                        10,
                         palette.muted_text,
-                        badge_font,
                         DT_LEFT | DT_TOP | DT_SINGLELINE | DT_NOPREFIX);
         row_text.top += dpi_scale_.logical_to_pixels(24);
         draw_text_block(hdc,
                         row_text,
                         inspector_values[index],
+                        fonts,
+                        dpi(),
+                        FontWeight::regular,
+                        11,
                         palette.text,
-                        body_font,
                         DT_LEFT | DT_WORDBREAK | DT_NOPREFIX);
     }
 }

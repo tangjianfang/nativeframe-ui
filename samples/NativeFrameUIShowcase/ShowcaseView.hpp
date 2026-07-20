@@ -24,7 +24,7 @@ public:
     [[nodiscard]] bool on_left_button_down(POINT point) noexcept;
     [[nodiscard]] bool clear_hover() noexcept;
 
-    void paint(HDC hdc, nfui::FontCache& fonts) const;
+    void paint(HDC hdc, nfui::FontCache& fonts) const noexcept;
 
 private:
     nfui::ThemeMode theme_mode_{nfui::ThemeMode::light};

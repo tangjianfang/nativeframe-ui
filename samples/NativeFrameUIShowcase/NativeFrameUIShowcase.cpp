@@ -158,7 +158,7 @@ private:
         RECT client{};
         GetClientRect(hwnd(), &client);
         view_.set_client_rect(client);
-        view_.set_dpi(GetDpiForWindow(hwnd()));
+        view_.set_dpi(nfui::dpi_of(hwnd()));
     }
 
     HINSTANCE instance_{};
