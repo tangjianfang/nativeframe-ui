@@ -465,12 +465,11 @@ int wmain() {
     {
         const nfui::ThemePalette light = nfui::theme_palette(nfui::ThemeMode::light);
         const nfui::ThemePalette dark  = nfui::theme_palette(nfui::ThemeMode::dark);
-        if (light.background.rgb == light.surface.rgb) return 31;
-        if (dark.background.rgb == dark.text.rgb) return 32;
-        if (light.accent.rgb == light.accent_hover.rgb) return 33;
-        // back-compat: tokens still derivable
+        ok = expect(light.background.rgb != light.surface.rgb, L"light background differs from surface") && ok;
+        ok = expect(dark.background.rgb != dark.text.rgb, L"dark background differs from text") && ok;
+        ok = expect(light.accent.rgb != light.accent_hover.rgb, L"light accent differs from accent hover") && ok;
         const nfui::ThemeTokens t = nfui::theme_tokens(nfui::ThemeMode::dark);
-        if (t.window_background != dark.background.rgb) return 34;
+        ok = expect(t.window_background == dark.background.rgb, L"theme_tokens derives window_background from palette") && ok;
     }
 
     return ok ? 0 : 1;
