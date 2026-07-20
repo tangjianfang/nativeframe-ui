@@ -18,43 +18,12 @@ constexpr int id_status_label = 108;
 constexpr int id_description = 109;
 constexpr int id_status_bar = 110;
 
-[[nodiscard]] COLORREF blend(COLORREF from, COLORREF to, int percent_to) noexcept {
-    percent_to = std::clamp(percent_to, 0, 100);
-    const int percent_from = 100 - percent_to;
-    return RGB(
-        (GetRValue(from) * percent_from + GetRValue(to) * percent_to) / 100,
-        (GetGValue(from) * percent_from + GetGValue(to) * percent_to) / 100,
-        (GetBValue(from) * percent_from + GetBValue(to) * percent_to) / 100);
-}
-
-void fill_rect_color(HDC hdc, const RECT& rect, COLORREF color) {
-    HBRUSH brush = CreateSolidBrush(color);
-    FillRect(hdc, &rect, brush);
-    DeleteObject(brush);
-}
-
-[[nodiscard]] HFONT create_font(const nfui::DpiScale& dpi, int logical_height, int weight) {
-    return CreateFontW(dpi.scale_font_height(logical_height),
-                       0,
-                       0,
-                       0,
-                       weight,
-                       FALSE,
-                       FALSE,
-                       FALSE,
-                       DEFAULT_CHARSET,
-                       OUT_DEFAULT_PRECIS,
-                       CLIP_DEFAULT_PRECIS,
-                       CLEARTYPE_QUALITY,
-                       DEFAULT_PITCH | FF_DONTCARE,
-                       L"Segoe UI");
-}
-
 class SettingsDemoWindow final : public nfui::Window {
 public:
     explicit SettingsDemoWindow(HINSTANCE instance)
         : instance_(instance),
-          resources_(instance) {
+          resources_(instance),
+          palette_(nfui::theme_palette(nfui::ThemeMode::light)) {
     }
 
     ~SettingsDemoWindow() noexcept override {
@@ -87,6 +56,7 @@ public:
         update_category_copy();
         update_saved_state();
         layout_controls();
+        apply_native_fonts();
 
         ShowWindow(hwnd(), show_command);
         UpdateWindow(hwnd());
@@ -112,6 +82,7 @@ protected:
                              SWP_NOACTIVATE | SWP_NOZORDER);
             }
             layout_controls();
+            apply_native_fonts();
             InvalidateRect(hwnd(), nullptr, TRUE);
             return 0;
         }
@@ -120,7 +91,13 @@ protected:
         case WM_PAINT: {
             PAINTSTRUCT paint{};
             HDC hdc = BeginPaint(hwnd(), &paint);
-            paint_background(hdc);
+            RECT client{};
+            GetClientRect(hwnd(), &client);
+            // Flicker-free offscreen buffer over the full client area; the
+            // MemoryDC BitBlts back at (0,0) on scope exit.
+            nfui::MemoryDC mem(hdc, client);
+            HDC target = mem.valid() ? mem.dc() : hdc;
+            paint_background(target);
             EndPaint(hwnd(), &paint);
             return 0;
         }
@@ -188,6 +165,12 @@ private:
             24,
         };
 
+        // The save button self-paints in coral via the shared Button path; it
+        // needs the Claude palette + Segoe UI font injected so it matches the
+        // rest of the shell.
+        save_button_.set_palette(&palette_);
+        save_button_.set_font_cache(&fonts_);
+
         if (!categories_.create(params)) {
             return false;
         }
@@ -250,6 +233,22 @@ private:
         SendMessageW(telemetry_.hwnd(), BM_SETCHECK, BST_CHECKED, 0);
         SendMessageW(startup_.hwnd(), BM_SETCHECK, BST_CHECKED, 0);
         return true;
+    }
+
+    void apply_native_fonts() noexcept {
+        // Native controls (Edit / ComboBox / CheckBox / ListBox / StatusBar)
+        // keep their Win32 chrome but adopt Segoe UI so the text matches the
+        // shared paint. lParam=TRUE forces an immediate redraw with the new
+        // font. Re-applied on DPI changes so the HFONT tracks the cached face.
+        const int dpi_value = dpi_.dpi();
+        const HFONT ui_font = fonts_.regular(dpi_value, 9);
+        SendMessageW(categories_.hwnd(),     WM_SETFONT, reinterpret_cast<WPARAM>(ui_font), TRUE);
+        SendMessageW(profile_name_.hwnd(),   WM_SETFONT, reinterpret_cast<WPARAM>(ui_font), TRUE);
+        SendMessageW(workspace_root_.hwnd(), WM_SETFONT, reinterpret_cast<WPARAM>(ui_font), TRUE);
+        SendMessageW(theme_combo_.hwnd(),    WM_SETFONT, reinterpret_cast<WPARAM>(ui_font), TRUE);
+        SendMessageW(telemetry_.hwnd(),      WM_SETFONT, reinterpret_cast<WPARAM>(ui_font), TRUE);
+        SendMessageW(startup_.hwnd(),        WM_SETFONT, reinterpret_cast<WPARAM>(ui_font), TRUE);
+        SendMessageW(status_bar_.hwnd(),     WM_SETFONT, reinterpret_cast<WPARAM>(ui_font), TRUE);
     }
 
     void populate_controls() noexcept {
@@ -393,38 +392,44 @@ private:
         }
     }
 
-    void paint_background(HDC hdc) const {
+    void paint_background(HDC target) noexcept {
+        const int dpi_value = dpi_.dpi();
+        const nfui::ThemePalette& p = palette_;
+
         RECT client{};
         GetClientRect(hwnd(), &client);
         RECT banner = client;
         banner.bottom = banner.top + dpi_.logical_to_pixels(116);
 
-        const COLORREF page = RGB(245, 247, 252);
-        const COLORREF banner_fill = blend(nfui::theme_tokens(nfui::ThemeMode::light).accent, RGB(255, 255, 255), 88);
-        fill_rect_color(hdc, client, page);
-        fill_rect_color(hdc, banner, banner_fill);
+        // Page + banner share the warm cream Claude background; the banner is
+        // distinguished only by the coral hairline painted at its bottom edge.
+        nfui::fill_rect(target, client, p.background);
+        nfui::fill_rect(target, banner, p.background);
+        const RECT hairline{banner.left, banner.bottom - 1, banner.right, banner.bottom};
+        nfui::fill_rect(target, hairline, p.accent);
 
-        HFONT title_font = create_font(dpi_, -26, FW_BOLD);
-        HFONT body_font = create_font(dpi_, -14, FW_NORMAL);
+        HFONT title_font = fonts_.serif(dpi_value, 16);
+        HFONT body_font = fonts_.regular(dpi_value, 9);
+        HFONT label_font = fonts_.semibold(dpi_value, 9);
 
         RECT title = banner;
         title.left += dpi_.logical_to_pixels(20);
         title.top += dpi_.logical_to_pixels(18);
         title.right -= dpi_.logical_to_pixels(20);
 
-        SetBkMode(hdc, TRANSPARENT);
-        SetTextColor(hdc, RGB(30, 36, 46));
-        HGDIOBJ old_font = SelectObject(hdc, title_font);
-        DrawTextW(hdc, L"SettingsDemo", -1, &title, DT_LEFT | DT_TOP | DT_SINGLELINE | DT_NOPREFIX);
-        SelectObject(hdc, body_font);
+        nfui::draw_text(target,
+                        title,
+                        L"SettingsDemo",
+                        title_font,
+                        p.text,
+                        DT_LEFT | DT_TOP | DT_SINGLELINE | DT_NOPREFIX);
         title.top += dpi_.logical_to_pixels(40);
-        SetTextColor(hdc, RGB(84, 96, 116));
-        DrawTextW(hdc,
-                  L"Category navigation plus native edit/combo/check controls demonstrate how saved-state feedback can stay obvious in a pure Win32 shell.",
-                  -1,
-                  &title,
-                  DT_LEFT | DT_WORDBREAK | DT_NOPREFIX);
-        SelectObject(hdc, old_font);
+        nfui::draw_text(target,
+                        title,
+                        L"Category navigation plus native edit/combo/check controls demonstrate how saved-state feedback can stay obvious in a pure Win32 shell.",
+                        body_font,
+                        p.text_secondary,
+                        DT_LEFT | DT_WORDBREAK | DT_NOPREFIX);
 
         const int outer = dpi_.logical_to_pixels(20);
         RECT labels = client;
@@ -432,27 +437,38 @@ private:
         labels.top = dpi_.logical_to_pixels(200);
         labels.right -= outer;
 
-        HFONT label_font = create_font(dpi_, -13, FW_SEMIBOLD);
-        SetTextColor(hdc, RGB(84, 96, 116));
-        old_font = SelectObject(hdc, label_font);
         RECT profile = labels;
         profile.bottom = profile.top + dpi_.logical_to_pixels(18);
-        DrawTextW(hdc, L"Profile name", -1, &profile, DT_LEFT | DT_TOP | DT_SINGLELINE | DT_NOPREFIX);
+        nfui::draw_text(target,
+                        profile,
+                        L"Profile name",
+                        label_font,
+                        p.text_secondary,
+                        DT_LEFT | DT_TOP | DT_SINGLELINE | DT_NOPREFIX);
         profile.top += dpi_.logical_to_pixels(72);
         profile.bottom += dpi_.logical_to_pixels(72);
-        DrawTextW(hdc, L"Workspace root", -1, &profile, DT_LEFT | DT_TOP | DT_SINGLELINE | DT_NOPREFIX);
+        nfui::draw_text(target,
+                        profile,
+                        L"Workspace root",
+                        label_font,
+                        p.text_secondary,
+                        DT_LEFT | DT_TOP | DT_SINGLELINE | DT_NOPREFIX);
         profile.top += dpi_.logical_to_pixels(72);
         profile.bottom += dpi_.logical_to_pixels(72);
-        DrawTextW(hdc, L"Theme preference", -1, &profile, DT_LEFT | DT_TOP | DT_SINGLELINE | DT_NOPREFIX);
-        SelectObject(hdc, old_font);
+        nfui::draw_text(target,
+                        profile,
+                        L"Theme preference",
+                        label_font,
+                        p.text_secondary,
+                        DT_LEFT | DT_TOP | DT_SINGLELINE | DT_NOPREFIX);
 
-        DeleteObject(label_font);
-        DeleteObject(body_font);
-        DeleteObject(title_font);
+        // FontCache owns the HFONT handles; they are released by fonts_' destructor.
     }
 
     HINSTANCE instance_{};
     nfui::ResourceContext resources_;
+    nfui::ThemePalette palette_;
+    nfui::FontCache fonts_;
     nfui::ListBox categories_;
     nfui::Edit profile_name_;
     nfui::Edit workspace_root_;
