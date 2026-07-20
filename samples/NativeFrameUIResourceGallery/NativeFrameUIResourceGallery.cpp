@@ -29,41 +29,6 @@ constexpr int id_status_bar = 103;
     return rect.bottom - rect.top;
 }
 
-void fill_rect_color(HDC hdc, const RECT& rect, COLORREF color) {
-    HBRUSH brush = CreateSolidBrush(color);
-    FillRect(hdc, &rect, brush);
-    DeleteObject(brush);
-}
-
-void draw_round_panel(HDC hdc, const RECT& rect, COLORREF fill, COLORREF border, int radius) {
-    HBRUSH brush = CreateSolidBrush(fill);
-    HPEN pen = CreatePen(PS_SOLID, 1, border);
-    HGDIOBJ old_brush = SelectObject(hdc, brush);
-    HGDIOBJ old_pen = SelectObject(hdc, pen);
-    RoundRect(hdc, rect.left, rect.top, rect.right, rect.bottom, radius, radius);
-    SelectObject(hdc, old_pen);
-    SelectObject(hdc, old_brush);
-    DeleteObject(pen);
-    DeleteObject(brush);
-}
-
-[[nodiscard]] HFONT create_font(const nfui::DpiScale& dpi, int logical_height, int weight) {
-    return CreateFontW(dpi.scale_font_height(logical_height),
-                       0,
-                       0,
-                       0,
-                       weight,
-                       FALSE,
-                       FALSE,
-                       FALSE,
-                       DEFAULT_CHARSET,
-                       OUT_DEFAULT_PRECIS,
-                       CLIP_DEFAULT_PRECIS,
-                       CLEARTYPE_QUALITY,
-                       DEFAULT_PITCH | FF_DONTCARE,
-                       L"Segoe UI");
-}
-
 INT_PTR CALLBACK gallery_dialog_proc(HWND hwnd, UINT message, WPARAM wparam, LPARAM) {
     if (message == WM_INITDIALOG) {
         return TRUE;
@@ -79,7 +44,8 @@ class ResourceGalleryWindow final : public nfui::Window {
 public:
     explicit ResourceGalleryWindow(HINSTANCE instance)
         : instance_(instance),
-          resources_(instance) {
+          resources_(instance),
+          palette_(nfui::theme_palette(nfui::ThemeMode::light)) {
     }
 
     ~ResourceGalleryWindow() noexcept override {
@@ -136,6 +102,9 @@ protected:
                              suggested->bottom - suggested->top,
                              SWP_NOACTIVATE | SWP_NOZORDER);
             }
+            // The status bar's WM_SETFONT handle is DPI-cached, so re-apply it
+            // after the DPI bump so the chrome tracks the new font face.
+            apply_native_fonts();
             layout_controls();
             InvalidateRect(hwnd(), nullptr, FALSE);
             return 0;
@@ -145,7 +114,17 @@ protected:
         case WM_PAINT: {
             PAINTSTRUCT paint{};
             HDC hdc = BeginPaint(hwnd(), &paint);
-            paint_gallery(hdc);
+            RECT client{};
+            GetClientRect(hwnd(), &client);
+            // Flicker-free offscreen buffer over the full client area. The
+            // MemoryDC destructor BitBlts back to the target rect origin while
+            // the BeginPaint DC is still valid, so the buffer flush MUST
+            // happen before EndPaint (R6 fix from SettingsDemo).
+            {
+                nfui::MemoryDC mem(hdc, client);
+                HDC target = mem.valid() ? mem.dc() : hdc;
+                paint_gallery(target);
+            }
             EndPaint(hwnd(), &paint);
             return 0;
         }
@@ -190,6 +169,15 @@ private:
             100,
             24,
         };
+
+        // Both buttons self-paint in coral via the shared Button path; inject
+        // the Claude palette + Segoe UI font so they match the rest of the
+        // shell.
+        open_dialog_.set_palette(&palette_);
+        open_dialog_.set_font_cache(&fonts_);
+        reload_assets_.set_palette(&palette_);
+        reload_assets_.set_font_cache(&fonts_);
+
         if (!open_dialog_.create(params)) {
             return false;
         }
@@ -206,7 +194,18 @@ private:
             return false;
         }
 
+        // Native StatusBar keeps its Win32 chrome but adopts Segoe UI so the
+        // status text matches the shared paint. lParam=TRUE forces an immediate
+        // redraw with the new font.
+        apply_native_fonts();
+
         return true;
+    }
+
+    void apply_native_fonts() noexcept {
+        const int dpi_value = dpi_.dpi();
+        const HFONT ui_font = fonts_.regular(dpi_value, 9);
+        SendMessageW(status_bar_.hwnd(), WM_SETFONT, reinterpret_cast<WPARAM>(ui_font), TRUE);
     }
 
     void release_assets() noexcept {
@@ -334,20 +333,15 @@ private:
         icon_ = new_icon;
     }
 
-    void paint_gallery(HDC hdc) const {
-        const nfui::ThemeTokens tokens = nfui::theme_tokens(nfui::ThemeMode::light);
-        const COLORREF page = RGB(247, 249, 253);
-        const COLORREF panel = RGB(255, 255, 255);
-        const COLORREF panel_alt = RGB(239, 244, 251);
-        const COLORREF border = RGB(214, 220, 230);
-        const COLORREF muted = RGB(86, 98, 116);
+    void paint_gallery(HDC target) {
+        const nfui::ThemePalette& p = palette_;
         const int gap = dpi_.logical_to_pixels(16);
-        const int radius = dpi_.logical_to_pixels(18);
-        const int small_radius = dpi_.logical_to_pixels(12);
+        const int card_radius = dpi_.logical_to_pixels(nfui::theme_metrics().corner_radius_card);
+        const int small_radius = dpi_.logical_to_pixels(nfui::theme_metrics().corner_radius_control);
 
         RECT client{};
         GetClientRect(hwnd(), &client);
-        fill_rect_color(hdc, client, page);
+        nfui::fill_rect(target, client, p.background);
 
         RECT summary = make_rect(content_rect_.left,
                                  content_rect_.top,
@@ -362,40 +356,43 @@ private:
                                  rect_width(content_rect_) - rect_width(assets) - gap,
                                  rect_height(assets));
 
-        draw_round_panel(hdc, summary, panel, border, radius);
-        draw_round_panel(hdc, assets, panel, border, radius);
-        draw_round_panel(hdc, preview, panel_alt, border, radius);
+        nfui::fill_rounded_rect(target, summary, card_radius, p.surface, p.border);
+        nfui::fill_rounded_rect(target, assets, card_radius, p.surface, p.border);
+        nfui::fill_rounded_rect(target, preview, card_radius, p.surface_hover, p.border);
 
-        HFONT title_font = create_font(dpi_, -24, FW_BOLD);
-        HFONT section_font = create_font(dpi_, -17, FW_SEMIBOLD);
-        HFONT body_font = create_font(dpi_, -14, FW_NORMAL);
+        const int dpi_value = dpi_.dpi();
+        HFONT title_font = fonts_.serif(dpi_value, 16);
+        HFONT section_font = fonts_.semibold(dpi_value, 11);
+        HFONT body_font = fonts_.regular(dpi_value, 9);
 
-        SetBkMode(hdc, TRANSPARENT);
-        SetTextColor(hdc, RGB(28, 34, 44));
-        HGDIOBJ old_font = SelectObject(hdc, title_font);
         RECT text = summary;
         text.left += gap;
         text.top += gap;
         text.right -= gap;
-        DrawTextW(hdc, L"ResourceGallery", -1, &text, DT_LEFT | DT_TOP | DT_SINGLELINE | DT_NOPREFIX);
-        SelectObject(hdc, body_font);
+        nfui::draw_text(target,
+                        text,
+                        L"ResourceGallery",
+                        title_font,
+                        p.text,
+                        DT_LEFT | DT_TOP | DT_SINGLELINE | DT_NOPREFIX);
         text.top += dpi_.logical_to_pixels(34);
-        SetTextColor(hdc, muted);
-        DrawTextW(hdc,
-                  L"Everything in this demo loads through an explicit resource module handle: strings, menus, dialogs, icons, bitmaps, and the toolbar resource marker.",
-                  -1,
-                  &text,
-                  DT_LEFT | DT_WORDBREAK | DT_NOPREFIX);
+        nfui::draw_text(target,
+                        text,
+                        L"Everything in this demo loads through an explicit resource module handle: strings, menus, dialogs, icons, bitmaps, and the toolbar resource marker.",
+                        body_font,
+                        p.text_secondary,
+                        DT_LEFT | DT_WORDBREAK | DT_NOPREFIX);
 
-        SetTextColor(hdc, RGB(28, 34, 44));
-        SelectObject(hdc, section_font);
         RECT left_text = assets;
         left_text.left += gap;
         left_text.top += gap;
         left_text.right -= gap;
-        DrawTextW(hdc, L"Asset checklist", -1, &left_text, DT_LEFT | DT_TOP | DT_SINGLELINE | DT_NOPREFIX);
-        SelectObject(hdc, body_font);
-        SetTextColor(hdc, muted);
+        nfui::draw_text(target,
+                        left_text,
+                        L"Asset checklist",
+                        section_font,
+                        p.text,
+                        DT_LEFT | DT_TOP | DT_SINGLELINE | DT_NOPREFIX);
         left_text.top += dpi_.logical_to_pixels(32);
 
         const std::wstring summary_text =
@@ -406,23 +403,31 @@ private:
             L"Bitmap: " + std::wstring(has_bitmap_ ? L"loaded" : L"missing") + L"\n" +
             L"Toolbar marker: " + std::wstring(has_toolbar_ ? L"present" : L"missing") + L"\n" +
             L"Loaded title: " + title_;
-        DrawTextW(hdc, summary_text.c_str(), -1, &left_text, DT_LEFT | DT_WORDBREAK | DT_NOPREFIX);
+        nfui::draw_text(target,
+                        left_text,
+                        summary_text,
+                        body_font,
+                        p.text_secondary,
+                        DT_LEFT | DT_WORDBREAK | DT_NOPREFIX);
 
         RECT preview_title = preview;
         preview_title.left += gap;
         preview_title.top += gap;
         preview_title.right -= gap;
-        SetTextColor(hdc, RGB(28, 34, 44));
-        SelectObject(hdc, section_font);
-        DrawTextW(hdc, L"Preview", -1, &preview_title, DT_LEFT | DT_TOP | DT_SINGLELINE | DT_NOPREFIX);
+        nfui::draw_text(target,
+                        preview_title,
+                        L"Preview",
+                        section_font,
+                        p.text,
+                        DT_LEFT | DT_TOP | DT_SINGLELINE | DT_NOPREFIX);
 
         RECT icon_rect = make_rect(preview.left + gap,
                                    preview.top + dpi_.logical_to_pixels(54),
                                    dpi_.logical_to_pixels(72),
                                    dpi_.logical_to_pixels(72));
-        draw_round_panel(hdc, icon_rect, panel, border, small_radius);
+        nfui::fill_rounded_rect(target, icon_rect, small_radius, p.surface, p.border);
         if (icon_ != nullptr) {
-            DrawIconEx(hdc,
+            DrawIconEx(target,
                        icon_rect.left + dpi_.logical_to_pixels(16),
                        icon_rect.top + dpi_.logical_to_pixels(16),
                        icon_,
@@ -437,13 +442,13 @@ private:
                                      icon_rect.top,
                                      rect_width(preview) - dpi_.logical_to_pixels(120),
                                      dpi_.logical_to_pixels(180));
-        draw_round_panel(hdc, bitmap_rect, panel, border, small_radius);
+        nfui::fill_rounded_rect(target, bitmap_rect, small_radius, p.surface, p.border);
         if (bitmap_ != nullptr) {
             BITMAP info{};
             GetObjectW(bitmap_, sizeof(info), &info);
-            HDC memory_dc = CreateCompatibleDC(hdc);
+            HDC memory_dc = CreateCompatibleDC(target);
             HGDIOBJ old_bitmap = SelectObject(memory_dc, bitmap_);
-            StretchBlt(hdc,
+            StretchBlt(target,
                        bitmap_rect.left + dpi_.logical_to_pixels(16),
                        bitmap_rect.top + dpi_.logical_to_pixels(16),
                        rect_width(bitmap_rect) - dpi_.logical_to_pixels(32),
@@ -462,22 +467,20 @@ private:
                                       bitmap_rect.bottom + gap,
                                       rect_width(preview) - gap * 2,
                                       rect_height(preview) - rect_height(bitmap_rect) - gap * 3);
-        SelectObject(hdc, body_font);
-        SetTextColor(hdc, muted);
-        DrawTextW(hdc,
-                  L"Use the File menu to route the shared Exit command, the button to open the resource dialog, and Reload assets to confirm the gallery rebinds raw Win32 resource handles without hidden globals.",
-                  -1,
-                  &preview_copy,
-                  DT_LEFT | DT_WORDBREAK | DT_NOPREFIX);
+        nfui::draw_text(target,
+                        preview_copy,
+                        L"Use the File menu to route the shared Exit command, the button to open the resource dialog, and Reload assets to confirm the gallery rebinds raw Win32 resource handles without hidden globals.",
+                        body_font,
+                        p.text_secondary,
+                        DT_LEFT | DT_WORDBREAK | DT_NOPREFIX);
 
-        SelectObject(hdc, old_font);
-        DeleteObject(body_font);
-        DeleteObject(section_font);
-        DeleteObject(title_font);
+        // FontCache owns the HFONT handles; they are released by fonts_' destructor.
     }
 
     HINSTANCE instance_{};
     nfui::ResourceContext resources_;
+    nfui::ThemePalette palette_;
+    nfui::FontCache fonts_;
     nfui::Button open_dialog_;
     nfui::Button reload_assets_;
     nfui::StatusBar status_bar_;
