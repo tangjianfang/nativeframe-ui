@@ -93,10 +93,7 @@ protected:
             HDC hdc = BeginPaint(hwnd(), &paint);
             RECT client{};
             GetClientRect(hwnd(), &client);
-            // Flicker-free offscreen buffer over the full client area; the
-            // MemoryDC destructor BitBlts back to hdc at (0,0) before EndPaint
-            // releases hdc — the nested scope keeps the destructor in the
-            // "hdc valid" window.
+            // Flicker-free offscreen buffer over the full client area.
             {
                 nfui::MemoryDC mem(hdc, client);
                 HDC target = mem.valid() ? mem.dc() : hdc;
