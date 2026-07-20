@@ -358,7 +358,7 @@ private:
 
         nfui::fill_rounded_rect(target, summary, card_radius, p.surface, p.border);
         nfui::fill_rounded_rect(target, assets, card_radius, p.surface, p.border);
-        nfui::fill_rounded_rect(target, preview, card_radius, p.surface_hover, p.border);
+        nfui::fill_rounded_rect(target, preview, card_radius, p.surface, p.border);
 
         const int dpi_value = dpi_.dpi();
         HFONT title_font = fonts_.serif(dpi_value, 16);
