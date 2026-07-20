@@ -66,6 +66,13 @@ target_link_libraries(NativeFrameUIResourceGallery PRIVATE NativeFrameUI::Native
 nfui_apply_compiler_options(NativeFrameUIResourceGallery)
 nfui_add_resources(NativeFrameUIResourceGallery)
 
+add_executable(NativeFrameUIControls WIN32
+    samples/NativeFrameUIControls/NativeFrameUIControls.cpp
+)
+target_link_libraries(NativeFrameUIControls PRIVATE NativeFrameUI::NativeFrameUI)
+nfui_apply_compiler_options(NativeFrameUIControls)
+nfui_add_resources(NativeFrameUIControls)
+
 if(BUILD_TESTING)
     add_executable(NativeFrameUISmokeTest
         tests/nativeframeui_smoke.cpp

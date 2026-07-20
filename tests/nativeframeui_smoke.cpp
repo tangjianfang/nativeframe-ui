@@ -575,6 +575,8 @@ int wmain() {
                 L"SettingsDemo target is registered in generated build artifacts") && ok;
     ok = expect(target_registered(L"NativeFrameUIResourceGallery"),
                 L"ResourceGallery target is registered in generated build artifacts") && ok;
+    ok = expect(target_registered(L"NativeFrameUIControls"),
+                L"NativeFrameUIControls target is registered in generated build artifacts") && ok;
 
     HWND dialog = resources.create_dialog(IDD_NFUI_ABOUT, nullptr, test_dialog_proc, 0);
     ok = expect(dialog != nullptr, L"modeless dialog resource creates a HWND") && ok;
