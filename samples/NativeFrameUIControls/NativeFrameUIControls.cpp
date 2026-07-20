@@ -168,10 +168,11 @@ private:
         ListView_InsertColumn(view_.hwnd(), 0, &column);
 
         static constexpr const wchar_t* rows[] = {L"Row 0", L"Row 1", L"Row 2"};
+        int row_index = 0;
         for (const wchar_t* text : rows) {
             LVITEMW item{};
             item.mask = LVIF_TEXT;
-            item.iItem = 0;
+            item.iItem = row_index++;
             item.pszText = const_cast<LPWSTR>(text);
             ListView_InsertItem(view_.hwnd(), &item);
         }
