@@ -507,5 +507,19 @@ int wmain() {
         ok = expect(r12 != nullptr && r12 != r96, L"FontCache rebuilds regular on point size change") && ok;
     }
 
+    {
+        using namespace nfui;
+        ok = expect(icon_pixel_size(16, 96) == 16, L"icon size is 1:1 at 96dpi") && ok;
+        ok = expect(icon_pixel_size(16, 144) == 24, L"icon size scales 1.5x at 144dpi") && ok;
+        ok = expect(icon_pixel_size(0, 96) == 0, L"zero logical size yields zero") && ok;
+        const HINSTANCE inst = GetModuleHandleW(nullptr);
+        HICON good = load_scaled_icon(inst, MAKEINTRESOURCEW(IDI_NFUI_APP), 16, 96);
+        ok = expect(good != nullptr, L"load_scaled_icon loads the framework icon") && ok;
+        if (good) DestroyIcon(good);
+        HICON bad = load_scaled_icon(inst, MAKEINTRESOURCEW(37123), 16, 96);
+        ok = expect(bad == nullptr, L"load_scaled_icon returns null for a missing resource") && ok;
+        if (bad) DestroyIcon(bad);
+    }
+
     return ok ? 0 : 1;
 }
