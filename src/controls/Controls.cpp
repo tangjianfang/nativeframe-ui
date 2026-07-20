@@ -259,7 +259,9 @@ bool IconView::create(const ControlCreateParams& params) noexcept {
 
 void IconView::set_icon(HICON icon) noexcept {
     icon_ = icon;
-    InvalidateRect(hwnd(), nullptr, FALSE);
+    if (hwnd() != nullptr) {
+        InvalidateRect(hwnd(), nullptr, FALSE);
+    }
 }
 
 void IconView::on_paint(HDC dc, const PaintState& state) noexcept {
