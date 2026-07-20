@@ -55,6 +55,7 @@ protected:
     [[nodiscard]] const ThemePalette* palette() const noexcept { return palette_; }
     [[nodiscard]] FontCache* fonts() const noexcept { return fonts_; }
     virtual void on_paint(HDC dc, const PaintState& state) noexcept { (void)dc; (void)state; }
+    [[nodiscard]] virtual bool wants_self_paint() const noexcept { return false; }
 
 private:
     void detach_destroyed_hwnd(HWND hwnd) noexcept;
@@ -92,6 +93,9 @@ public:
 class StaticText : public Control {
 public:
     [[nodiscard]] bool create(const ControlCreateParams& params) noexcept;
+protected:
+    void on_paint(HDC dc, const PaintState& state) noexcept override;
+    [[nodiscard]] bool wants_self_paint() const noexcept override { return true; }
 };
 
 class ComboBox : public Control {

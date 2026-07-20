@@ -110,6 +110,26 @@ LRESULT CALLBACK Control::subclass_proc(HWND hwnd,
         }
         break;
     }
+    case WM_PAINT: {
+        if (control != nullptr && control->wants_self_paint()) {
+            PAINTSTRUCT ps{};
+            HDC dc = BeginPaint(hwnd, &ps);
+            if (dc != nullptr) {
+                PaintState state{};
+                state.hover = control->hover_;
+                state.pressed = false;
+                state.focused = false;
+                state.enabled = IsWindowEnabled(hwnd) != FALSE;
+                RECT bounds{};
+                GetClientRect(hwnd, &bounds);
+                state.bounds = bounds;
+                control->on_paint(dc, state);
+                EndPaint(hwnd, &ps);
+            }
+            return 0;
+        }
+        break;
+    }
     default:
         break;
     }
@@ -164,6 +184,19 @@ bool StaticText::create(const ControlCreateParams& params) noexcept {
     ControlCreateParams static_params = params;
     static_params.style &= ~WS_TABSTOP;
     return create_native(L"STATIC", static_params, SS_LEFT);
+}
+
+void StaticText::on_paint(HDC dc, const PaintState& state) noexcept {
+    const ThemePalette* pal = palette();
+    ThemePalette fallback{};
+    if (pal == nullptr) {
+        fallback = theme_palette(ThemeMode::light);
+    }
+    const ThemePalette& p = pal ? *pal : fallback;
+    RECT rc = state.bounds;
+    fill_rounded_rect(dc, rc, 0, p.background, p.background);
+    HFONT font = fonts() ? fonts()->regular(96, 9) : nullptr;
+    draw_text(dc, rc, caption(), font, p.text, DT_LEFT | DT_VCENTER | DT_SINGLELINE);
 }
 
 bool ComboBox::create(const ControlCreateParams& params) noexcept {

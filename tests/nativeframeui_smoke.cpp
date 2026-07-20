@@ -365,6 +365,8 @@ int wmain() {
         nfui::StaticText static_text;
         ok = expect(static_text.create(control_params), L"StaticText control creates HWND") && ok;
         ok = expect(static_text.hwnd() != nullptr, L"StaticText exposes HWND") && ok;
+        ok = expect((GetWindowLongPtrW(static_text.hwnd(), GWL_STYLE) & SS_TYPEMASK) == SS_LEFT,
+                    L"StaticText uses SS_LEFT style") && ok;
 
         nfui::ComboBox combo_box;
         ok = expect(combo_box.create(control_params), L"ComboBox control creates HWND") && ok;
@@ -427,6 +429,34 @@ int wmain() {
             DestroyWindow(owner_button);
         }
         ShowWindow(controls_parent.hwnd(), SW_HIDE);
+
+        {
+            using namespace nfui;
+            StaticText lbl;
+            ControlCreateParams p{};
+            p.instance = GetModuleHandleW(nullptr);
+            p.parent = controls_parent.hwnd();
+            p.control_id = 9002;
+            p.text = L"Hello";
+            p.x = 0;
+            p.y = 0;
+            p.width = 120;
+            p.height = 20;
+            ok = expect(lbl.create(p), L"StaticText::create") && ok;
+            ok = expect(lbl.valid(), L"StaticText::valid") && ok;
+            LONG_PTR style = GetWindowLongPtrW(lbl.hwnd(), GWL_STYLE);
+            ok = expect((style & SS_TYPEMASK) == SS_LEFT, L"StaticText is SS_LEFT") && ok;
+
+            ThemePalette label_palette = theme_palette(ThemeMode::light);
+            FontCache label_fonts;
+            lbl.set_palette(&label_palette);
+            lbl.set_font_cache(&label_fonts);
+            ShowWindow(lbl.hwnd(), SW_SHOW);
+            InvalidateRect(lbl.hwnd(), nullptr, TRUE);
+            UpdateWindow(lbl.hwnd());
+            ShowWindow(lbl.hwnd(), SW_HIDE);
+            ok = expect(lbl.hwnd() != nullptr, L"StaticText paint cycle completes without crash") && ok;
+        }
 
         controls_parent.destroy();
         ok = expect(!button.valid() && button.hwnd() == nullptr,
