@@ -35,64 +35,6 @@ namespace {
     return inset;
 }
 
-[[nodiscard]] COLORREF blend(COLORREF from, COLORREF to, int percent_to) noexcept {
-    percent_to = std::clamp(percent_to, 0, 100);
-    const int percent_from = 100 - percent_to;
-    return RGB(
-        (GetRValue(from) * percent_from + GetRValue(to) * percent_to) / 100,
-        (GetGValue(from) * percent_from + GetGValue(to) * percent_to) / 100,
-        (GetBValue(from) * percent_from + GetBValue(to) * percent_to) / 100);
-}
-
-void fill_rect_color(HDC hdc, const RECT& rect, COLORREF color) {
-    HBRUSH brush = CreateSolidBrush(color);
-    FillRect(hdc, &rect, brush);
-    DeleteObject(brush);
-}
-
-void draw_round_panel(HDC hdc, const RECT& rect, COLORREF fill, COLORREF border, int radius) {
-    HBRUSH brush = CreateSolidBrush(fill);
-    HPEN pen = CreatePen(PS_SOLID, 1, border);
-    HGDIOBJ old_brush = SelectObject(hdc, brush);
-    HGDIOBJ old_pen = SelectObject(hdc, pen);
-    RoundRect(hdc, rect.left, rect.top, rect.right, rect.bottom, radius, radius);
-    SelectObject(hdc, old_pen);
-    SelectObject(hdc, old_brush);
-    DeleteObject(pen);
-    DeleteObject(brush);
-}
-
-void draw_text_block(HDC hdc,
-                     const RECT& rect,
-                     std::wstring_view text,
-                     COLORREF color,
-                     HFONT font,
-                     UINT format) {
-    SetBkMode(hdc, TRANSPARENT);
-    SetTextColor(hdc, color);
-    HGDIOBJ old_font = SelectObject(hdc, font);
-    RECT copy = rect;
-    DrawTextW(hdc, text.data(), static_cast<int>(text.size()), &copy, format);
-    SelectObject(hdc, old_font);
-}
-
-[[nodiscard]] HFONT create_font(const nfui::DpiScale& dpi, int logical_height, int weight) {
-    return CreateFontW(dpi.scale_font_height(logical_height),
-                       0,
-                       0,
-                       0,
-                       weight,
-                       FALSE,
-                       FALSE,
-                       FALSE,
-                       DEFAULT_CHARSET,
-                       OUT_DEFAULT_PRECIS,
-                       CLIP_DEFAULT_PRECIS,
-                       CLEARTYPE_QUALITY,
-                       DEFAULT_PITCH | FF_DONTCARE,
-                       L"Segoe UI");
-}
-
 constexpr std::array<std::wstring_view, 4> navigation_items{
     L"Surface",
     L"Canvas",
@@ -111,7 +53,8 @@ class DarkStudioWindow final : public nfui::Window {
 public:
     explicit DarkStudioWindow(HINSTANCE instance)
         : instance_(instance),
-          resources_(instance) {
+          resources_(instance),
+          palette_(nfui::theme_palette(nfui::ThemeMode::dark)) {
     }
 
     ~DarkStudioWindow() noexcept override {
@@ -207,9 +150,17 @@ private:
             100,
             24,
         };
+        // StatusBar is native Win32; inject deps for consistency and apply
+        // Segoe UI via WM_SETFONT so the chrome text matches the rest of the shell.
+        status_.set_palette(&palette_);
+        status_.set_font_cache(&fonts_);
         if (!status_.create(params)) {
             return false;
         }
+        SendMessageW(status_.hwnd(),
+                     WM_SETFONT,
+                     reinterpret_cast<WPARAM>(fonts_.regular(dpi_.dpi(), 9)),
+                     TRUE);
         return true;
     }
 
@@ -305,25 +256,36 @@ private:
         }
     }
 
-    void paint_shell(HDC hdc) const {
-        const nfui::ThemeTokens tokens = nfui::theme_tokens(nfui::ThemeMode::dark);
+    void paint_shell(HDC hdc) {
+        const nfui::ThemePalette& p = palette_;
         const RECT content = content_rect();
         const int outer = dpi_.logical_to_pixels(20);
         const int gap = dpi_.logical_to_pixels(16);
         const int rail_width = dpi_.logical_to_pixels(220);
         const int preview_width = std::max(rect_width(content) - rail_width - outer * 2 - gap, dpi_.logical_to_pixels(520));
         const int preview_height = dpi_.logical_to_pixels(360);
-        const int radius = dpi_.logical_to_pixels(18);
-        const int small_radius = dpi_.logical_to_pixels(12);
+        const int card_radius = dpi_.logical_to_pixels(nfui::theme_metrics().corner_radius_card);
+        const int pill_radius = dpi_.logical_to_pixels(nfui::theme_metrics().corner_radius_control);
 
-        const COLORREF background = blend(tokens.window_background, RGB(8, 12, 18), 32);
-        const COLORREF rail_fill = blend(tokens.window_background, RGB(15, 20, 30), 42);
-        const COLORREF chrome = blend(tokens.window_background, RGB(35, 40, 52), 44);
-        const COLORREF surface = blend(tokens.window_background, RGB(44, 52, 66), 38);
-        const COLORREF border = RGB(73, 81, 97);
-        const COLORREF muted = RGB(165, 176, 194);
+        // Flicker-free offscreen buffer scoped to the content area (above the
+        // native status bar). BeginPaint DC origin is the window client; the
+        // MemoryDC BitBlts back at the rect's actual origin on destruction.
+        nfui::MemoryDC mem(hdc, content);
+        HDC target = mem.valid() ? mem.dc() : hdc;
 
-        fill_rect_color(hdc, content, background);
+        const int dpi_value = dpi_.dpi();
+        const nfui::Color rail_fill = nfui::darken(p.background, 0.18f);
+        const nfui::Color chrome = p.surface;
+        const nfui::Color panel = p.surface;
+        const nfui::Color surface_alt = p.surface_hover;
+        const nfui::Color selection_fill = p.selection;
+        const nfui::Color accent_border = p.accent;
+        const nfui::Color canvas_fill = nfui::alpha_blend(p.accent, p.background, 0.88f);
+        const nfui::Color canvas_border = p.accent;
+        const nfui::Color muted = p.text_secondary;
+        const nfui::Color body = p.text;
+
+        nfui::fill_rect(target, content, p.background);
 
         RECT rail = make_rect(content.left + outer,
                               content.top + outer,
@@ -346,119 +308,154 @@ private:
                                     rect_width(metric_one),
                                     rect_height(metric_one));
 
-        draw_round_panel(hdc, rail, rail_fill, border, radius);
-        draw_round_panel(hdc, header, chrome, border, radius);
-        draw_round_panel(hdc, preview, surface, border, radius);
-        draw_round_panel(hdc, metric_one, chrome, border, radius);
-        draw_round_panel(hdc, metric_two, chrome, border, radius);
+        nfui::fill_rounded_rect(target, rail, card_radius, rail_fill, p.border);
+        nfui::fill_rounded_rect(target, header, card_radius, chrome, p.border);
+        nfui::fill_rounded_rect(target, preview, card_radius, panel, p.border);
+        nfui::fill_rounded_rect(target, metric_one, card_radius, chrome, p.border);
+        nfui::fill_rounded_rect(target, metric_two, card_radius, chrome, p.border);
 
-        HFONT title_font = create_font(dpi_, -28, FW_BOLD);
-        HFONT section_font = create_font(dpi_, -18, FW_SEMIBOLD);
-        HFONT body_font = create_font(dpi_, -14, FW_NORMAL);
-        HFONT metric_font = create_font(dpi_, -24, FW_BOLD);
+        HFONT title_font = fonts_.serif(dpi_value, 20);
+        HFONT section_font = fonts_.semibold(dpi_value, 12);
+        HFONT body_font = fonts_.regular(dpi_value, 9);
+        HFONT metric_font = fonts_.mono(dpi_value, 16);
 
         RECT rail_title = make_rect(rail.left + gap,
                                     rail.top + gap,
                                     rect_width(rail) - gap * 2,
                                     dpi_.logical_to_pixels(72));
-        draw_text_block(hdc, rail_title, L"DarkStudio", tokens.window_text, title_font, DT_LEFT | DT_TOP | DT_SINGLELINE | DT_NOPREFIX);
+        nfui::draw_text(target,
+                        rail_title,
+                        L"DarkStudio",
+                        title_font,
+                        p.text,
+                        DT_LEFT | DT_TOP | DT_SINGLELINE | DT_NOPREFIX);
         rail_title.top += dpi_.logical_to_pixels(36);
-        draw_text_block(hdc,
+        nfui::draw_text(target,
                         rail_title,
                         L"A focused dark-shell sample for preview-heavy desktop tools.",
-                        muted,
                         body_font,
+                        muted,
                         DT_LEFT | DT_WORDBREAK | DT_NOPREFIX);
 
         for (std::size_t index = 0; index < navigation_items.size(); ++index) {
             RECT item = navigation_rect(index);
-            if (selected_navigation_ == static_cast<int>(index)) {
-                draw_round_panel(hdc, item, blend(tokens.accent, background, 72), tokens.accent, small_radius);
+            const bool selected = selected_navigation_ == static_cast<int>(index);
+            if (selected) {
+                nfui::fill_rounded_rect(target, item, pill_radius, selection_fill, accent_border);
             }
             RECT label = inset_rect(item, dpi_.logical_to_pixels(12));
-            draw_text_block(hdc,
+            nfui::draw_text(target,
                             label,
                             navigation_items[index],
-                            selected_navigation_ == static_cast<int>(index) ? tokens.window_text : muted,
                             section_font,
+                            selected ? p.text : muted,
                             DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX);
         }
 
         RECT header_text = inset_rect(header, gap);
-        draw_text_block(hdc,
+        nfui::draw_text(target,
                         header_text,
                         L"Preview-first shell",
-                        tokens.window_text,
                         section_font,
+                        p.text,
                         DT_LEFT | DT_TOP | DT_SINGLELINE | DT_NOPREFIX);
         header_text.top += dpi_.logical_to_pixels(30);
-        draw_text_block(hdc,
+        nfui::draw_text(target,
                         header_text,
                         L"Native status bar, dark chrome, and a central canvas keep this demo anchored in HWND-friendly patterns.",
-                        muted,
                         body_font,
+                        muted,
                         DT_LEFT | DT_WORDBREAK | DT_NOPREFIX);
 
         RECT preview_title = inset_rect(preview, gap);
-        draw_text_block(hdc,
+        nfui::draw_text(target,
                         preview_title,
                         L"Preview canvas",
-                        tokens.window_text,
                         section_font,
+                        p.text,
                         DT_LEFT | DT_TOP | DT_SINGLELINE | DT_NOPREFIX);
 
         RECT canvas = make_rect(preview.left + gap,
                                 preview.top + dpi_.logical_to_pixels(56),
                                 rect_width(preview) - gap * 2,
                                 preview_height - dpi_.logical_to_pixels(76));
-        draw_round_panel(hdc, canvas, blend(tokens.accent, background, 88), blend(tokens.accent, border, 36), radius);
+        nfui::fill_rounded_rect(target, canvas, card_radius, canvas_fill, canvas_border);
 
         RECT strip = make_rect(canvas.left + dpi_.logical_to_pixels(18),
                                canvas.top + dpi_.logical_to_pixels(18),
                                rect_width(canvas) - dpi_.logical_to_pixels(36),
                                dpi_.logical_to_pixels(46));
-        draw_round_panel(hdc, strip, blend(tokens.window_background, RGB(58, 67, 82), 36), border, small_radius);
+        nfui::fill_rounded_rect(target, strip, pill_radius, surface_alt, p.border);
         RECT strip_text = inset_rect(strip, dpi_.logical_to_pixels(10));
-        draw_text_block(hdc,
+        nfui::draw_text(target,
                         strip_text,
                         L"Live preview • navigation updates the shell without leaving native Win32 controls behind.",
-                        tokens.window_text,
                         body_font,
+                        body,
                         DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX);
 
         RECT canvas_caption = make_rect(canvas.left + dpi_.logical_to_pixels(18),
                                         strip.bottom + dpi_.logical_to_pixels(18),
                                         rect_width(canvas) - dpi_.logical_to_pixels(36),
                                         dpi_.logical_to_pixels(100));
-        draw_text_block(hdc,
+        nfui::draw_text(target,
                         canvas_caption,
                         L"DarkStudio is intentionally self-contained. It proves that product-level dark shells can live in a sample executable without forcing framework consumers to adopt new core rendering APIs.",
-                        muted,
                         body_font,
+                        muted,
                         DT_LEFT | DT_WORDBREAK | DT_NOPREFIX);
 
         RECT metric_text = inset_rect(metric_one, gap);
-        draw_text_block(hdc, metric_text, L"Native shell", muted, body_font, DT_LEFT | DT_TOP | DT_SINGLELINE | DT_NOPREFIX);
+        nfui::draw_text(target,
+                        metric_text,
+                        L"Native shell",
+                        body_font,
+                        muted,
+                        DT_LEFT | DT_TOP | DT_SINGLELINE | DT_NOPREFIX);
         metric_text.top += dpi_.logical_to_pixels(28);
-        draw_text_block(hdc, metric_text, L"100%", tokens.window_text, metric_font, DT_LEFT | DT_TOP | DT_SINGLELINE | DT_NOPREFIX);
+        nfui::draw_text(target,
+                        metric_text,
+                        L"100%",
+                        metric_font,
+                        p.text,
+                        DT_LEFT | DT_TOP | DT_SINGLELINE | DT_NOPREFIX);
         metric_text.top += dpi_.logical_to_pixels(42);
-        draw_text_block(hdc, metric_text, L"Sample-local painting with a standard status bar.", muted, body_font, DT_LEFT | DT_WORDBREAK | DT_NOPREFIX);
+        nfui::draw_text(target,
+                        metric_text,
+                        L"Sample-local painting with a standard status bar.",
+                        body_font,
+                        muted,
+                        DT_LEFT | DT_WORDBREAK | DT_NOPREFIX);
 
         metric_text = inset_rect(metric_two, gap);
-        draw_text_block(hdc, metric_text, L"DPI layout", muted, body_font, DT_LEFT | DT_TOP | DT_SINGLELINE | DT_NOPREFIX);
+        nfui::draw_text(target,
+                        metric_text,
+                        L"DPI layout",
+                        body_font,
+                        muted,
+                        DT_LEFT | DT_TOP | DT_SINGLELINE | DT_NOPREFIX);
         metric_text.top += dpi_.logical_to_pixels(28);
-        draw_text_block(hdc, metric_text, L"Per-monitor", tokens.window_text, metric_font, DT_LEFT | DT_TOP | DT_SINGLELINE | DT_NOPREFIX);
+        nfui::draw_text(target,
+                        metric_text,
+                        L"Per-monitor",
+                        metric_font,
+                        p.text,
+                        DT_LEFT | DT_TOP | DT_SINGLELINE | DT_NOPREFIX);
         metric_text.top += dpi_.logical_to_pixels(42);
-        draw_text_block(hdc, metric_text, L"All shell measurements scale through nfui::DpiScale.", muted, body_font, DT_LEFT | DT_WORDBREAK | DT_NOPREFIX);
+        nfui::draw_text(target,
+                        metric_text,
+                        L"All shell measurements scale through nfui::DpiScale.",
+                        body_font,
+                        muted,
+                        DT_LEFT | DT_WORDBREAK | DT_NOPREFIX);
 
-        DeleteObject(metric_font);
-        DeleteObject(body_font);
-        DeleteObject(section_font);
-        DeleteObject(title_font);
+        // FontCache owns the HFONT handles; they are released by fonts_' destructor.
     }
 
     HINSTANCE instance_{};
     nfui::ResourceContext resources_;
+    nfui::ThemePalette palette_;
+    nfui::FontCache fonts_;
     nfui::StatusBar status_;
     nfui::DpiScale dpi_{96};
     RECT client_rect_{};
