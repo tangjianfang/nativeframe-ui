@@ -1,7 +1,6 @@
 #include <nfui/Paint.hpp>
 
 #include <uxtheme.h>
-#include <algorithm>
 #include <string>
 
 namespace nfui {
@@ -11,7 +10,7 @@ int clamp_byte(int v) noexcept { return v < 0 ? 0 : (v > 255 ? 255 : v); }
 }
 
 Color lighten(Color c, float amount) noexcept {
-    if (amount <= 0.0f) return c;
+    if (!(amount > 0.0f)) return c;
     if (amount > 1.0f) amount = 1.0f;
     auto lerp = [](int a, int b, float t) { return static_cast<int>(a + (b - a) * t); };
     const int r = clamp_byte(lerp(GetRValue(c.rgb), 255, amount));
@@ -21,7 +20,7 @@ Color lighten(Color c, float amount) noexcept {
 }
 
 Color darken(Color c, float amount) noexcept {
-    if (amount <= 0.0f) return c;
+    if (!(amount > 0.0f)) return c;
     if (amount > 1.0f) amount = 1.0f;
     auto lerp = [](int a, int b, float t) { return static_cast<int>(a + (b - a) * t); };
     const int r = clamp_byte(lerp(GetRValue(c.rgb), 0, amount));
@@ -31,7 +30,7 @@ Color darken(Color c, float amount) noexcept {
 }
 
 Color alpha_blend(Color src, Color dst, float alpha) noexcept {
-    if (alpha <= 0.0f) return dst;
+    if (!(alpha > 0.0f)) return dst;
     if (alpha >= 1.0f) return src;
     auto mix = [alpha](int s, int d) { return static_cast<int>(s * alpha + d * (1.0f - alpha)); };
     return Color{RGB(clamp_byte(mix(GetRValue(src.rgb), GetRValue(dst.rgb))),
@@ -53,26 +52,34 @@ BufferedPaintContext::~BufferedPaintContext() noexcept {
 }
 
 void fill_rounded_rect(HDC dc, const RECT& bounds, int radius, Color fill, Color border) noexcept {
+    if (dc == nullptr) return;
     const int r = radius < 0 ? 0 : radius;
     HBRUSH brush = CreateSolidBrush(fill.rgb);
     HPEN pen = CreatePen(PS_SOLID, 1, border.rgb);
+    if (brush == nullptr || pen == nullptr) {
+        if (brush) DeleteObject(brush);
+        if (pen) DeleteObject(pen);
+        return;
+    }
     HGDIOBJ old_brush = SelectObject(dc, brush);
     HGDIOBJ old_pen = SelectObject(dc, pen);
     RoundRect(dc, bounds.left, bounds.top, bounds.right, bounds.bottom, r * 2, r * 2);
-    SelectObject(dc, old_brush);
-    SelectObject(dc, old_pen);
+    if (old_brush != HGDI_ERROR && old_brush != nullptr) SelectObject(dc, old_brush);
+    if (old_pen != HGDI_ERROR && old_pen != nullptr) SelectObject(dc, old_pen);
     DeleteObject(brush);
     DeleteObject(pen);
 }
 
 void draw_text(HDC dc, const RECT& bounds, std::wstring_view text, HFONT font, Color text_color, UINT format) noexcept {
+    if (dc == nullptr) return;
     std::wstring s(text);
     HGDIOBJ old_font = font ? SelectObject(dc, font) : nullptr;
     SetBkMode(dc, TRANSPARENT);
     SetTextColor(dc, text_color.rgb);
     RECT r = bounds;
-    DrawTextW(dc, s.c_str(), static_cast<int>(s.size()), &r, format | DT_END_ELLIPSIS);
-    if (old_font != nullptr) SelectObject(dc, old_font);
+    const int count = s.size() > static_cast<size_t>(INT_MAX) ? INT_MAX : static_cast<int>(s.size());
+    DrawTextW(dc, s.c_str(), count, &r, format);
+    if (old_font != nullptr && old_font != HGDI_ERROR) SelectObject(dc, old_font);
 }
 
 } // namespace nfui
