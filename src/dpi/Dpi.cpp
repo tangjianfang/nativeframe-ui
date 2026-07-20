@@ -1,5 +1,7 @@
 #include <nfui/Dpi.hpp>
 
+#include <windows.h>
+
 #include <cstdlib>
 
 namespace nfui {
@@ -23,6 +25,11 @@ int DpiScale::pixels_to_logical(int pixels) const noexcept {
 int DpiScale::scale_font_height(int logical_height) const noexcept {
     int sign = logical_height < 0 ? -1 : 1;
     return sign * logical_to_pixels(std::abs(logical_height));
+}
+
+int dpi_of(HWND hwnd) noexcept {
+    const UINT dpi = GetDpiForWindow(hwnd);
+    return dpi != 0 ? static_cast<int>(dpi) : 96;
 }
 
 } // namespace nfui

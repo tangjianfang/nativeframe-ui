@@ -6,8 +6,6 @@
 #include <windows.h>
 #include <windowsx.h>
 
-#include <string>
-
 namespace {
 
 constexpr int id_header = 101;
@@ -72,12 +70,17 @@ protected:
                              new_rect->bottom - new_rect->top,
                              SWP_NOZORDER | SWP_NOACTIVATE);
             }
-            InvalidateRect(header_.hwnd(), nullptr, TRUE);
-            InvalidateRect(ok_.hwnd(), nullptr, TRUE);
-            InvalidateRect(cancel_.hwnd(), nullptr, TRUE);
-            InvalidateRect(list_.hwnd(), nullptr, TRUE);
-            InvalidateRect(view_.hwnd(), nullptr, TRUE);
-            InvalidateRect(icon_.hwnd(), nullptr, TRUE);
+            if (view_.hwnd() != nullptr) {
+                if (HFONT f = fonts_.regular(nfui::dpi_of(hwnd()), 9)) {
+                    SendMessageW(view_.hwnd(), WM_SETFONT, reinterpret_cast<WPARAM>(f), FALSE);
+                }
+            }
+            InvalidateRect(header_.hwnd(), nullptr, FALSE);
+            InvalidateRect(ok_.hwnd(), nullptr, FALSE);
+            InvalidateRect(cancel_.hwnd(), nullptr, FALSE);
+            InvalidateRect(list_.hwnd(), nullptr, FALSE);
+            InvalidateRect(view_.hwnd(), nullptr, FALSE);
+            InvalidateRect(icon_.hwnd(), nullptr, FALSE);
             return 0;
         }
         case WM_COMMAND: {
@@ -104,11 +107,6 @@ protected:
     }
 
 private:
-    [[nodiscard]] int dpi_of_main() const noexcept {
-        const UINT dpi = GetDpiForWindow(hwnd());
-        return dpi != 0 ? static_cast<int>(dpi) : 96;
-    }
-
     template<typename ControlType>
     [[nodiscard]] bool create_child(ControlType& control,
                                     int id,
@@ -127,11 +125,11 @@ private:
             w,
             h,
         };
+        control.set_palette(&palette_);
+        control.set_font_cache(&fonts_);
         if (!control.create(params)) {
             return false;
         }
-        control.set_palette(&palette_);
-        control.set_font_cache(&fonts_);
         return true;
     }
 
@@ -148,7 +146,7 @@ private:
         if (!create_child(icon_, id_icon, L"", 384, 56, 32, 32)) {
             return false;
         }
-        app_icon_ = nfui::load_scaled_icon(instance_, MAKEINTRESOURCEW(IDI_NFUI_APP), 32, dpi_of_main());
+        app_icon_ = nfui::load_scaled_icon(instance_, MAKEINTRESOURCEW(IDI_NFUI_APP), 32, nfui::dpi_of(hwnd()));
         if (app_icon_ != nullptr) {
             icon_.set_icon(app_icon_);
         }
@@ -169,12 +167,12 @@ private:
         column.pszText = const_cast<LPWSTR>(L"Item");
         ListView_InsertColumn(view_.hwnd(), 0, &column);
 
-        for (int i = 0; i < 3; ++i) {
+        static constexpr const wchar_t* rows[] = {L"Row 0", L"Row 1", L"Row 2"};
+        for (const wchar_t* text : rows) {
             LVITEMW item{};
             item.mask = LVIF_TEXT;
-            item.iItem = i;
-            std::wstring text = L"Row " + std::to_wstring(i);
-            item.pszText = text.data();
+            item.iItem = 0;
+            item.pszText = const_cast<LPWSTR>(text);
             ListView_InsertItem(view_.hwnd(), &item);
         }
 

@@ -1,4 +1,5 @@
 #include <nfui/Controls.hpp>
+#include <nfui/Dpi.hpp>
 #include <nfui/Paint.hpp>
 
 #include <commctrl.h>
@@ -8,11 +9,6 @@ namespace nfui {
 
 namespace {
 constexpr UINT ocm_base = WM_USER + 0x1c00;
-
-int dpi_of(HWND hwnd) noexcept {
-    const UINT dpi = GetDpiForWindow(hwnd);
-    return dpi != 0 ? static_cast<int>(dpi) : 96;
-}
 
 bool control_is_owner_draw(HWND hwnd) noexcept {
     // LBS_OWNERDRAW* excluded: per-row hover highlight not yet implemented; avoids needless repaint.

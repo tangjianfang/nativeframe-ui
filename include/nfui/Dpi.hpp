@@ -1,5 +1,7 @@
 #pragma once
 
+#include <windows.h>
+
 namespace nfui {
 
 class DpiScale {
@@ -14,5 +16,8 @@ public:
 private:
     int dpi_{96};
 };
+
+// Returns the per-window DPI using GetDpiForWindow, falling back to 96 on failure.
+[[nodiscard]] int dpi_of(HWND hwnd) noexcept;
 
 } // namespace nfui
