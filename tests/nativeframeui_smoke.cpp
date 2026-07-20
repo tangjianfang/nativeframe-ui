@@ -698,5 +698,23 @@ int wmain() {
         ok = expect(m.spacing == 8, L"metrics spacing == 8") && ok;
     }
 
+    {
+        using namespace nfui;
+        HDC screen = GetDC(nullptr);
+        RECT rc{0, 0, 40, 30};
+        {
+            MemoryDC mem(screen, rc);
+            ok = expect(mem.valid(), L"MemoryDC creates an offscreen buffer") && ok;
+            ok = expect(mem.dc() != nullptr, L"MemoryDC exposes its DC") && ok;
+            fill_rect(mem.dc(), rc, Color{RGB(10, 20, 30)});
+            draw_line(mem.dc(), {0,0}, {40,30}, Color{RGB(255,255,255)}, 1);
+            POINT poly[3] = {{0,0},{40,0},{20,30}};
+            fill_polygon(mem.dc(), poly, 3, Color{RGB(200,100,50)}, Color{RGB(0,0,0)});
+            draw_polyline(mem.dc(), poly, 3, Color{RGB(0,0,0)}, 1);
+            ok = expect(true, L"MemoryDC paint helpers complete without crash") && ok;
+        }
+        ReleaseDC(nullptr, screen);
+    }
+
     return ok ? 0 : 1;
 }

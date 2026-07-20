@@ -56,6 +56,56 @@ void fill_rounded_rect(HDC dc, const RECT& bounds, int radius, Color fill, Color
     DeleteObject(pen);
 }
 
+void fill_rect(HDC dc, const RECT& bounds, Color fill) noexcept {
+    if (dc == nullptr) return;
+    HBRUSH brush = CreateSolidBrush(fill.rgb);
+    if (brush == nullptr) return;
+    HGDIOBJ old = SelectObject(dc, brush);
+    RECT r = bounds;
+    FillRect(dc, &r, brush);
+    if (old && old != HGDI_ERROR) SelectObject(dc, old);
+    DeleteObject(brush);
+}
+
+void draw_line(HDC dc, POINT a, POINT b, Color color, int width) noexcept {
+    if (dc == nullptr) return;
+    HPEN pen = CreatePen(PS_SOLID, width < 1 ? 1 : width, color.rgb);
+    if (pen == nullptr) return;
+    HGDIOBJ old = SelectObject(dc, pen);
+    MoveToEx(dc, a.x, a.y, nullptr);
+    LineTo(dc, b.x, b.y);
+    if (old && old != HGDI_ERROR) SelectObject(dc, old);
+    DeleteObject(pen);
+}
+
+void fill_polygon(HDC dc, const POINT* points, int count, Color fill, Color border) noexcept {
+    if (dc == nullptr || points == nullptr || count < 3) return;
+    HBRUSH brush = CreateSolidBrush(fill.rgb);
+    HPEN pen = CreatePen(PS_SOLID, 1, border.rgb);
+    if (brush == nullptr || pen == nullptr) {
+        if (brush) DeleteObject(brush);
+        if (pen) DeleteObject(pen);
+        return;
+    }
+    HGDIOBJ old_brush = SelectObject(dc, brush);
+    HGDIOBJ old_pen = SelectObject(dc, pen);
+    Polygon(dc, points, count);
+    if (old_brush && old_brush != HGDI_ERROR) SelectObject(dc, old_brush);
+    if (old_pen && old_pen != HGDI_ERROR) SelectObject(dc, old_pen);
+    DeleteObject(brush);
+    DeleteObject(pen);
+}
+
+void draw_polyline(HDC dc, const POINT* points, int count, Color color, int width) noexcept {
+    if (dc == nullptr || points == nullptr || count < 2) return;
+    HPEN pen = CreatePen(PS_SOLID, width < 1 ? 1 : width, color.rgb);
+    if (pen == nullptr) return;
+    HGDIOBJ old = SelectObject(dc, pen);
+    Polyline(dc, points, count);
+    if (old && old != HGDI_ERROR) SelectObject(dc, old);
+    DeleteObject(pen);
+}
+
 void draw_text(HDC dc, const RECT& bounds, std::wstring_view text, HFONT font, Color text_color, UINT format) noexcept {
     // Note: this helper passes text.data() directly to DrawTextW without copying
     // into a mutable buffer. When the caller passes DT_END_ELLIPSIS or
@@ -72,6 +122,28 @@ void draw_text(HDC dc, const RECT& bounds, std::wstring_view text, HFONT font, C
     const int count = text.size() > static_cast<size_t>(INT_MAX) ? INT_MAX : static_cast<int>(text.size());
     DrawTextW(dc, text.data(), count, &r, format);
     if (old_font != nullptr && old_font != HGDI_ERROR) SelectObject(dc, old_font);
+}
+
+MemoryDC::MemoryDC(HDC target, const RECT& bounds) noexcept
+    : target_(target), mem_dc_(nullptr), bmp_(nullptr), old_bmp_(nullptr),
+      w_(bounds.right - bounds.left), h_(bounds.bottom - bounds.top) {
+    if (target_ == nullptr || w_ <= 0 || h_ <= 0) return;
+    mem_dc_ = CreateCompatibleDC(target_);
+    if (mem_dc_ == nullptr) return;
+    bmp_ = CreateCompatibleBitmap(target_, w_, h_);
+    if (bmp_ == nullptr) { DeleteDC(mem_dc_); mem_dc_ = nullptr; return; }
+    old_bmp_ = SelectObject(mem_dc_, bmp_);
+    BitBlt(mem_dc_, 0, 0, w_, h_, target_, bounds.left, bounds.top, SRCCOPY);
+}
+
+MemoryDC::~MemoryDC() noexcept {
+    if (mem_dc_ == nullptr) return;
+    if (target_ != nullptr) {
+        BitBlt(target_, 0, 0, w_, h_, mem_dc_, 0, 0, SRCCOPY);
+    }
+    if (old_bmp_ && old_bmp_ != HGDI_ERROR) SelectObject(mem_dc_, old_bmp_);
+    if (bmp_) DeleteObject(bmp_);
+    DeleteDC(mem_dc_);
 }
 
 } // namespace nfui
