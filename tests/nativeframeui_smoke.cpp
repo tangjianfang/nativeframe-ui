@@ -711,9 +711,9 @@ int wmain() {
             POINT poly[3] = {{0,0},{40,0},{20,30}};
             fill_polygon(mem.dc(), poly, 3, Color{RGB(200,100,50)}, Color{RGB(0,0,0)});
             draw_polyline(mem.dc(), poly, 3, Color{RGB(0,0,0)}, 1);
-            ok = expect(true, L"MemoryDC paint helpers complete without crash") && ok;
         }
         ReleaseDC(nullptr, screen);
+        ok = expect(true, L"MemoryDC paint helpers complete without crash") && ok;
     }
 
     return ok ? 0 : 1;
