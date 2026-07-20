@@ -20,12 +20,18 @@ public:
     [[nodiscard]] HICON get() const noexcept { return icon_; }
     [[nodiscard]] bool valid() const noexcept { return icon_ != nullptr; }
     [[nodiscard]] HICON release() noexcept { return std::exchange(icon_, nullptr); }
-    void reset(HICON icon = nullptr) noexcept { if (icon_) DestroyIcon(icon_); icon_ = icon; }
+    void reset(HICON icon = nullptr) noexcept {
+        if (icon_ != icon) {
+            if (icon_) DestroyIcon(icon_);
+            icon_ = icon;
+        }
+    }
 private:
     HICON icon_{};
 };
 
-// resource_id is a MAKEINTRESOURCEW-wrapped id. Returns null on failure (no throw).
+// resource_id is a MAKEINTRESOURCEW-wrapped id. On success the caller owns the
+// returned HICON and must DestroyIcon it (or wrap it in IconHandle). Returns null on failure (no throw).
 [[nodiscard]] HICON load_scaled_icon(HINSTANCE instance, LPCWSTR resource_id, int logical_size, int dpi) noexcept;
 
 } // namespace nfui
