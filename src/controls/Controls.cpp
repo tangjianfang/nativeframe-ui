@@ -161,7 +161,7 @@ LRESULT CALLBACK Control::subclass_proc(HWND hwnd,
                 const bool selected = (cd->nmcd.uItemState & CDIS_SELECTED) != 0;
                 cd->clrText = selected ? p.selection_text.rgb : p.text.rgb;
                 cd->clrTextBk = selected ? p.selection.rgb : p.surface.rgb;
-                return CDRF_NEWFONT;
+                return CDRF_DODEFAULT;
             }
         }
         break; // other notify codes → DefSubclassProc
