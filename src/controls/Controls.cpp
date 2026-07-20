@@ -16,6 +16,25 @@ bool control_is_owner_draw(HWND hwnd) noexcept {
         || (style & LBS_OWNERDRAWVARIABLE) != 0
         || (style & SS_OWNERDRAW) != 0;
 }
+
+static void draw_list_item(DRAWITEMSTRUCT* di, const ThemePalette& p, FontCache* fonts) noexcept {
+    if (di == nullptr) {
+        return;
+    }
+    const bool selected = (di->itemState & ODS_SELECTED) != 0;
+    RECT rc = di->rcItem;
+    const Color bg = selected ? p.selection : p.surface;
+    const Color fg = selected ? p.selection_text : p.text;
+    fill_rounded_rect(di->hDC, rc, 0, bg, bg);
+    wchar_t buf[256]{};
+    if (di->itemID != LB_ERR &&
+        SendMessageW(di->hwndItem, LB_GETTEXT, di->itemID, reinterpret_cast<LPARAM>(buf)) != LB_ERR) {
+        HFONT font = fonts ? fonts->regular(96, 9) : nullptr;
+        RECT text_rc = rc;
+        text_rc.left += 8;
+        draw_text(di->hDC, text_rc, buf, font, fg, DT_LEFT | DT_VCENTER | DT_SINGLELINE);
+    }
+}
 }
 
 HWND Control::hwnd() const noexcept {
@@ -74,7 +93,10 @@ LRESULT CALLBACK Control::subclass_proc(HWND hwnd,
     switch (message) {
     case ocm_base + WM_DRAWITEM: {
         auto* di = reinterpret_cast<DRAWITEMSTRUCT*>(lparam);
-        if (di != nullptr && control != nullptr) {
+        if (di == nullptr || control == nullptr) {
+            break;
+        }
+        if (di->CtlType == ODT_BUTTON) {
             PaintState state{};
             state.bounds = di->rcItem;
             state.hover = control->hover_;
@@ -82,6 +104,17 @@ LRESULT CALLBACK Control::subclass_proc(HWND hwnd,
             state.focused = (di->itemState & ODS_FOCUS) != 0;
             state.enabled = (di->itemState & ODS_DISABLED) == 0;
             control->on_paint(di->hDC, state);
+        } else if (di->CtlType == ODT_LISTBOX) {
+            const ThemePalette* pal = control->palette();
+            const ThemePalette& palref = pal ? *pal : theme_palette(ThemeMode::light);
+            draw_list_item(di, palref, control->fonts());
+        }
+        return TRUE;
+    }
+    case ocm_base + WM_MEASUREITEM: {
+        auto* mi = reinterpret_cast<MEASUREITEMSTRUCT*>(lparam);
+        if (mi != nullptr && mi->CtlType == ODT_LISTBOX) {
+            mi->itemHeight = static_cast<UINT>(font_pixel_height(9, 96) + 8);
         }
         return TRUE;
     }
@@ -200,7 +233,12 @@ bool ComboBox::create(const ControlCreateParams& params) noexcept {
 }
 
 bool ListBox::create(const ControlCreateParams& params) noexcept {
-    return create_native(L"LISTBOX", params, WS_BORDER | LBS_NOTIFY | WS_VSCROLL);
+    if (!create_native(L"LISTBOX", params, WS_BORDER | LBS_NOTIFY | LBS_OWNERDRAWFIXED | LBS_HASSTRINGS | WS_VSCROLL)) {
+        return false;
+    }
+    const int row = font_pixel_height(9, 96) + 8;
+    SendMessageW(hwnd(), LB_SETITEMHEIGHT, 0, static_cast<LPARAM>(row));
+    return true;
 }
 
 bool TreeView::create(const ControlCreateParams& params) noexcept {

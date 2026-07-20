@@ -4,6 +4,7 @@
 
 #include <psapi.h>
 #include <windows.h>
+#include <windowsx.h>
 
 #include <filesystem>
 #include <iostream>
@@ -456,6 +457,31 @@ int wmain() {
             UpdateWindow(lbl.hwnd());
             ShowWindow(lbl.hwnd(), SW_HIDE);
             ok = expect(lbl.hwnd() != nullptr, L"StaticText paint cycle completes without crash") && ok;
+        }
+
+        {
+            using namespace nfui;
+            ListBox lb;
+            ControlCreateParams p{};
+            p.instance = GetModuleHandleW(nullptr);
+            p.parent = controls_parent.hwnd();
+            p.control_id = 9003;
+            p.x = 0;
+            p.y = 0;
+            p.width = 160;
+            p.height = 120;
+            ok = expect(lb.create(p), L"ListBox::create") && ok;
+            ok = expect(ListBox_AddString(lb.hwnd(), L"Apple") != LB_ERR, L"ListBox add Apple") && ok;
+            ok = expect(ListBox_AddString(lb.hwnd(), L"Banana") != LB_ERR, L"ListBox add Banana") && ok;
+            ok = expect(ListBox_GetCount(lb.hwnd()) == 2, L"ListBox count == 2") && ok;
+            ListBox_SetCurSel(lb.hwnd(), 1);
+            ok = expect(ListBox_GetCurSel(lb.hwnd()) == 1, L"ListBox cur sel == 1") && ok;
+            // owner-draw style assertion:
+            ok = expect((GetWindowLongPtrW(lb.hwnd(), GWL_STYLE) & LBS_OWNERDRAWFIXED) != 0,
+                        L"ListBox is LBS_OWNERDRAWFIXED") && ok;
+            // row height applied (see gotcha) — use LB_GETITEMHEIGHT:
+            int h = static_cast<int>(SendMessageW(lb.hwnd(), LB_GETITEMHEIGHT, 0, 0));
+            ok = expect(h > 0, L"ListBox item height > 0") && ok;
         }
 
         controls_parent.destroy();
