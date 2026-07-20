@@ -134,8 +134,9 @@ See [Validation Matrix](docs/VALIDATION_MATRIX.md) for automated and manual comp
 | `NativeFrameUIDarkStudio.exe` | Dark navigation shell with preview canvas and native status bar | [DarkStudio Walkthrough](docs/DARK_STUDIO_WALKTHROUGH.md) |
 | `NativeFrameUISettingsDemo.exe` | Category navigation with native edit/combo/check inputs and save-state feedback | [SettingsDemo Walkthrough](docs/SETTINGS_DEMO_WALKTHROUGH.md) |
 | `NativeFrameUIResourceGallery.exe` | Explicit string/menu/dialog/icon/bitmap resource loading gallery | [ResourceGallery Walkthrough](docs/RESOURCE_GALLERY_WALKTHROUGH.md) |
+| `NativeFrameUIControls.exe` | Owner-draw/custom-draw control gallery (Button, StaticText, ListBox, ListView, IconView) themed from a shared `ThemePalette` | — |
 
-Showcase and demo visuals are sample-local evaluation surfaces. Stable framework guarantees remain the documented `nfui` APIs: application startup, HWND-oriented windows and controls, commands, layout, DPI helpers, persistence, and explicit resource handling.
+Showcase, demo, and control-gallery visuals are sample-local evaluation surfaces built on the same shared primitives (`theme_palette`, `FontCache`, `fill_rounded_rect`, `draw_text`, `load_scaled_icon`). Stable framework guarantees remain the documented `nfui` APIs: application startup, HWND-oriented windows and controls, commands, layout, DPI helpers, persistence, and explicit resource handling.
 
 ## License
 
