@@ -661,6 +661,8 @@ int wmain() {
         HFONT mono96  = fc.mono(96, 9);
         ok = expect(serif96 != nullptr, L"FontCache creates serif (Georgia) at 96dpi") && ok;
         ok = expect(mono96 != nullptr, L"FontCache creates mono (Cascadia/Consolas) at 96dpi") && ok;
+        ok = expect(fc.serif(96, 9) == fc.serif(96, 9), L"FontCache reuses cached serif") && ok;
+        ok = expect(fc.mono(96, 9) == fc.mono(96, 9), L"FontCache reuses cached mono") && ok;
         ok = expect(serif96 != mono96, L"serif and mono are distinct handles") && ok;
         ok = expect(serif96 != fc.regular(96, 9), L"serif differs from regular Segoe UI") && ok;
         HFONT serif144 = fc.serif(144, 9);

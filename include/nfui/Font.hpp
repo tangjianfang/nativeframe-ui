@@ -22,8 +22,9 @@ public:
     [[nodiscard]] HFONT mono(int dpi, int point_size) noexcept;      // FW_NORMAL, Cascadia Code (fallback Consolas)
 
 private:
-    HFONT make(int dpi, int point_size, int weight, const wchar_t* family) noexcept;
-    void rebuild(HFONT& slot, int& slot_dpi, int& slot_pt, int dpi, int pt, int weight, const wchar_t* family) noexcept;
+    HFONT make(int dpi, int point_size, int weight, DWORD pitch_and_family, const wchar_t* family) noexcept;
+    void rebuild(HFONT& slot, int& slot_dpi, int& slot_pt, int dpi, int pt, int weight,
+                 DWORD pitch_and_family, const wchar_t* family) noexcept;
 
     HFONT regular_{};
     HFONT semibold_{};

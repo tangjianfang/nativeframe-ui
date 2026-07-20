@@ -14,38 +14,47 @@ FontCache::~FontCache() noexcept {
     if (mono_)     DeleteObject(mono_);
 }
 
-HFONT FontCache::make(int dpi, int point_size, int weight, const wchar_t* family) noexcept {
+HFONT FontCache::make(int dpi, int point_size, int weight, DWORD pitch_and_family,
+                      const wchar_t* family) noexcept {
     const int px = font_pixel_height(point_size, dpi);
     if (px <= 0) return nullptr;
     return CreateFontW(-px, 0, 0, 0, weight, FALSE, FALSE, FALSE,
                        DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS,
-                       CLEARTYPE_QUALITY, DEFAULT_PITCH | FF_SWISS, family);
+                       CLEARTYPE_QUALITY, pitch_and_family, family);
 }
 
 void FontCache::rebuild(HFONT& slot, int& slot_dpi, int& slot_pt,
-                        int dpi, int pt, int weight, const wchar_t* family) noexcept {
+                        int dpi, int pt, int weight, DWORD pitch_and_family,
+                        const wchar_t* family) noexcept {
     if (slot && slot_dpi == dpi && slot_pt == pt) return;
     if (slot) { DeleteObject(slot); slot = nullptr; }
-    slot = make(dpi, pt, weight, family);
+    slot = make(dpi, pt, weight, pitch_and_family, family);
     slot_dpi = dpi;
     slot_pt = pt;
 }
 
 HFONT FontCache::regular(int dpi, int point_size) noexcept {
-    rebuild(regular_, regular_dpi_, regular_pt_, dpi, point_size, FW_NORMAL, L"Segoe UI");
+    rebuild(regular_, regular_dpi_, regular_pt_, dpi, point_size, FW_NORMAL,
+            DEFAULT_PITCH | FF_SWISS, L"Segoe UI");
     return regular_;
 }
 HFONT FontCache::semibold(int dpi, int point_size) noexcept {
-    rebuild(semibold_, semibold_dpi_, semibold_pt_, dpi, point_size, FW_SEMIBOLD, L"Segoe UI");
+    rebuild(semibold_, semibold_dpi_, semibold_pt_, dpi, point_size, FW_SEMIBOLD,
+            DEFAULT_PITCH | FF_SWISS, L"Segoe UI");
     return semibold_;
 }
 HFONT FontCache::serif(int dpi, int point_size) noexcept {
-    rebuild(serif_, serif_dpi_, serif_pt_, dpi, point_size, FW_NORMAL, L"Georgia");
+    rebuild(serif_, serif_dpi_, serif_pt_, dpi, point_size, FW_NORMAL,
+            DEFAULT_PITCH | FF_ROMAN, L"Georgia");
     return serif_;
 }
 HFONT FontCache::mono(int dpi, int point_size) noexcept {
-    rebuild(mono_, mono_dpi_, mono_pt_, dpi, point_size, FW_NORMAL, L"Cascadia Code");
-    if (mono_ == nullptr) rebuild(mono_, mono_dpi_, mono_pt_, dpi, point_size, FW_NORMAL, L"Consolas");
+    rebuild(mono_, mono_dpi_, mono_pt_, dpi, point_size, FW_NORMAL,
+            DEFAULT_PITCH | FF_MODERN, L"Cascadia Code");
+    if (mono_ == nullptr) {
+        rebuild(mono_, mono_dpi_, mono_pt_, dpi, point_size, FW_NORMAL,
+                DEFAULT_PITCH | FF_MODERN, L"Consolas");
+    }
     return mono_;
 }
 
