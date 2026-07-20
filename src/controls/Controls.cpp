@@ -26,7 +26,10 @@ void draw_list_item(DRAWITEMSTRUCT* di, const ThemePalette& p, FontCache* fonts)
     RECT rc = di->rcItem;
     const Color bg = selected ? p.selection : p.surface;
     const Color fg = disabled ? p.text_secondary : (selected ? p.selection_text : p.text);
-    fill_rounded_rect(di->hDC, rc, 0, bg, bg);
+    // ListBox owner-draw uses per-item DRAWITEMSTRUCT DCs (one per row); buffering each row
+    // separately is wasteful. Paint directly into di->hDC with metrics-driven corner radius.
+    const int radius = theme_metrics().corner_radius_control;
+    fill_rounded_rect(di->hDC, rc, radius, bg, bg);
     if (di->itemID != LB_ERR) {
         LRESULT len = SendMessageW(di->hwndItem, LB_GETTEXTLEN, di->itemID, 0);
         if (len != LB_ERR && len < 255) { // leave room for null terminator
@@ -216,6 +219,7 @@ bool Button::create(const ControlCreateParams& params) noexcept {
 void Button::on_paint(HDC dc, const PaintState& state) noexcept {
     const ThemePalette* palette_ptr = palette();
     const ThemePalette& p = palette_ptr ? *palette_ptr : theme_palette(ThemeMode::light);
+    const int radius = theme_metrics().corner_radius_control;
     Color face = p.accent;
     Color text = p.accent_text;
     if (!state.enabled) {
@@ -224,10 +228,19 @@ void Button::on_paint(HDC dc, const PaintState& state) noexcept {
     } else if (state.pressed || state.hover) {
         face = p.accent_hover;
     }
-    fill_rounded_rect(dc, state.bounds, 6, face, p.border);
+    const RECT& b = state.bounds;
+    // Flicker-free: paint into an offscreen buffer sized to the button, BitBlt'd back on scope exit.
+    MemoryDC mem(dc, b);
+    HDC target = mem.valid() ? mem.dc() : dc;
+    // MemoryDC paints to (0,0)..(w,h); translate state.bounds so owner-draw buttons at non-zero
+    // parent positions still paint in the correct place of the buffer.
+    const RECT paint_bounds = mem.valid()
+        ? RECT{0, 0, b.right - b.left, b.bottom - b.top}
+        : b;
+    fill_rounded_rect(target, paint_bounds, radius, face, p.border);
     FontCache* cache = fonts();
     HFONT font = cache ? cache->regular(dpi_of(hwnd()), 9) : nullptr;
-    draw_text(dc, state.bounds, caption(), font, text,
+    draw_text(target, paint_bounds, caption(), font, text,
               DT_CENTER | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS);
 }
 
@@ -252,10 +265,15 @@ bool StaticText::create(const ControlCreateParams& params) noexcept {
 void StaticText::on_paint(HDC dc, const PaintState& state) noexcept {
     const ThemePalette* pal = palette();
     const ThemePalette& p = pal ? *pal : theme_palette(ThemeMode::light);
-    RECT rc = state.bounds;
-    fill_rounded_rect(dc, rc, 0, p.background, p.background);
+    const RECT& b = state.bounds;
+    MemoryDC mem(dc, b);
+    HDC target = mem.valid() ? mem.dc() : dc;
+    const RECT paint_bounds = mem.valid()
+        ? RECT{0, 0, b.right - b.left, b.bottom - b.top}
+        : b;
+    fill_rect(target, paint_bounds, p.background);
     HFONT font = fonts() ? fonts()->regular(dpi_of(hwnd()), 9) : nullptr;
-    draw_text(dc, rc, caption(), font, p.text, DT_LEFT | DT_VCENTER | DT_SINGLELINE);
+    draw_text(target, paint_bounds, caption(), font, p.text, DT_LEFT | DT_VCENTER | DT_SINGLELINE);
 }
 
 bool IconView::create(const ControlCreateParams& params) noexcept {
@@ -275,7 +293,13 @@ void IconView::on_paint(HDC dc, const PaintState& state) noexcept {
     if (icon_ == nullptr) return;
     const int w = state.bounds.right - state.bounds.left;
     const int h = state.bounds.bottom - state.bounds.top;
-    DrawIconEx(dc, state.bounds.left, state.bounds.top, icon_, w, h, 0, nullptr, DI_NORMAL);
+    const RECT& b = state.bounds;
+    MemoryDC mem(dc, b);
+    HDC target = mem.valid() ? mem.dc() : dc;
+    // Buffer origin is (0,0); fall back to raw state.bounds.left/top if buffering is unavailable.
+    const int ox = mem.valid() ? 0 : b.left;
+    const int oy = mem.valid() ? 0 : b.top;
+    DrawIconEx(target, ox, oy, icon_, w, h, 0, nullptr, DI_NORMAL);
 }
 
 bool ComboBox::create(const ControlCreateParams& params) noexcept {
