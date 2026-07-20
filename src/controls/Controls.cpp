@@ -10,29 +10,33 @@ namespace {
 constexpr UINT ocm_base = WM_USER + 0x1c00;
 
 bool control_is_owner_draw(HWND hwnd) noexcept {
+    // LBS_OWNERDRAW* excluded: per-row hover highlight not yet implemented; avoids needless repaint.
     const LONG style = GetWindowLongW(hwnd, GWL_STYLE);
     return (style & BS_OWNERDRAW) != 0
-        || (style & LBS_OWNERDRAWFIXED) != 0
-        || (style & LBS_OWNERDRAWVARIABLE) != 0
         || (style & SS_OWNERDRAW) != 0;
 }
 
-static void draw_list_item(DRAWITEMSTRUCT* di, const ThemePalette& p, FontCache* fonts) noexcept {
+void draw_list_item(DRAWITEMSTRUCT* di, const ThemePalette& p, FontCache* fonts) noexcept {
     if (di == nullptr) {
         return;
     }
     const bool selected = (di->itemState & ODS_SELECTED) != 0;
+    const bool disabled = (di->itemState & ODS_DISABLED) != 0;
     RECT rc = di->rcItem;
     const Color bg = selected ? p.selection : p.surface;
-    const Color fg = selected ? p.selection_text : p.text;
+    const Color fg = disabled ? p.text_secondary : (selected ? p.selection_text : p.text);
     fill_rounded_rect(di->hDC, rc, 0, bg, bg);
-    wchar_t buf[256]{};
-    if (di->itemID != LB_ERR &&
-        SendMessageW(di->hwndItem, LB_GETTEXT, di->itemID, reinterpret_cast<LPARAM>(buf)) != LB_ERR) {
-        HFONT font = fonts ? fonts->regular(96, 9) : nullptr;
-        RECT text_rc = rc;
-        text_rc.left += 8;
-        draw_text(di->hDC, text_rc, buf, font, fg, DT_LEFT | DT_VCENTER | DT_SINGLELINE);
+    if (di->itemID != LB_ERR) {
+        LRESULT len = SendMessageW(di->hwndItem, LB_GETTEXTLEN, di->itemID, 0);
+        if (len != LB_ERR && len < 255) { // leave room for null terminator
+            wchar_t buf[256]{};
+            if (SendMessageW(di->hwndItem, LB_GETTEXT, di->itemID, reinterpret_cast<LPARAM>(buf)) != LB_ERR) {
+                HFONT font = fonts ? fonts->regular(96, 9) : nullptr;
+                RECT text_rc = rc;
+                text_rc.left += 8;
+                draw_text(di->hDC, text_rc, buf, font, fg, DT_LEFT | DT_VCENTER | DT_SINGLELINE);
+            }
+        }
     }
 }
 }
@@ -115,8 +119,9 @@ LRESULT CALLBACK Control::subclass_proc(HWND hwnd,
         auto* mi = reinterpret_cast<MEASUREITEMSTRUCT*>(lparam);
         if (mi != nullptr && mi->CtlType == ODT_LISTBOX) {
             mi->itemHeight = static_cast<UINT>(font_pixel_height(9, 96) + 8);
+            return TRUE;
         }
-        return TRUE;
+        break; // let DefSubclassProc handle unknown CtlTypes
     }
     case WM_MOUSEMOVE: {
         if (control != nullptr && !control->hover_ && control_is_owner_draw(hwnd)) {

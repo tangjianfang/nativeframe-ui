@@ -476,6 +476,8 @@ int wmain() {
             ok = expect(ListBox_GetCount(lb.hwnd()) == 2, L"ListBox count == 2") && ok;
             ListBox_SetCurSel(lb.hwnd(), 1);
             ok = expect(ListBox_GetCurSel(lb.hwnd()) == 1, L"ListBox cur sel == 1") && ok;
+            RedrawWindow(lb.hwnd(), nullptr, nullptr, RDW_INVALIDATE | RDW_UPDATENOW);
+            ok = expect(true, L"ListBox owner-draw paint cycle no crash") && ok;
             // owner-draw style assertion:
             ok = expect((GetWindowLongPtrW(lb.hwnd(), GWL_STYLE) & LBS_OWNERDRAWFIXED) != 0,
                         L"ListBox is LBS_OWNERDRAWFIXED") && ok;
