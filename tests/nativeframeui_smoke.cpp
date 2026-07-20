@@ -128,6 +128,17 @@ INT_PTR CALLBACK test_dialog_proc(HWND hwnd, UINT message, WPARAM wparam, LPARAM
     return FALSE;
 }
 
+constexpr UINT ocm_base_test = WM_USER + 0x1c00;
+
+LRESULT CALLBACK reflection_test_subclass_proc(HWND hwnd, UINT message, WPARAM wparam, LPARAM lparam,
+                                               UINT_PTR /*id*/, DWORD_PTR ref_data) noexcept {
+    if (message == ocm_base_test + WM_DRAWITEM) {
+        ++*reinterpret_cast<int*>(ref_data);
+        return TRUE;
+    }
+    return DefSubclassProc(hwnd, message, wparam, lparam);
+}
+
 } // namespace
 
 int wmain() {
@@ -381,6 +392,26 @@ int wmain() {
         splitter.set_ratio(2.0);
         ok = expect(splitter.ratio() == 1.0, L"Splitter clamps high ratio") && ok;
         ok = expect(splitter.hwnd() != nullptr, L"Splitter exposes HWND") && ok;
+
+        // Reflection: an owner-draw button child must receive OCM_DRAWITEM via Window reflection.
+        int reflected_draw_count = 0;
+        ShowWindow(controls_parent.hwnd(), SW_SHOW);
+        HWND owner_button = CreateWindowExW(0, L"BUTTON", L"X",
+            WS_CHILD | WS_VISIBLE | BS_OWNERDRAW, 0, 0, 60, 24,
+            controls_parent.hwnd(), reinterpret_cast<HMENU>(static_cast<INT_PTR>(9001)),
+            GetModuleHandleW(nullptr), nullptr);
+        ok = expect(owner_button != nullptr, L"owner-draw button child can be created") && ok;
+        if (owner_button != nullptr) {
+            SetWindowSubclass(owner_button, reflection_test_subclass_proc, 9001,
+                              reinterpret_cast<DWORD_PTR>(&reflected_draw_count));
+            InvalidateRect(owner_button, nullptr, TRUE);
+            UpdateWindow(owner_button);
+            ok = expect(reflected_draw_count > 0,
+                        L"Window reflects WM_DRAWITEM to owner-draw child as OCM_DRAWITEM") && ok;
+            RemoveWindowSubclass(owner_button, reflection_test_subclass_proc, 9001);
+            DestroyWindow(owner_button);
+        }
+        ShowWindow(controls_parent.hwnd(), SW_HIDE);
 
         controls_parent.destroy();
         ok = expect(!button.valid() && button.hwnd() == nullptr,

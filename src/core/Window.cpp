@@ -10,6 +10,64 @@ void report_callback_exception() noexcept {
     OutputDebugStringW(L"NativeFrameUI: exception was stopped at WindowProc boundary.\n");
 }
 
+constexpr UINT ocm_base = WM_USER + 0x1c00;
+
+// Returns the child HWND that should receive the reflected (OCM_*) message, or null if
+// the message should not be reflected. Only true child windows are reflected so that
+// notifications whose hwndFrom is the parent itself (or a non-child) are handled normally.
+HWND reflection_target(HWND parent, UINT message, WPARAM /*wparam*/, LPARAM lparam) noexcept {
+    HWND child = nullptr;
+    switch (message) {
+    case WM_DRAWITEM: {
+        auto* di = reinterpret_cast<DRAWITEMSTRUCT*>(lparam);
+        child = di ? di->hwndItem : nullptr;
+        break;
+    }
+    case WM_MEASUREITEM: {
+        auto* mi = reinterpret_cast<MEASUREITEMSTRUCT*>(lparam);
+        if (mi != nullptr && mi->CtlType != ODT_MENU) {
+            child = GetDlgItem(parent, static_cast<int>(mi->CtlID));
+        }
+        break;
+    }
+    case WM_DELETEITEM: {
+        auto* di = reinterpret_cast<DELETEITEMSTRUCT*>(lparam);
+        child = di ? di->hwndItem : nullptr;
+        break;
+    }
+    case WM_COMPAREITEM: {
+        auto* ci = reinterpret_cast<COMPAREITEMSTRUCT*>(lparam);
+        if (ci != nullptr) {
+            child = GetDlgItem(parent, static_cast<int>(ci->CtlID));
+        }
+        break;
+    }
+    case WM_NOTIFY: {
+        auto* nmh = reinterpret_cast<NMHDR*>(lparam);
+        child = nmh ? nmh->hwndFrom : nullptr;
+        break;
+    }
+    case WM_COMMAND:
+    case WM_HSCROLL:
+    case WM_VSCROLL:
+    case WM_CTLCOLORBTN:
+    case WM_CTLCOLORSTATIC:
+    case WM_CTLCOLOREDIT:
+    case WM_CTLCOLORLISTBOX:
+    case WM_CTLCOLORDLG:
+    case WM_CTLCOLORSCROLLBAR:
+    case WM_CTLCOLORMSGBOX:
+        child = reinterpret_cast<HWND>(lparam);
+        break;
+    default:
+        return nullptr;
+    }
+    if (child == nullptr || child == parent) {
+        return nullptr;
+    }
+    return IsChild(parent, child) ? child : nullptr;
+}
+
 } // namespace
 
 Window::~Window() noexcept {
@@ -53,6 +111,14 @@ void Window::destroy() noexcept {
 }
 
 LRESULT Window::handle_message(UINT message, WPARAM wparam, LPARAM lparam) {
+    HWND child = reflection_target(hwnd_, message, wparam, lparam);
+    if (child != nullptr) {
+        LRESULT reflected = SendMessageW(child, ocm_base + message, wparam, lparam);
+        if (reflected != 0) {
+            return reflected;
+        }
+    }
+
     if (message == WM_COMMAND) {
         int command_id = LOWORD(wparam);
         UINT notification_code = HIWORD(wparam);
