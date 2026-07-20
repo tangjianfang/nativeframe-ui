@@ -100,7 +100,7 @@ LRESULT CALLBACK Control::subclass_proc(HWND hwnd,
         if (di == nullptr || control == nullptr) {
             break;
         }
-        if (di->CtlType == ODT_BUTTON) {
+        if (di->CtlType == ODT_BUTTON || di->CtlType == ODT_STATIC) {
             PaintState state{};
             state.bounds = di->rcItem;
             state.hover = control->hover_;
@@ -249,6 +249,24 @@ void StaticText::on_paint(HDC dc, const PaintState& state) noexcept {
     fill_rounded_rect(dc, rc, 0, p.background, p.background);
     HFONT font = fonts() ? fonts()->regular(96, 9) : nullptr;
     draw_text(dc, rc, caption(), font, p.text, DT_LEFT | DT_VCENTER | DT_SINGLELINE);
+}
+
+bool IconView::create(const ControlCreateParams& params) noexcept {
+    ControlCreateParams p = params;
+    p.style = WS_CHILD | WS_VISIBLE;
+    return create_native(L"STATIC", p, SS_OWNERDRAW);  // owner-draw → OCM_DRAWITEM with CtlType == ODT_STATIC
+}
+
+void IconView::set_icon(HICON icon) noexcept {
+    icon_ = icon;
+    InvalidateRect(hwnd(), nullptr, FALSE);
+}
+
+void IconView::on_paint(HDC dc, const PaintState& state) noexcept {
+    if (icon_ == nullptr) return;
+    const int w = state.bounds.right - state.bounds.left;
+    const int h = state.bounds.bottom - state.bounds.top;
+    DrawIconEx(dc, state.bounds.left, state.bounds.top, icon_, w, h, 0, nullptr, DI_NORMAL);
 }
 
 bool ComboBox::create(const ControlCreateParams& params) noexcept {

@@ -503,6 +503,31 @@ int wmain() {
             ok = expect(true, L"ListView custom-draw paint no crash") && ok;
         }
 
+        {
+            using namespace nfui;
+            IconView ico;
+            ControlCreateParams p{};
+            p.instance = GetModuleHandleW(nullptr); p.parent = controls_parent.hwnd();
+            p.control_id = 9005; p.x = 0; p.y = 0; p.width = 24; p.height = 24;
+            ok = expect(ico.create(p), L"IconView::create") && ok;
+            ok = expect(ico.valid(), L"IconView::valid") && ok;
+            ok = expect((GetWindowLongPtrW(ico.hwnd(), GWL_STYLE) & SS_OWNERDRAW) != 0, L"IconView is SS_OWNERDRAW") && ok;
+            // exercise the DrawIconEx paint path with a real icon. The framework helper
+            // expects a module resource id; IDI_APPLICATION is a stock system icon, so fall
+            // back to LoadIconW when the helper returns null.
+            HICON h = nfui::load_scaled_icon(GetModuleHandleW(nullptr), IDI_APPLICATION, 24, 24);
+            bool owns_icon = true;
+            if (h == nullptr) {
+                h = LoadIconW(nullptr, IDI_APPLICATION);
+                owns_icon = false;
+            }
+            ok = expect(h != nullptr, L"load_scaled_icon IDI_APPLICATION or LoadIconW fallback") && ok;
+            ico.set_icon(h);
+            RedrawWindow(ico.hwnd(), nullptr, nullptr, RDW_INVALIDATE | RDW_UPDATENOW);
+            ok = expect(true, L"IconView owner-draw paint no crash") && ok;
+            if (h && owns_icon) DestroyIcon(h);
+        }
+
         controls_parent.destroy();
         ok = expect(!button.valid() && button.hwnd() == nullptr,
                     L"Button wrapper invalidates HWND after parent destruction") && ok;

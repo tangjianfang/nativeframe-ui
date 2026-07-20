@@ -98,6 +98,16 @@ protected:
     [[nodiscard]] bool wants_self_paint() const noexcept override { return true; }
 };
 
+class IconView : public Control {
+public:
+    [[nodiscard]] bool create(const ControlCreateParams& params) noexcept;
+    void set_icon(HICON icon) noexcept;
+protected:
+    void on_paint(HDC dc, const PaintState& state) noexcept override;
+private:
+    HICON icon_{};
+};
+
 class ComboBox : public Control {
 public:
     [[nodiscard]] bool create(const ControlCreateParams& params) noexcept;
