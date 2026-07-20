@@ -116,7 +116,7 @@ constexpr std::array<std::wstring_view, 3> inspector_values{
     ShowcasePalette palette{};
     palette.window = p.background;
     palette.sidebar = dark ? nfui::darken(p.background, 0.22f)
-                           : nfui::alpha_blend(p.border, p.background, 0.08f);
+                           : nfui::alpha_blend(p.border, p.surface, 0.35f);
     palette.command_bar = dark ? nfui::darken(p.background, 0.24f)
                                : nfui::alpha_blend(p.border, p.background, 0.06f);
     palette.surface = p.surface;
@@ -408,7 +408,7 @@ void ShowcaseView::paint(HDC hdc, nfui::FontCache& fonts) const noexcept {
     for (std::size_t index = 0; index < layout.cards.size(); ++index) {
         const bool hovered = hovered_card_ == static_cast<int>(index);
         const nfui::Color fill = hovered
-                                     ? nfui::alpha_blend(palette.surface, palette.accent, 0.22f)
+                                     ? nfui::alpha_blend(palette.accent, palette.surface, 0.22f)
                                      : palette.surface;
         const nfui::Color border = hovered ? palette.accent : palette.border;
         nfui::fill_rounded_rect(hdc, layout.cards[index], radius, fill, border);

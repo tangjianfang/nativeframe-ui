@@ -1,6 +1,5 @@
 #include <nfui/Paint.hpp>
 
-#include <uxtheme.h>
 #include <string>
 
 namespace nfui {
@@ -38,19 +37,6 @@ Color alpha_blend(Color src, Color dst, float alpha) noexcept {
                   clamp_byte(mix(GetBValue(src.rgb), GetBValue(dst.rgb))))};
 }
 
-BufferedPaintContext::BufferedPaintContext(HWND hwnd, const RECT& bounds) noexcept {
-    HDC win_dc = GetDC(hwnd);
-    if (win_dc == nullptr) return;
-    handle_ = BeginBufferedPaint(win_dc, &bounds, BPBF_COMPOSITED, nullptr, &mem_dc_);
-    ReleaseDC(hwnd, win_dc);
-}
-
-BufferedPaintContext::~BufferedPaintContext() noexcept {
-    if (handle_ != nullptr) {
-        EndBufferedPaint(handle_, TRUE);
-    }
-}
-
 void fill_rounded_rect(HDC dc, const RECT& bounds, int radius, Color fill, Color border) noexcept {
     if (dc == nullptr) return;
     const int r = radius < 0 ? 0 : radius;
@@ -71,6 +57,13 @@ void fill_rounded_rect(HDC dc, const RECT& bounds, int radius, Color fill, Color
 }
 
 void draw_text(HDC dc, const RECT& bounds, std::wstring_view text, HFONT font, Color text_color, UINT format) noexcept {
+    // Note: this helper passes text.data() directly to DrawTextW without copying
+    // into a mutable buffer. When the caller passes DT_END_ELLIPSIS or
+    // DT_MODIFYSTRING, DrawTextW may write back into the buffer; the input text
+    // MUST therefore be null-terminated (e.g. a null-terminated string viewed via
+    // std::wstring_view whose length covers up to but not necessarily including
+    // the terminator). Non-null-terminated views are safe only with formats that
+    // do not modify the buffer.
     if (dc == nullptr || text.empty()) return;
     HGDIOBJ old_font = font ? SelectObject(dc, font) : nullptr;
     SetBkMode(dc, TRANSPARENT);

@@ -75,6 +75,13 @@ protected:
                     SendMessageW(view_.hwnd(), WM_SETFONT, reinterpret_cast<WPARAM>(f), FALSE);
                 }
             }
+            if (list_.hwnd() != nullptr) {
+                SendMessageW(list_.hwnd(),
+                              LB_SETITEMHEIGHT,
+                              0,
+                              static_cast<LPARAM>(nfui::font_pixel_height(9, nfui::dpi_of(hwnd())) + 8));
+                InvalidateRect(list_.hwnd(), nullptr, TRUE);
+            }
             InvalidateRect(header_.hwnd(), nullptr, FALSE);
             InvalidateRect(ok_.hwnd(), nullptr, FALSE);
             InvalidateRect(cancel_.hwnd(), nullptr, FALSE);

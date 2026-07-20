@@ -145,7 +145,13 @@ LRESULT CALLBACK Control::subclass_proc(HWND hwnd,
     }
     case WM_SETTEXT: {
         if (control != nullptr && lparam != 0) {
-            control->caption_ = reinterpret_cast<const wchar_t*>(lparam);
+            try {
+                control->caption_ = reinterpret_cast<const wchar_t*>(lparam);
+            } catch (...) {
+                // Allocation failure: leave caption_ as-is. Painting falls back
+                // to whatever caption was cached; never let an exception escape
+                // the noexcept subclass callback boundary.
+            }
         }
         break;
     }

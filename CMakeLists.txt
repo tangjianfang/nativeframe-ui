@@ -27,7 +27,7 @@ target_include_directories(NativeFrameUI
         $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
         $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/resources>
 )
-target_link_libraries(NativeFrameUI PUBLIC comctl32 uxtheme)
+target_link_libraries(NativeFrameUI PUBLIC comctl32)
 nfui_apply_compiler_options(NativeFrameUI)
 
 add_executable(NativeFrameUIWorkbench WIN32
