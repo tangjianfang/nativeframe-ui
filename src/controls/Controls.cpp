@@ -148,6 +148,24 @@ LRESULT CALLBACK Control::subclass_proc(HWND hwnd,
         }
         break;
     }
+    case ocm_base + WM_NOTIFY: {
+        auto* nmh = reinterpret_cast<NMHDR*>(lparam);
+        if (nmh != nullptr && nmh->code == NM_CUSTOMDRAW) {
+            auto* cd = reinterpret_cast<NMLVCUSTOMDRAW*>(lparam);
+            if (cd->nmcd.dwDrawStage == CDDS_PREPAINT) {
+                return CDRF_NOTIFYITEMDRAW;
+            }
+            if (cd->nmcd.dwDrawStage == CDDS_ITEMPREPAINT) {
+                const ThemePalette* pal = control ? control->palette() : nullptr;
+                const ThemePalette& p = pal ? *pal : theme_palette(ThemeMode::light);
+                const bool selected = (cd->nmcd.uItemState & CDIS_SELECTED) != 0;
+                cd->clrText = selected ? p.selection_text.rgb : p.text.rgb;
+                cd->clrTextBk = selected ? p.selection.rgb : p.surface.rgb;
+                return CDRF_NEWFONT;
+            }
+        }
+        break; // other notify codes → DefSubclassProc
+    }
     case WM_PAINT: {
         if (control != nullptr && control->wants_self_paint()) {
             PAINTSTRUCT ps{};
@@ -251,7 +269,18 @@ bool TreeView::create(const ControlCreateParams& params) noexcept {
 }
 
 bool ListView::create(const ControlCreateParams& params) noexcept {
-    return create_native(WC_LISTVIEWW, params, WS_BORDER | LVS_REPORT);
+    ControlCreateParams p = params;
+    p.style &= ~WS_BORDER; // accept default chrome for V1
+    if (!create_native(WC_LISTVIEWW, p, LVS_REPORT | LVS_SINGLESEL)) {
+        return false;
+    }
+    if (fonts() != nullptr) {
+        if (HFONT f = fonts()->regular(96, 9)) {
+            SendMessageW(hwnd(), WM_SETFONT, reinterpret_cast<WPARAM>(f), FALSE);
+        }
+    }
+    ListView_SetExtendedListViewStyle(hwnd(), LVS_EX_FULLROWSELECT);
+    return true;
 }
 
 bool StatusBar::create(const ControlCreateParams& params) noexcept {

@@ -486,6 +486,23 @@ int wmain() {
             ok = expect(h > 0, L"ListBox item height > 0") && ok;
         }
 
+        {
+            using namespace nfui;
+            ListView lv;
+            ControlCreateParams p{};
+            p.instance = GetModuleHandleW(nullptr); p.parent = controls_parent.hwnd();
+            p.control_id = 9004; p.x = 0; p.y = 0; p.width = 240; p.height = 160;
+            ok = expect(lv.create(p), L"ListView::create") && ok;
+            LVCOLUMNW col{}; col.mask = LVCF_TEXT | LVCF_WIDTH; col.cx = 120; col.pszText = const_cast<LPWSTR>(L"Name");
+            ok = expect(ListView_InsertColumn(lv.hwnd(), 0, &col) != -1, L"ListView insert column") && ok;
+            LVITEMW it{}; it.mask = LVIF_TEXT; it.iItem = 0; it.pszText = const_cast<LPWSTR>(L"Row 1");
+            ok = expect(ListView_InsertItem(lv.hwnd(), &it) != -1, L"ListView insert item") && ok;
+            ok = expect(ListView_GetItemCount(lv.hwnd()) == 1, L"ListView item count == 1") && ok;
+            // exercise custom-draw paint path:
+            RedrawWindow(lv.hwnd(), nullptr, nullptr, RDW_INVALIDATE | RDW_UPDATENOW);
+            ok = expect(true, L"ListView custom-draw paint no crash") && ok;
+        }
+
         controls_parent.destroy();
         ok = expect(!button.valid() && button.hwnd() == nullptr,
                     L"Button wrapper invalidates HWND after parent destruction") && ok;
