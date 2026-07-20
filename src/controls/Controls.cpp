@@ -9,6 +9,11 @@ namespace nfui {
 namespace {
 constexpr UINT ocm_base = WM_USER + 0x1c00;
 
+int dpi_of(HWND hwnd) noexcept {
+    const UINT dpi = GetDpiForWindow(hwnd);
+    return dpi != 0 ? static_cast<int>(dpi) : 96;
+}
+
 bool control_is_owner_draw(HWND hwnd) noexcept {
     // LBS_OWNERDRAW* excluded: per-row hover highlight not yet implemented; avoids needless repaint.
     const LONG style = GetWindowLongW(hwnd, GWL_STYLE);
@@ -31,7 +36,7 @@ void draw_list_item(DRAWITEMSTRUCT* di, const ThemePalette& p, FontCache* fonts)
         if (len != LB_ERR && len < 255) { // leave room for null terminator
             wchar_t buf[256]{};
             if (SendMessageW(di->hwndItem, LB_GETTEXT, di->itemID, reinterpret_cast<LPARAM>(buf)) != LB_ERR) {
-                HFONT font = fonts ? fonts->regular(96, 9) : nullptr;
+                HFONT font = fonts ? fonts->regular(dpi_of(di->hwndItem), 9) : nullptr;
                 RECT text_rc = rc;
                 text_rc.left += 8;
                 draw_text(di->hDC, text_rc, buf, font, fg, DT_LEFT | DT_VCENTER | DT_SINGLELINE);
@@ -118,7 +123,7 @@ LRESULT CALLBACK Control::subclass_proc(HWND hwnd,
     case ocm_base + WM_MEASUREITEM: {
         auto* mi = reinterpret_cast<MEASUREITEMSTRUCT*>(lparam);
         if (mi != nullptr && mi->CtlType == ODT_LISTBOX) {
-            mi->itemHeight = static_cast<UINT>(font_pixel_height(9, 96) + 8);
+            mi->itemHeight = static_cast<UINT>(font_pixel_height(9, dpi_of(hwnd)) + 8);
             return TRUE;
         }
         break; // let DefSubclassProc handle unknown CtlTypes
@@ -219,7 +224,7 @@ void Button::on_paint(HDC dc, const PaintState& state) noexcept {
     }
     fill_rounded_rect(dc, state.bounds, 6, face, p.border);
     FontCache* cache = fonts();
-    HFONT font = cache ? cache->regular(96, 9) : nullptr;
+    HFONT font = cache ? cache->regular(dpi_of(hwnd()), 9) : nullptr;
     draw_text(dc, state.bounds, caption(), font, text,
               DT_CENTER | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS);
 }
@@ -247,7 +252,7 @@ void StaticText::on_paint(HDC dc, const PaintState& state) noexcept {
     const ThemePalette& p = pal ? *pal : theme_palette(ThemeMode::light);
     RECT rc = state.bounds;
     fill_rounded_rect(dc, rc, 0, p.background, p.background);
-    HFONT font = fonts() ? fonts()->regular(96, 9) : nullptr;
+    HFONT font = fonts() ? fonts()->regular(dpi_of(hwnd()), 9) : nullptr;
     draw_text(dc, rc, caption(), font, p.text, DT_LEFT | DT_VCENTER | DT_SINGLELINE);
 }
 
@@ -279,7 +284,7 @@ bool ListBox::create(const ControlCreateParams& params) noexcept {
     if (!create_native(L"LISTBOX", params, WS_BORDER | LBS_NOTIFY | LBS_OWNERDRAWFIXED | LBS_HASSTRINGS | WS_VSCROLL)) {
         return false;
     }
-    const int row = font_pixel_height(9, 96) + 8;
+    const int row = font_pixel_height(9, dpi_of(hwnd())) + 8;
     SendMessageW(hwnd(), LB_SETITEMHEIGHT, 0, static_cast<LPARAM>(row));
     return true;
 }
@@ -295,7 +300,7 @@ bool ListView::create(const ControlCreateParams& params) noexcept {
         return false;
     }
     if (fonts() != nullptr) {
-        if (HFONT f = fonts()->regular(96, 9)) {
+        if (HFONT f = fonts()->regular(dpi_of(hwnd()), 9)) {
             SendMessageW(hwnd(), WM_SETFONT, reinterpret_cast<WPARAM>(f), FALSE);
         }
     }
