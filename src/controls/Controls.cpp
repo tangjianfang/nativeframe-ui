@@ -1,9 +1,14 @@
 #include <nfui/Controls.hpp>
+#include <nfui/Paint.hpp>
 
 #include <commctrl.h>
 #include <string>
 
 namespace nfui {
+
+namespace {
+constexpr UINT ocm_base = WM_USER + 0x1c00;
+}
 
 HWND Control::hwnd() const noexcept {
     return hwnd_.hwnd();
@@ -20,6 +25,7 @@ bool Control::create_native(std::wstring_view class_name, const ControlCreatePar
 
     std::wstring owned_class_name(class_name);
     std::wstring text(params.text);
+    caption_ = text;
     HWND created = CreateWindowExW(params.ex_style,
                                    owned_class_name.c_str(),
                                    text.c_str(),
@@ -57,6 +63,51 @@ LRESULT CALLBACK Control::subclass_proc(HWND hwnd,
                                         UINT_PTR subclass_id,
                                         DWORD_PTR ref_data) noexcept {
     auto* control = reinterpret_cast<Control*>(ref_data);
+
+    switch (message) {
+    case ocm_base + WM_DRAWITEM: {
+        auto* di = reinterpret_cast<DRAWITEMSTRUCT*>(lparam);
+        if (di != nullptr && control != nullptr) {
+            PaintState state{};
+            state.bounds = di->rcItem;
+            state.hover = control->hover_;
+            state.pressed = (di->itemState & ODS_SELECTED) != 0;
+            state.focused = (di->itemState & ODS_FOCUS) != 0;
+            state.enabled = (di->itemState & ODS_DISABLED) == 0;
+            control->on_paint(di->hDC, state);
+        }
+        return TRUE;
+    }
+    case WM_MOUSEMOVE: {
+        if (control != nullptr && !control->hover_) {
+            control->hover_ = true;
+            TRACKMOUSEEVENT tme{};
+            tme.cbSize = sizeof(tme);
+            tme.dwFlags = TME_LEAVE;
+            tme.hwndTrack = hwnd;
+            TrackMouseEvent(&tme);
+            InvalidateRect(hwnd, nullptr, FALSE);
+        }
+        break;
+    }
+    case WM_MOUSELEAVE: {
+        if (control != nullptr) {
+            control->hover_ = false;
+            control->pressed_ = false;
+            InvalidateRect(hwnd, nullptr, FALSE);
+        }
+        break;
+    }
+    case WM_LBUTTONDOWN:
+        if (control != nullptr) { control->pressed_ = true; InvalidateRect(hwnd, nullptr, FALSE); }
+        break;
+    case WM_LBUTTONUP:
+        if (control != nullptr) { control->pressed_ = false; InvalidateRect(hwnd, nullptr, FALSE); }
+        break;
+    default:
+        break;
+    }
+
     LRESULT result = DefSubclassProc(hwnd, message, wparam, lparam);
     if (message == WM_NCDESTROY) {
         if (control != nullptr) {
@@ -68,7 +119,25 @@ LRESULT CALLBACK Control::subclass_proc(HWND hwnd,
 }
 
 bool Button::create(const ControlCreateParams& params) noexcept {
-    return create_native(L"BUTTON", params, BS_PUSHBUTTON);
+    ControlCreateParams owner_params = params;
+    owner_params.style &= ~WS_BORDER;
+    return create_native(L"BUTTON", owner_params, BS_OWNERDRAW | BS_FLAT);
+}
+
+void Button::on_paint(HDC dc, const PaintState& state) noexcept {
+    const ThemePalette& p = palette_ ? *palette_ : theme_palette(ThemeMode::light);
+    Color face = p.accent;
+    Color text = p.accent_text;
+    if (!state.enabled) {
+        face = p.border;
+        text = p.text_secondary;
+    } else if (state.pressed || state.hover) {
+        face = p.accent_hover;
+    }
+    fill_rounded_rect(dc, state.bounds, 6, face, p.border);
+    HFONT font = fonts_ ? fonts_->regular(96, 9) : nullptr;
+    draw_text(dc, state.bounds, caption(), font, text,
+              DT_CENTER | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS);
 }
 
 bool CheckBox::create(const ControlCreateParams& params) noexcept {

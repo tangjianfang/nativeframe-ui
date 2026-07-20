@@ -337,6 +337,19 @@ int wmain() {
         ok = expect(button.create(control_params), L"Button control creates HWND") && ok;
         ok = expect(button.hwnd() != nullptr, L"Button exposes HWND") && ok;
 
+        ok = expect((GetWindowLongPtrW(button.hwnd(), GWL_STYLE) & BS_OWNERDRAW) != 0,
+                    L"Button uses owner-draw style for refined painting") && ok;
+        nfui::ThemePalette button_palette = nfui::theme_palette(nfui::ThemeMode::light);
+        nfui::FontCache button_fonts;
+        button.set_palette(&button_palette);
+        button.set_font_cache(&button_fonts);
+        ShowWindow(controls_parent.hwnd(), SW_SHOW);
+        InvalidateRect(button.hwnd(), nullptr, TRUE);
+        UpdateWindow(button.hwnd());
+        ShowWindow(controls_parent.hwnd(), SW_HIDE);
+        ok = expect(button.hwnd() != nullptr,
+                    L"Button owner-draw paint cycle completes without crash") && ok;
+
         nfui::CheckBox check_box;
         ok = expect(check_box.create(control_params), L"CheckBox control creates HWND") && ok;
         ok = expect(check_box.hwnd() != nullptr, L"CheckBox exposes HWND") && ok;

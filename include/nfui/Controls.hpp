@@ -1,7 +1,10 @@
 #pragma once
 
 #include <nfui/Handle.hpp>
+#include <nfui/Theme.hpp>
+#include <nfui/Font.hpp>
 
+#include <string>
 #include <string_view>
 #include <windows.h>
 
@@ -31,22 +34,43 @@ public:
     Control(Control&&) = delete;
     Control& operator=(Control&&) = delete;
 
+    struct PaintState {
+        bool hover{false};
+        bool pressed{false};
+        bool focused{false};
+        bool enabled{true};
+        RECT bounds{};
+    };
+
     [[nodiscard]] HWND hwnd() const noexcept;
     [[nodiscard]] bool valid() const noexcept;
 
+    // Visual dependencies injected by the owner before paint. Read-only pointers; not owned.
+    void set_palette(const ThemePalette* palette) noexcept { palette_ = palette; }
+    void set_font_cache(FontCache* fonts) noexcept { fonts_ = fonts; }
+    const ThemePalette* palette_{nullptr};
+    FontCache* fonts_{nullptr};
+
 protected:
     [[nodiscard]] bool create_native(std::wstring_view class_name, const ControlCreateParams& params, DWORD extra_style) noexcept;
+    [[nodiscard]] const std::wstring& caption() const noexcept { return caption_; }
+    virtual void on_paint(HDC dc, const PaintState& state) noexcept { (void)dc; (void)state; }
 
 private:
     void detach_destroyed_hwnd(HWND hwnd) noexcept;
     static LRESULT CALLBACK subclass_proc(HWND hwnd, UINT message, WPARAM wparam, LPARAM lparam, UINT_PTR subclass_id, DWORD_PTR ref_data) noexcept;
 
+    bool hover_{false};
+    bool pressed_{false};
+    std::wstring caption_;
     OwnedHwnd hwnd_{};
 };
 
 class Button : public Control {
 public:
     [[nodiscard]] bool create(const ControlCreateParams& params) noexcept;
+protected:
+    void on_paint(HDC dc, const PaintState& state) noexcept override;
 };
 
 class CheckBox : public Control {
