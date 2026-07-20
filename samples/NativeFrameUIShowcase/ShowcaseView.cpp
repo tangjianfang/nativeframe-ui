@@ -1,5 +1,7 @@
 #include "ShowcaseView.hpp"
 
+#include <nfui/Paint.hpp>
+
 #include <algorithm>
 #include <array>
 #include <string_view>
@@ -7,18 +9,18 @@
 namespace {
 
 struct ShowcasePalette {
-    COLORREF window{};
-    COLORREF sidebar{};
-    COLORREF command_bar{};
-    COLORREF surface{};
-    COLORREF surface_alt{};
-    COLORREF border{};
-    COLORREF accent{};
-    COLORREF accent_soft{};
-    COLORREF text{};
-    COLORREF muted_text{};
-    COLORREF success{};
-    COLORREF warning{};
+    nfui::Color window;
+    nfui::Color sidebar;
+    nfui::Color command_bar;
+    nfui::Color surface;
+    nfui::Color surface_alt;
+    nfui::Color border;
+    nfui::Color accent;
+    nfui::Color accent_soft;
+    nfui::Color text;
+    nfui::Color muted_text;
+    nfui::Color success;
+    nfui::Color warning;
 };
 
 struct ShowcaseLayout {
@@ -97,87 +99,42 @@ constexpr std::array<std::wstring_view, 3> inspector_values{
     return inset;
 }
 
-[[nodiscard]] COLORREF blend(COLORREF from, COLORREF to, int percent_to) noexcept {
-    percent_to = std::clamp(percent_to, 0, 100);
-    int percent_from = 100 - percent_to;
-    return RGB(
-        (GetRValue(from) * percent_from + GetRValue(to) * percent_to) / 100,
-        (GetGValue(from) * percent_from + GetGValue(to) * percent_to) / 100,
-        (GetBValue(from) * percent_from + GetBValue(to) * percent_to) / 100);
-}
-
 [[nodiscard]] ShowcasePalette palette_for(nfui::ThemeMode mode) noexcept {
-    const nfui::ThemeTokens tokens = nfui::theme_tokens(mode);
+    const nfui::ThemePalette p = nfui::theme_palette(mode);
     const bool dark = mode == nfui::ThemeMode::dark;
 
     ShowcasePalette palette{};
-    palette.window = tokens.window_background;
-    palette.sidebar = dark ? blend(tokens.window_background, RGB(0, 0, 0), 22)
-                           : blend(tokens.window_background, RGB(238, 242, 249), 92);
-    palette.command_bar = dark ? blend(tokens.window_background, RGB(62, 70, 90), 24)
-                               : blend(tokens.window_background, RGB(246, 249, 255), 96);
-    palette.surface = dark ? blend(tokens.window_background, RGB(47, 54, 66), 34)
-                           : RGB(255, 255, 255);
-    palette.surface_alt = dark ? blend(tokens.window_background, RGB(29, 34, 41), 16)
-                               : blend(tokens.window_background, RGB(234, 240, 248), 82);
-    palette.border = dark ? RGB(73, 80, 95) : RGB(214, 221, 232);
-    palette.accent = tokens.accent;
-    palette.accent_soft = dark ? blend(tokens.accent, tokens.window_background, 70)
-                               : blend(tokens.accent, RGB(255, 255, 255), 78);
-    palette.text = tokens.window_text;
-    palette.muted_text = dark ? RGB(176, 184, 201) : RGB(95, 106, 126);
-    palette.success = dark ? RGB(70, 201, 144) : RGB(24, 148, 103);
-    palette.warning = dark ? RGB(255, 189, 82) : RGB(189, 123, 24);
+    palette.window = p.background;
+    palette.sidebar = dark ? nfui::darken(p.background, 0.22f)
+                           : nfui::lighten(p.background, 0.04f);
+    palette.command_bar = dark ? nfui::darken(p.background, 0.24f)
+                               : nfui::alpha_blend(p.border, p.background, 0.06f);
+    palette.surface = p.surface;
+    palette.surface_alt = dark ? nfui::darken(p.background, 0.16f)
+                               : nfui::alpha_blend(p.border, p.background, 0.10f);
+    palette.border = p.border;
+    palette.accent = p.accent;
+    palette.accent_soft = nfui::alpha_blend(p.accent, p.background, dark ? 0.70f : 0.78f);
+    palette.text = p.text;
+    palette.muted_text = p.text_secondary;
+    palette.success = p.success;
+    palette.warning = p.warning;
     return palette;
 }
 
-void fill_rect_color(HDC hdc, const RECT& rect, COLORREF color) {
-    HBRUSH brush = CreateSolidBrush(color);
+void fill_rect_color(HDC hdc, const RECT& rect, nfui::Color color) {
+    HBRUSH brush = CreateSolidBrush(color.rgb);
     FillRect(hdc, &rect, brush);
-    DeleteObject(brush);
-}
-
-void draw_round_panel(HDC hdc, const RECT& rect, COLORREF fill, COLORREF border, int radius) {
-    HBRUSH brush = CreateSolidBrush(fill);
-    HPEN pen = CreatePen(PS_SOLID, 1, border);
-    HGDIOBJ old_brush = SelectObject(hdc, brush);
-    HGDIOBJ old_pen = SelectObject(hdc, pen);
-    RoundRect(hdc, rect.left, rect.top, rect.right, rect.bottom, radius, radius);
-    SelectObject(hdc, old_pen);
-    SelectObject(hdc, old_brush);
-    DeleteObject(pen);
     DeleteObject(brush);
 }
 
 void draw_text_block(HDC hdc,
                      const RECT& rect,
                      std::wstring_view text,
-                     COLORREF color,
+                     nfui::Color color,
                      HFONT font,
                      UINT format) {
-    SetBkMode(hdc, TRANSPARENT);
-    SetTextColor(hdc, color);
-    HGDIOBJ old_font = SelectObject(hdc, font);
-    RECT text_rect = rect;
-    DrawTextW(hdc, text.data(), static_cast<int>(text.size()), &text_rect, format);
-    SelectObject(hdc, old_font);
-}
-
-[[nodiscard]] HFONT create_font(const nfui::DpiScale& dpi, int logical_height, int weight) {
-    return CreateFontW(dpi.scale_font_height(logical_height),
-                       0,
-                       0,
-                       0,
-                       weight,
-                       FALSE,
-                       FALSE,
-                       FALSE,
-                       DEFAULT_CHARSET,
-                       OUT_DEFAULT_PRECIS,
-                       CLIP_DEFAULT_PRECIS,
-                       CLEARTYPE_QUALITY,
-                       DEFAULT_PITCH | FF_DONTCARE,
-                       L"Segoe UI");
+    nfui::draw_text(hdc, rect, text, font, color, format);
 }
 
 [[nodiscard]] ShowcaseLayout build_layout(const RECT& client_rect, const nfui::DpiScale& dpi) noexcept {
@@ -338,25 +295,25 @@ bool ShowcaseView::clear_hover() noexcept {
     return true;
 }
 
-void ShowcaseView::paint(HDC hdc) const {
+void ShowcaseView::paint(HDC hdc, nfui::FontCache& fonts) const {
     const ShowcasePalette palette = palette_for(theme_mode_);
     const ShowcaseLayout layout = build_layout(client_rect_, dpi_scale_);
-    const int radius = dpi_scale_.logical_to_pixels(18);
-    const int small_radius = dpi_scale_.logical_to_pixels(12);
+    const int radius = dpi_scale_.logical_to_pixels(9);
+    const int small_radius = dpi_scale_.logical_to_pixels(6);
     const int gap = dpi_scale_.logical_to_pixels(16);
 
     fill_rect_color(hdc, client_rect_, palette.window);
     fill_rect_color(hdc, layout.sidebar, palette.sidebar);
-    draw_round_panel(hdc, layout.command_bar, palette.command_bar, palette.border, radius);
-    draw_round_panel(hdc, layout.inspector, palette.surface_alt, palette.border, radius);
+    nfui::fill_rounded_rect(hdc, layout.command_bar, radius, palette.command_bar, palette.border);
+    nfui::fill_rounded_rect(hdc, layout.inspector, radius, palette.surface_alt, palette.border);
     fill_rect_color(hdc, layout.divider_left, palette.border);
     fill_rect_color(hdc, layout.divider_right, palette.border);
 
-    HFONT title_font = create_font(dpi_scale_, -28, FW_BOLD);
-    HFONT section_font = create_font(dpi_scale_, -18, FW_SEMIBOLD);
-    HFONT body_font = create_font(dpi_scale_, -14, FW_NORMAL);
-    HFONT metric_font = create_font(dpi_scale_, -26, FW_BOLD);
-    HFONT badge_font = create_font(dpi_scale_, -13, FW_SEMIBOLD);
+    HFONT title_font = fonts.semibold(dpi(), 21);
+    HFONT section_font = fonts.semibold(dpi(), 14);
+    HFONT body_font = fonts.regular(dpi(), 11);
+    HFONT metric_font = fonts.semibold(dpi(), 20);
+    HFONT badge_font = fonts.semibold(dpi(), 10);
 
     const RECT brand_rect = make_rect(layout.sidebar.left + gap,
                                       layout.sidebar.top + gap,
@@ -380,10 +337,10 @@ void ShowcaseView::paint(HDC hdc) const {
 
     for (std::size_t index = 0; index < layout.navigation.size(); ++index) {
         const bool selected = selected_navigation_ == static_cast<int>(index);
-        const COLORREF fill = selected ? palette.accent_soft : palette.sidebar;
-        const COLORREF border = selected ? palette.accent : palette.sidebar;
+        const nfui::Color fill = selected ? palette.accent_soft : palette.sidebar;
+        const nfui::Color border = selected ? palette.accent : palette.sidebar;
         if (selected) {
-            draw_round_panel(hdc, layout.navigation[index], fill, border, small_radius);
+            nfui::fill_rounded_rect(hdc, layout.navigation[index], small_radius, fill, border);
         }
 
         RECT label_rect = inset_rect(layout.navigation[index], dpi_scale_.logical_to_pixels(12));
@@ -410,7 +367,7 @@ void ShowcaseView::paint(HDC hdc) const {
                     body_font,
                     DT_LEFT | DT_WORDBREAK | DT_NOPREFIX);
 
-    draw_round_panel(hdc, layout.theme_toggle, palette.surface, palette.border, small_radius);
+    nfui::fill_rounded_rect(hdc, layout.theme_toggle, small_radius, palette.surface, palette.border);
     RECT toggle_label = inset_rect(layout.theme_toggle, dpi_scale_.logical_to_pixels(10));
     const std::wstring_view toggle_text =
         theme_mode_ == nfui::ThemeMode::dark ? L"Switch to light" : L"Switch to dark";
@@ -423,9 +380,11 @@ void ShowcaseView::paint(HDC hdc) const {
 
     for (std::size_t index = 0; index < layout.cards.size(); ++index) {
         const bool hovered = hovered_card_ == static_cast<int>(index);
-        const COLORREF fill = hovered ? blend(palette.surface, palette.accent_soft, 22) : palette.surface;
-        const COLORREF border = hovered ? palette.accent : palette.border;
-        draw_round_panel(hdc, layout.cards[index], fill, border, radius);
+        const nfui::Color fill = hovered
+                                     ? nfui::alpha_blend(palette.accent, palette.surface, 0.22f)
+                                     : palette.surface;
+        const nfui::Color border = hovered ? palette.accent : palette.border;
+        nfui::fill_rounded_rect(hdc, layout.cards[index], radius, fill, border);
 
         RECT card_text = inset_rect(layout.cards[index], gap);
         draw_text_block(hdc,
@@ -447,11 +406,13 @@ void ShowcaseView::paint(HDC hdc) const {
                                     layout.cards[index].bottom - dpi_scale_.logical_to_pixels(54),
                                     dpi_scale_.logical_to_pixels(130),
                                     dpi_scale_.logical_to_pixels(30));
-        const COLORREF badge_fill = index == 1 ? blend(palette.success, palette.window, 72)
-                                               : (index == 2 ? blend(palette.warning, palette.window, 78)
-                                                             : blend(palette.accent, palette.window, 82));
-        const COLORREF badge_border = index == 1 ? palette.success : (index == 2 ? palette.warning : palette.accent);
-        draw_round_panel(hdc, badge_rect, badge_fill, badge_border, small_radius);
+        const nfui::Color badge_fill = index == 1
+                                           ? nfui::alpha_blend(palette.success, palette.window, 0.72f)
+                                           : (index == 2
+                                                  ? nfui::alpha_blend(palette.warning, palette.window, 0.78f)
+                                                  : nfui::alpha_blend(palette.accent, palette.window, 0.82f));
+        const nfui::Color badge_border = index == 1 ? palette.success : (index == 2 ? palette.warning : palette.accent);
+        nfui::fill_rounded_rect(hdc, badge_rect, small_radius, badge_fill, badge_border);
         RECT badge_text = inset_rect(badge_rect, dpi_scale_.logical_to_pixels(8));
         draw_text_block(hdc,
                         badge_text,
@@ -465,7 +426,7 @@ void ShowcaseView::paint(HDC hdc) const {
                                     layout.cards[0].bottom + gap,
                                     rect_width(layout.workspace),
                                     dpi_scale_.logical_to_pixels(110));
-    draw_round_panel(hdc, workspace_note, palette.surface_alt, palette.border, radius);
+    nfui::fill_rounded_rect(hdc, workspace_note, radius, palette.surface_alt, palette.border);
     RECT note_text = inset_rect(workspace_note, gap);
     draw_text_block(hdc,
                     note_text,
@@ -493,7 +454,7 @@ void ShowcaseView::paint(HDC hdc) const {
                     DT_LEFT | DT_WORDBREAK | DT_NOPREFIX);
 
     for (std::size_t index = 0; index < layout.inspector_rows.size(); ++index) {
-        draw_round_panel(hdc, layout.inspector_rows[index], palette.surface, palette.border, small_radius);
+        nfui::fill_rounded_rect(hdc, layout.inspector_rows[index], small_radius, palette.surface, palette.border);
         RECT row_text = inset_rect(layout.inspector_rows[index], dpi_scale_.logical_to_pixels(12));
         draw_text_block(hdc,
                         row_text,
@@ -509,10 +470,4 @@ void ShowcaseView::paint(HDC hdc) const {
                         body_font,
                         DT_LEFT | DT_WORDBREAK | DT_NOPREFIX);
     }
-
-    DeleteObject(badge_font);
-    DeleteObject(metric_font);
-    DeleteObject(body_font);
-    DeleteObject(section_font);
-    DeleteObject(title_font);
 }

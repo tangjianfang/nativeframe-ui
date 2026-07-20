@@ -1,6 +1,7 @@
 #pragma once
 
 #include <nfui/Dpi.hpp>
+#include <nfui/Font.hpp>
 #include <nfui/Theme.hpp>
 
 #include <windows.h>
@@ -23,7 +24,7 @@ public:
     [[nodiscard]] bool on_left_button_down(POINT point) noexcept;
     [[nodiscard]] bool clear_hover() noexcept;
 
-    void paint(HDC hdc) const;
+    void paint(HDC hdc, nfui::FontCache& fonts) const;
 
 private:
     nfui::ThemeMode theme_mode_{nfui::ThemeMode::light};

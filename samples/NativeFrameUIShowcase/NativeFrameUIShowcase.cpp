@@ -88,7 +88,7 @@ protected:
         case WM_PAINT: {
             PAINTSTRUCT paint{};
             HDC hdc = BeginPaint(hwnd(), &paint);
-            view_.paint(hdc);
+            view_.paint(hdc, fonts_);
             EndPaint(hwnd(), &paint);
             return 0;
         }
@@ -163,6 +163,7 @@ private:
 
     HINSTANCE instance_{};
     nfui::ResourceContext resources_;
+    nfui::FontCache fonts_{};
     ShowcaseView view_;
     bool tracking_mouse_{};
     HICON large_icon_{};
