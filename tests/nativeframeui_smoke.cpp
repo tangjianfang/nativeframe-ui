@@ -128,6 +128,8 @@ INT_PTR CALLBACK test_dialog_proc(HWND hwnd, UINT message, WPARAM wparam, LPARAM
     return FALSE;
 }
 
+// Must stay in lockstep with the core ocm_base constant (WM_USER + 0x1c00) in
+// src/core/Window.cpp so the subclass proc receives the same reflected message id.
 constexpr UINT ocm_base_test = WM_USER + 0x1c00;
 
 LRESULT CALLBACK reflection_test_subclass_proc(HWND hwnd, UINT message, WPARAM wparam, LPARAM lparam,

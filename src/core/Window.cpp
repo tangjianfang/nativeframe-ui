@@ -25,7 +25,7 @@ HWND reflection_target(HWND parent, UINT message, WPARAM /*wparam*/, LPARAM lpar
     }
     case WM_MEASUREITEM: {
         auto* mi = reinterpret_cast<MEASUREITEMSTRUCT*>(lparam);
-        if (mi != nullptr && mi->CtlType != ODT_MENU) {
+        if (mi != nullptr && mi->CtlType != ODT_MENU && mi->CtlID != 0) {
             child = GetDlgItem(parent, static_cast<int>(mi->CtlID));
         }
         break;
@@ -37,7 +37,7 @@ HWND reflection_target(HWND parent, UINT message, WPARAM /*wparam*/, LPARAM lpar
     }
     case WM_COMPAREITEM: {
         auto* ci = reinterpret_cast<COMPAREITEMSTRUCT*>(lparam);
-        if (ci != nullptr) {
+        if (ci != nullptr && ci->CtlID != 0) {
             child = GetDlgItem(parent, static_cast<int>(ci->CtlID));
         }
         break;
@@ -113,7 +113,14 @@ void Window::destroy() noexcept {
 LRESULT Window::handle_message(UINT message, WPARAM wparam, LPARAM lparam) {
     HWND child = reflection_target(hwnd_, message, wparam, lparam);
     if (child != nullptr) {
+        // Reflect to the child as OCM_*. For WM_COMMAND/WM_NOTIFY the app-level
+        // on_command/on_notify still run if the child declines (returns 0); for all
+        // other reflected messages (owner-draw, ctlcolor, scroll) the child's result
+        // is authoritative, including a 0 result (e.g. WM_COMPAREITEM "items equal").
         LRESULT reflected = SendMessageW(child, ocm_base + message, wparam, lparam);
+        if (message != WM_COMMAND && message != WM_NOTIFY) {
+            return reflected;
+        }
         if (reflected != 0) {
             return reflected;
         }
