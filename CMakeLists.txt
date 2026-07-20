@@ -13,6 +13,7 @@ add_library(NativeFrameUI STATIC
     src/core/Window.cpp
     src/dpi/Dpi.cpp
     src/layout/Layout.cpp
+    src/paint/Paint.cpp
     src/persistence/Persistence.cpp
     src/resource/ResourceContext.cpp
     src/theme/Theme.cpp
@@ -24,7 +25,7 @@ target_include_directories(NativeFrameUI
         $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
         $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/resources>
 )
-target_link_libraries(NativeFrameUI PUBLIC comctl32)
+target_link_libraries(NativeFrameUI PUBLIC comctl32 uxtheme)
 nfui_apply_compiler_options(NativeFrameUI)
 
 add_executable(NativeFrameUIWorkbench WIN32

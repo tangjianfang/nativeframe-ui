@@ -1,4 +1,5 @@
 #include <nfui/NativeFrameUI.hpp>
+#include <nfui/Paint.hpp>
 
 #include "NativeFrameUIResource.h"
 
@@ -470,6 +471,18 @@ int wmain() {
         ok = expect(light.accent.rgb != light.accent_hover.rgb, L"light accent differs from accent hover") && ok;
         const nfui::ThemeTokens t = nfui::theme_tokens(nfui::ThemeMode::dark);
         ok = expect(t.window_background == dark.background.rgb, L"theme_tokens derives window_background from palette") && ok;
+    }
+
+    {
+        using namespace nfui;
+        const Color white{RGB(255, 255, 255)};
+        const Color black{RGB(0, 0, 0)};
+        const COLORREF lb = lighten(black, 0.5f).rgb;
+        ok = expect(lb == RGB(127, 127, 127) || lb == RGB(128, 128, 128), L"lighten black by half yields mid gray") && ok;
+        ok = expect(darken(white, 1.0f).rgb == black.rgb, L"darken white fully yields black") && ok;
+        ok = expect(alpha_blend(white, black, 0.0f).rgb == black.rgb, L"alpha blend alpha 0 yields destination") && ok;
+        ok = expect(alpha_blend(white, black, 1.0f).rgb == white.rgb, L"alpha blend alpha 1 yields source") && ok;
+        ok = expect(darken(white, -0.5f).rgb == white.rgb, L"darken clamps negative amount to no-op") && ok;
     }
 
     return ok ? 0 : 1;
