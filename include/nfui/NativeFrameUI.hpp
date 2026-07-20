@@ -5,6 +5,7 @@
 #include <nfui/Controls.hpp>
 #include <nfui/Diagnostics.hpp>
 #include <nfui/Dpi.hpp>
+#include <nfui/Font.hpp>
 #include <nfui/Handle.hpp>
 #include <nfui/Layout.hpp>
 #include <nfui/Paint.hpp>

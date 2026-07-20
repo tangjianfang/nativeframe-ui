@@ -12,6 +12,7 @@ add_library(NativeFrameUI STATIC
     src/core/Application.cpp
     src/core/Window.cpp
     src/dpi/Dpi.cpp
+    src/font/Font.cpp
     src/layout/Layout.cpp
     src/paint/Paint.cpp
     src/persistence/Persistence.cpp

@@ -484,5 +484,12 @@ int wmain() {
         ok = expect(darken(white, -0.5f).rgb == white.rgb, L"darken clamps negative amount to no-op") && ok;
     }
 
+    {
+        using namespace nfui;
+        ok = expect(font_pixel_height(9, 96) == 12, L"9pt at 96dpi is 12px") && ok;
+        ok = expect(font_pixel_height(9, 144) == 18, L"9pt at 144dpi is 18px (1.5x)") && ok;
+        ok = expect(font_pixel_height(0, 96) == 0, L"zero point size yields zero height") && ok;
+    }
+
     return ok ? 0 : 1;
 }
