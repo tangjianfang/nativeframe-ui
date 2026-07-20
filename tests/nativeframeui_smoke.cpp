@@ -656,6 +656,19 @@ int wmain() {
 
     {
         using namespace nfui;
+        FontCache fc;
+        HFONT serif96 = fc.serif(96, 9);
+        HFONT mono96  = fc.mono(96, 9);
+        ok = expect(serif96 != nullptr, L"FontCache creates serif (Georgia) at 96dpi") && ok;
+        ok = expect(mono96 != nullptr, L"FontCache creates mono (Cascadia/Consolas) at 96dpi") && ok;
+        ok = expect(serif96 != mono96, L"serif and mono are distinct handles") && ok;
+        ok = expect(serif96 != fc.regular(96, 9), L"serif differs from regular Segoe UI") && ok;
+        HFONT serif144 = fc.serif(144, 9);
+        ok = expect(serif144 != nullptr && serif144 != serif96, L"FontCache rebuilds serif on DPI change") && ok;
+    }
+
+    {
+        using namespace nfui;
         ok = expect(icon_pixel_size(16, 96) == 16, L"icon size is 1:1 at 96dpi") && ok;
         ok = expect(icon_pixel_size(16, 144) == 24, L"icon size scales 1.5x at 144dpi") && ok;
         ok = expect(icon_pixel_size(0, 96) == 0, L"zero logical size yields zero") && ok;
