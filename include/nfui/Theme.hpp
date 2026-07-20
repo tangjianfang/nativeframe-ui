@@ -11,12 +11,34 @@ enum class ThemeMode {
     high_contrast,
 };
 
-struct ThemeTokens {
+struct Color {
+    COLORREF rgb{};
+};
+
+struct ThemeTokens {           // back-compat, lighter view
     COLORREF window_background{};
     COLORREF window_text{};
     COLORREF accent{};
 };
 
-[[nodiscard]] ThemeTokens theme_tokens(ThemeMode mode) noexcept;
+struct ThemePalette {
+    Color background;          // window chrome
+    Color surface;             // cards / panels
+    Color surface_hover;
+    Color border;
+    Color text;
+    Color text_secondary;
+    Color accent;
+    Color accent_hover;
+    Color accent_text;         // text drawn on accent
+    Color selection;
+    Color selection_text;
+    Color danger;
+    Color success;
+    Color warning;
+};
+
+[[nodiscard]] ThemeTokens  theme_tokens(ThemeMode mode) noexcept;   // back-compat
+[[nodiscard]] ThemePalette theme_palette(ThemeMode mode) noexcept;
 
 } // namespace nfui
