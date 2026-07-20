@@ -491,5 +491,21 @@ int wmain() {
         ok = expect(font_pixel_height(0, 96) == 0, L"zero point size yields zero height") && ok;
     }
 
+    {
+        using namespace nfui;
+        FontCache fc;
+        HFONT r96 = fc.regular(96, 9);
+        HFONT s96 = fc.semibold(96, 9);
+        ok = expect(r96 != nullptr, L"FontCache creates regular font at 96dpi") && ok;
+        ok = expect(s96 != nullptr, L"FontCache creates semibold font at 96dpi") && ok;
+        ok = expect(r96 != s96, L"regular and semibold are distinct handles") && ok;
+        HFONT r144 = fc.regular(144, 9);
+        ok = expect(r144 != nullptr && r144 != r96, L"FontCache rebuilds regular on DPI change") && ok;
+        HFONT s144 = fc.semibold(144, 9);
+        ok = expect(s144 != nullptr && s144 != s96, L"FontCache rebuilds semibold on DPI change (no stale font)") && ok;
+        HFONT r12 = fc.regular(96, 12);
+        ok = expect(r12 != nullptr && r12 != r96, L"FontCache rebuilds regular on point size change") && ok;
+    }
+
     return ok ? 0 : 1;
 }
