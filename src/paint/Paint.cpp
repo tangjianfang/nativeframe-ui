@@ -71,14 +71,13 @@ void fill_rounded_rect(HDC dc, const RECT& bounds, int radius, Color fill, Color
 }
 
 void draw_text(HDC dc, const RECT& bounds, std::wstring_view text, HFONT font, Color text_color, UINT format) noexcept {
-    if (dc == nullptr) return;
-    std::wstring s(text);
+    if (dc == nullptr || text.empty()) return;
     HGDIOBJ old_font = font ? SelectObject(dc, font) : nullptr;
     SetBkMode(dc, TRANSPARENT);
     SetTextColor(dc, text_color.rgb);
     RECT r = bounds;
-    const int count = s.size() > static_cast<size_t>(INT_MAX) ? INT_MAX : static_cast<int>(s.size());
-    DrawTextW(dc, s.c_str(), count, &r, format);
+    const int count = text.size() > static_cast<size_t>(INT_MAX) ? INT_MAX : static_cast<int>(text.size());
+    DrawTextW(dc, text.data(), count, &r, format);
     if (old_font != nullptr && old_font != HGDI_ERROR) SelectObject(dc, old_font);
 }
 

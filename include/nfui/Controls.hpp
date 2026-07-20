@@ -48,20 +48,21 @@ public:
     // Visual dependencies injected by the owner before paint. Read-only pointers; not owned.
     void set_palette(const ThemePalette* palette) noexcept { palette_ = palette; }
     void set_font_cache(FontCache* fonts) noexcept { fonts_ = fonts; }
-    const ThemePalette* palette_{nullptr};
-    FontCache* fonts_{nullptr};
 
 protected:
     [[nodiscard]] bool create_native(std::wstring_view class_name, const ControlCreateParams& params, DWORD extra_style) noexcept;
     [[nodiscard]] const std::wstring& caption() const noexcept { return caption_; }
+    [[nodiscard]] const ThemePalette* palette() const noexcept { return palette_; }
+    [[nodiscard]] FontCache* fonts() const noexcept { return fonts_; }
     virtual void on_paint(HDC dc, const PaintState& state) noexcept { (void)dc; (void)state; }
 
 private:
     void detach_destroyed_hwnd(HWND hwnd) noexcept;
     static LRESULT CALLBACK subclass_proc(HWND hwnd, UINT message, WPARAM wparam, LPARAM lparam, UINT_PTR subclass_id, DWORD_PTR ref_data) noexcept;
 
+    const ThemePalette* palette_{nullptr};
+    FontCache* fonts_{nullptr};
     bool hover_{false};
-    bool pressed_{false};
     std::wstring caption_;
     OwnedHwnd hwnd_{};
 };
