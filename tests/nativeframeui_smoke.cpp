@@ -716,5 +716,24 @@ int wmain() {
         ok = expect(true, L"MemoryDC paint helpers complete without crash") && ok;
     }
 
+    {
+        using namespace nfui;
+        HDC screen = GetDC(nullptr);
+        // Pick a corner that's unlikely to be covered by another test on the developer's desktop.
+        RECT rc{200, 200, 240, 230};
+        {
+            MemoryDC mem(screen, rc);
+            ok = expect(mem.valid(), L"MemoryDC non-zero-origin: valid buffer") && ok;
+            // Paint a unique sentinel color at (0,0) of the buffer.
+            fill_rect(mem.dc(), RECT{0, 0, 40, 30}, Color{RGB(123, 234, 156)});
+        } // ~MemoryDC must flush to (200,200) — the screen pixel there should now be the sentinel.
+        COLORREF px = GetPixel(screen, 210, 210);   // midpoint of the 40x30 patch
+        ok = expect(px == RGB(123, 234, 156), L"MemoryDC non-zero-origin: flush lands at bounds.left/top") && ok;
+        // Restore the pixel we just overwrote (best-effort — use a near-black color to minimize visual impact).
+        SetPixel(screen, 210, 210, RGB(0, 0, 0));
+        ReleaseDC(nullptr, screen);
+        ok = expect(true, L"MemoryDC non-zero-origin: regression test completes without crash") && ok;
+    }
+
     return ok ? 0 : 1;
 }

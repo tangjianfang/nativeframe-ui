@@ -126,6 +126,7 @@ void draw_text(HDC dc, const RECT& bounds, std::wstring_view text, HFONT font, C
 
 MemoryDC::MemoryDC(HDC target, const RECT& bounds) noexcept
     : target_(target), mem_dc_(nullptr), bmp_(nullptr), old_bmp_(nullptr),
+      x_(bounds.left), y_(bounds.top),
       w_(bounds.right - bounds.left), h_(bounds.bottom - bounds.top) {
     if (target_ == nullptr || w_ <= 0 || h_ <= 0) return;
     mem_dc_ = CreateCompatibleDC(target_);
@@ -133,13 +134,13 @@ MemoryDC::MemoryDC(HDC target, const RECT& bounds) noexcept
     bmp_ = CreateCompatibleBitmap(target_, w_, h_);
     if (bmp_ == nullptr) { DeleteDC(mem_dc_); mem_dc_ = nullptr; return; }
     old_bmp_ = SelectObject(mem_dc_, bmp_);
-    BitBlt(mem_dc_, 0, 0, w_, h_, target_, bounds.left, bounds.top, SRCCOPY);
+    BitBlt(mem_dc_, 0, 0, w_, h_, target_, x_, y_, SRCCOPY);
 }
 
 MemoryDC::~MemoryDC() noexcept {
     if (mem_dc_ == nullptr) return;
     if (target_ != nullptr) {
-        BitBlt(target_, 0, 0, w_, h_, mem_dc_, 0, 0, SRCCOPY);
+        BitBlt(target_, x_, y_, w_, h_, mem_dc_, 0, 0, SRCCOPY);
     }
     if (old_bmp_ && old_bmp_ != HGDI_ERROR) SelectObject(mem_dc_, old_bmp_);
     if (bmp_) DeleteObject(bmp_);

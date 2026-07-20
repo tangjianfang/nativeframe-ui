@@ -24,6 +24,8 @@ void draw_text(HDC dc, const RECT& bounds, std::wstring_view text, HFONT font, C
 
 // Offscreen double buffer for flicker-free painting into ANY target HDC (works
 // for owner-draw DCs that have no HWND, unlike UxTheme BeginBufferedPaint).
+// The constructor snapshots the target rect via BitBlt, so callers paint over
+// the existing background (over-the-bg, not transparent).
 class MemoryDC {
 public:
     MemoryDC(HDC target, const RECT& bounds) noexcept;
@@ -37,6 +39,8 @@ private:
     HDC     mem_dc_{};
     HBITMAP bmp_{};
     HGDIOBJ old_bmp_{};
+    int     x_{0};
+    int     y_{0};
     int     w_{0};
     int     h_{0};
 };
