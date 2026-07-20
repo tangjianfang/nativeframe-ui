@@ -188,11 +188,7 @@ bool StaticText::create(const ControlCreateParams& params) noexcept {
 
 void StaticText::on_paint(HDC dc, const PaintState& state) noexcept {
     const ThemePalette* pal = palette();
-    ThemePalette fallback{};
-    if (pal == nullptr) {
-        fallback = theme_palette(ThemeMode::light);
-    }
-    const ThemePalette& p = pal ? *pal : fallback;
+    const ThemePalette& p = pal ? *pal : theme_palette(ThemeMode::light);
     RECT rc = state.bounds;
     fill_rounded_rect(dc, rc, 0, p.background, p.background);
     HFONT font = fonts() ? fonts()->regular(96, 9) : nullptr;
