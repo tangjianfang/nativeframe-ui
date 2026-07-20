@@ -1,5 +1,4 @@
 #include <nfui/NativeFrameUI.hpp>
-#include <nfui/Paint.hpp>
 
 #include "NativeFrameUIResource.h"
 

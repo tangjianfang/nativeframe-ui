@@ -7,6 +7,7 @@
 #include <nfui/Dpi.hpp>
 #include <nfui/Handle.hpp>
 #include <nfui/Layout.hpp>
+#include <nfui/Paint.hpp>
 #include <nfui/Persistence.hpp>
 #include <nfui/ResourceContext.hpp>
 #include <nfui/Theme.hpp>
