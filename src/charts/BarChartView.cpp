@@ -128,15 +128,10 @@ void draw_legend_column(HDC hdc,
 } // namespace
 
 void BarChartView::set_stacked(bool stacked) noexcept {
-    // TODO(c3-stacked): not yet implemented. Flag is exposed so callers can
-    // prepare data assuming stacked semantics; subsequent paint pass still
-    // renders as a grouped chart until the renderer adds stacking math.
     stacked_ = stacked;
 }
 
 void BarChartView::on_paint(HDC hdc, const RECT& bounds) {
-    (void)stacked_;  // reserved for the stacking implementation below
-
     const ThemePalette& pal =
         palette_ != nullptr ? *palette_ : theme_palette(ThemeMode::light);
 
@@ -171,42 +166,107 @@ void BarChartView::on_paint(HDC hdc, const RECT& bounds) {
     const int band_slot_w = bands.front().right - bands.front().left;
     const int sub_w = std::max(1, band_slot_w / static_cast<int>(std::max<std::size_t>(1, series_count)));
 
+    // In stacked mode the per-column sum governs the column's visual extent, so
+    // we pre-compute column sums + the global max once and reuse them for the
+    // y-axis range (passed to the tick renderer) and for the per-segment heights.
+    std::vector<double> col_sums(bar_count, 0.0);
+    double max_col_sum = 0.0;
+    if (stacked_) {
+        for (const auto& s : series_) {
+            for (std::size_t i = 0; i < s.points.size() && i < bar_count; ++i) {
+                // Negative contributions collapse to 0 so the stack still grows
+                // upward from the baseline (no separate "below zero" channel).
+                const double v = std::max(0.0, s.points[i].y);
+                col_sums[i] += v;
+            }
+        }
+        for (double cs : col_sums) {
+            if (cs > max_col_sum) max_col_sum = cs;
+        }
+    }
+
     draw_plot_frame(hdc, layout, pal);
 
-    // Render each series; sub-bars sit side-by-side within each band.
-    for (std::size_t s = 0; s < series_count; ++s) {
-        const ChartSeries& series = series_[s];
-        const int s_off = static_cast<int>(s) * sub_w;
-        for (std::size_t i = 0; i < series.points.size() && i < bands.size(); ++i) {
-            const ChartPoint& p = series.points[i];
-            const RECT& band = bands[i];
+    if (stacked_) {
+        // Stack segments vertically inside each band. The y-axis range is
+        // [axis_y_.min, eff_max] where eff_max covers the largest column sum
+        // so a max-sized stack reaches plot_top and smaller stacks scale
+        // proportionally. Each segment occupies (v / (eff_max - axis_y_.min))
+        // of plot_h above the previous cursor position.
+        double eff_min = axis_y_.min;
+        double eff_max = std::max(max_col_sum, axis_y_.max);
+        if (!(eff_max > eff_min)) eff_max = eff_min + 1.0;
+        const double y_range = eff_max - eff_min;
 
-            // Screen y is inverted. Clamp the value into the axis range so out-of-
-            // range data points still draw rather than disappearing off-canvas.
-            const double v = std::clamp(p.y, axis_y_.min, axis_y_.max);
-            int bar_top_offset = 0;
-            if (axis_y_.max > axis_y_.min) {
-                const double t = (v - axis_y_.min) / (axis_y_.max - axis_y_.min);
-                bar_top_offset = static_cast<int>(t * static_cast<double>(plot_h) + 0.5);
+        for (std::size_t i = 0; i < bar_count; ++i) {
+            const RECT& band = bands[i];
+            if (col_sums[i] <= 0.0) continue;  // empty column; nothing to stack
+            double cursor = eff_min;
+            for (std::size_t s = 0; s < series_count; ++s) {
+                const ChartSeries& series = series_[s];
+                if (i >= series.points.size()) continue;
+                const double v = std::max(0.0, series.points[i].y);
+                if (v <= 0.0) continue;
+                const double v_top = std::min(cursor + v, eff_max);
+                // Map value-space [cursor, v_top] -> plot-y (inverted).
+                const int plot_y_bot = layout.plot_bounds.bottom -
+                    static_cast<int>(((cursor - eff_min) / y_range) *
+                                      static_cast<double>(plot_h) + 0.5);
+                const int plot_y_top = layout.plot_bounds.bottom -
+                    static_cast<int>(((v_top - eff_min) / y_range) *
+                                      static_cast<double>(plot_h) + 0.5);
+                if (plot_y_top < plot_y_bot) {
+                    RECT bar{band.left, plot_y_top, band.right, plot_y_bot};
+                    fill_rounded_rect(hdc, bar, theme_metrics().corner_radius_control,
+                                      series.color, series.color);
+                }
+                cursor = v_top;
+                if (cursor >= eff_max) break;  // stack saturated; drop later segments
             }
-            const int bar_top = layout.plot_bounds.bottom - bar_top_offset;
-            const int bar_bottom = layout.plot_bounds.bottom;
-            if (bar_top >= bar_bottom) {
-                continue;  // zero-height bar
+        }
+    } else {
+        // Grouped: render each series; sub-bars sit side-by-side within each band.
+        for (std::size_t s = 0; s < series_count; ++s) {
+            const ChartSeries& series = series_[s];
+            const int s_off = static_cast<int>(s) * sub_w;
+            for (std::size_t i = 0; i < series.points.size() && i < bands.size(); ++i) {
+                const ChartPoint& p = series.points[i];
+                const RECT& band = bands[i];
+
+                // Screen y is inverted. Clamp the value into the axis range so out-of-
+                // range data points still draw rather than disappearing off-canvas.
+                const double v = std::clamp(p.y, axis_y_.min, axis_y_.max);
+                int bar_top_offset = 0;
+                if (axis_y_.max > axis_y_.min) {
+                    const double t = (v - axis_y_.min) / (axis_y_.max - axis_y_.min);
+                    bar_top_offset = static_cast<int>(t * static_cast<double>(plot_h) + 0.5);
+                }
+                const int bar_top = layout.plot_bounds.bottom - bar_top_offset;
+                const int bar_bottom = layout.plot_bounds.bottom;
+                if (bar_top >= bar_bottom) {
+                    continue;  // zero-height bar
+                }
+                RECT bar{band.left + s_off, bar_top, band.left + s_off + sub_w, bar_bottom};
+                if (bar.right <= bar.left) {
+                    continue;
+                }
+                fill_rounded_rect(hdc, bar, theme_metrics().corner_radius_control,
+                                  series.color, series.color);
             }
-            RECT bar{band.left + s_off, bar_top, band.left + s_off + sub_w, bar_bottom};
-            if (bar.right <= bar.left) {
-                continue;
-            }
-            fill_rounded_rect(hdc, bar, theme_metrics().corner_radius_control,
-                              series.color, series.color);
         }
     }
 
     const int dpi = (hwnd() != nullptr) ? dpi_of(hwnd()) : 96;
     HFONT tick_font = (fonts_ != nullptr) ? fonts_->mono(dpi, kTickFontPt) : nullptr;
 
-    draw_value_axis_ticks_v(hdc, layout, axis_y_, tick_font, pal);
+    // In stacked mode the tick labels should reflect the column-sum range, not
+    // the per-series axis range, so the y-axis reads [axis_y_.min, max_col_sum].
+    ChartAxisRange tick_axis_y = axis_y_;
+    if (stacked_ && max_col_sum > tick_axis_y.max) {
+        tick_axis_y.max = max_col_sum;
+    }
+
+    draw_value_axis_ticks_v(hdc, layout, tick_axis_y, tick_font, pal);
     draw_category_axis_ticks_v(hdc, layout, bar_count, tick_font, pal);
     draw_legend_column(hdc, layout, bounds, series_, tick_font, pal);
 }
