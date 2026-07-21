@@ -224,6 +224,7 @@ int wmain() {
 
     ok = expect(nfui::Application::initialize_process_dpi(), L"Per-Monitor DPI V2 initialization succeeds or was already set") && ok;
     ok = expect(nfui::Application::initialize_common_controls(), L"Common Controls initialization succeeds") && ok;
+    ok = expect(nfui::initialize_chart_aa(), L"Chart AA GDI+ session initializes") && ok;
 
     HWND borrowed_window = CreateWindowExW(0, L"STATIC", L"borrowed", WS_OVERLAPPEDWINDOW,
                                            CW_USEDEFAULT, CW_USEDEFAULT, 120, 80,

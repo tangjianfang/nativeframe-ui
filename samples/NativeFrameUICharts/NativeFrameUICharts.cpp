@@ -462,7 +462,8 @@ private:
 int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int show_command) {
     nfui::Application app({instance, show_command});
     if (!nfui::Application::initialize_process_dpi() ||
-        !nfui::Application::initialize_common_controls()) {
+        !nfui::Application::initialize_common_controls() ||
+        !nfui::initialize_chart_aa()) {
         return 1;
     }
 
