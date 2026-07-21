@@ -4,6 +4,9 @@
 
 #include <algorithm>
 #include <cstddef>
+#include <cstdio>
+#include <string>
+#include <string_view>
 #include <vector>
 
 namespace nfui {
@@ -167,6 +170,65 @@ bool initialize_chart_aa() noexcept {
 
 void shutdown_chart_aa() noexcept {
     charts_internal::GdiplusContext::shutdown();
+}
+
+std::wstring format_axis_tick(double value, std::wstring_view label_format) noexcept {
+    // Recognize the placeholder shape `{:.Nf}` or `{:.N%}` and translate to a
+    // matching printf format. Anything else falls back to `{:.0f}` so a malformed
+    // label_format never propagates a broken string out of on_paint.
+    wchar_t buf[64]{};
+    int precision = 0;
+    bool is_percent = false;
+    bool recognized = false;
+
+    if (label_format.size() >= 5 &&
+        label_format[0] == L'{' && label_format[1] == L':' && label_format[2] == L'.' &&
+        label_format.back() == L'}') {
+        // Pull out the spec body between `:.` and the trailing `}`.
+        const std::size_t close = label_format.size() - 1;
+        std::size_t i = 3;
+        int precision_acc = 0;
+        bool saw_digit = false;
+        for (; i < close; ++i) {
+            const wchar_t c = label_format[i];
+            if (c >= L'0' && c <= L'9') {
+                precision_acc = precision_acc * 10 + (c - L'0');
+                saw_digit = true;
+            } else if (c == L'f' || c == L'%') {
+                if (c == L'%') is_percent = true;
+                // For the supported placeholder grammar, only the trailing
+                // specifier (single f or %) is accepted; anything else (e.g.
+                // intermediate text) is treated as unrecognized.
+                if (i + 1 == close) {
+                    precision = saw_digit ? precision_acc : 0;
+                    // Cap precision so a hostile or accidental large digit run
+                    // can't blow past buf.
+                    if (precision < 0) precision = 0;
+                    if (precision > 12) precision = 12;
+                    recognized = true;
+                }
+                break;
+            } else {
+                break;
+            }
+        }
+    }
+
+    if (!recognized) {
+        // Fallback matches the historical hardcoded `%.0f` so existing callers
+        // that never set label_format (or set a malformed one) see no change.
+        precision = 0;
+        is_percent = false;
+    }
+
+    const double scaled = is_percent ? (value * 100.0) : value;
+    if (is_percent) {
+        std::swprintf(buf, std::size(buf), L"%.*f%%", precision, scaled);
+    } else {
+        std::swprintf(buf, std::size(buf), L"%.*f", precision, scaled);
+    }
+    buf[std::size(buf) - 1] = L'\0';
+    return std::wstring(buf);
 }
 
 } // namespace nfui

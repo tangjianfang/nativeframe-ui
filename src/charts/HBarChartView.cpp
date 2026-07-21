@@ -4,7 +4,6 @@
 
 #include <algorithm>
 #include <cstdio>
-#include <cstring>
 #include <string>
 #include <vector>
 
@@ -22,10 +21,8 @@ constexpr int kLegendPadY = 6;
 constexpr int kLegendRowH = 18;
 constexpr int kAxisLabelGutter = 18;
 
-void format_tick(wchar_t (&buf)[32], double value) noexcept {
-    std::swprintf(buf, std::size(buf), L"%.0f", value);
-    buf[std::size(buf) - 1] = L'\0';
-}
+// (Tick labels are formatted inline via nfui::format_axis_tick so callers can
+// pick the precision per axis via ChartAxisRange::label_format.)
 
 void draw_plot_frame(HDC hdc, const ChartLayout& layout, const ThemePalette& pal) noexcept {
     const RECT& pb = layout.plot_bounds;
@@ -46,15 +43,14 @@ void draw_value_axis_ticks_h(HDC hdc,
     const RECT& pb = layout.plot_bounds;
     const int plot_w = pb.right - pb.left;
     if (plot_w <= 0) return;
-    wchar_t buf[32]{};
     for (int i = 0; i <= kTickCount; ++i) {
         const double t = static_cast<double>(i) / kTickCount;
         const double value = axis_x_reinterpreted.min +
                              t * (axis_x_reinterpreted.max - axis_x_reinterpreted.min);
         const int px = pb.left + static_cast<int>(t * static_cast<double>(plot_w) + 0.5);
-        format_tick(buf, value);
+        const std::wstring text = format_axis_tick(value, axis_x_reinterpreted.label_format);
         RECT label{px - 16, pb.bottom + 4, px + 16, pb.bottom + kAxisLabelGutter};
-        draw_text(hdc, label, buf, font, pal.text_secondary,
+        draw_text(hdc, label, text, font, pal.text_secondary,
                   DT_CENTER | DT_TOP | DT_SINGLELINE | DT_NOPREFIX);
 
         draw_line(hdc, POINT{px, pb.bottom}, POINT{px, pb.bottom + 3}, pal.border, 1);
