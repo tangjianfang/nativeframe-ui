@@ -148,7 +148,13 @@ LRESULT CALLBACK reflection_test_subclass_proc(HWND hwnd, UINT message, WPARAM w
 
 } // namespace
 
+int per_component_smoke(); // defined below main() — per-component lib split smoke checks (T4-T12).
+
 int wmain() {
+    if (int rc = per_component_smoke(); rc != 0) {
+        return rc;
+    }
+
     bool ok = true;
 
     ok = expect(!nfui::version().empty(), L"version string is available") && ok;
@@ -936,4 +942,186 @@ int wmain() {
     }
 
     return ok ? 0 : 1;
+}
+
+// =====================================================================
+// Per-component library integration (T4-T12 split).
+// Each sub-block exercises one per-component lib via the new per-component
+// header + Control base. Each block creates its own message-only parent
+// HWND, calls create(), validates the resulting HWND, asserts a style
+// bit that proves the lib compiled its create() override into a real
+// owner-draw / native control, and cleans up. Return codes continue the
+// 120-series (after the previous 1/0 returns) so each block can identify
+// the failing leaf.
+// =====================================================================
+int per_component_smoke() {
+    using namespace nfui;
+    {
+        // ----- nfui_button (T4) -----
+        HWND parent_for_button = CreateWindowExW(0, L"STATIC", nullptr,
+            WS_OVERLAPPEDWINDOW, CW_USEDEFAULT, CW_USEDEFAULT, 320, 200,
+            nullptr, nullptr, GetModuleHandleW(nullptr), nullptr);
+        if (parent_for_button == nullptr) return 120;
+        nfui::Button b;
+        nfui::ControlCreateParams bp{};
+        bp.instance = GetModuleHandleW(nullptr);
+        bp.parent = parent_for_button;
+        bp.control_id = 9001;
+        bp.text = L"OK";
+        bp.width = 80; bp.height = 28;
+        if (!b.create(bp)) { DestroyWindow(parent_for_button); return 121; }
+        if (!b.valid() || b.hwnd() == nullptr) { DestroyWindow(parent_for_button); return 122; }
+        if ((GetWindowLongPtrW(b.hwnd(), GWL_STYLE) & BS_OWNERDRAW) == 0) { DestroyWindow(parent_for_button); return 123; }
+        DestroyWindow(parent_for_button);
+
+        // ----- nfui_checkbox (T5) -----
+        HWND hidden_cb = CreateWindowExW(0, L"STATIC", L"", WS_OVERLAPPED,
+                                         CW_USEDEFAULT, CW_USEDEFAULT, 0, 0,
+                                         HWND_MESSAGE, nullptr, GetModuleHandleW(nullptr), nullptr);
+        if (hidden_cb == nullptr) return 130;
+        nfui::CheckBox c;
+        nfui::ControlCreateParams cp{};
+        cp.instance = GetModuleHandleW(nullptr);
+        cp.parent = hidden_cb;
+        cp.control_id = 9010;
+        cp.text = L"Enable";
+        cp.width = 120; cp.height = 24;
+        if (!c.create(cp) || !c.valid()) { DestroyWindow(hidden_cb); return 131; }
+        if ((GetWindowLongPtrW(c.hwnd(), GWL_STYLE) & BS_AUTOCHECKBOX) == 0) { DestroyWindow(hidden_cb); return 132; }
+        DestroyWindow(hidden_cb);
+
+        // ----- nfui_radio (T6) -----
+        HWND hidden_rb = CreateWindowExW(0, L"STATIC", L"", WS_OVERLAPPED,
+                                         CW_USEDEFAULT, CW_USEDEFAULT, 0, 0,
+                                         HWND_MESSAGE, nullptr, GetModuleHandleW(nullptr), nullptr);
+        if (hidden_rb == nullptr) return 140;
+        nfui::RadioButton r;
+        nfui::ControlCreateParams rp{};
+        rp.instance = GetModuleHandleW(nullptr);
+        rp.parent = hidden_rb;
+        rp.control_id = 9020;
+        rp.text = L"Option";
+        rp.width = 120; rp.height = 24;
+        if (!r.create(rp) || !r.valid()) { DestroyWindow(hidden_rb); return 141; }
+        if ((GetWindowLongPtrW(r.hwnd(), GWL_STYLE) & BS_AUTORADIOBUTTON) == 0) { DestroyWindow(hidden_rb); return 142; }
+        DestroyWindow(hidden_rb);
+
+        // ----- nfui_text (T7) StaticText + Edit -----
+        HWND hidden_st = CreateWindowExW(0, L"STATIC", L"", WS_OVERLAPPED,
+                                         CW_USEDEFAULT, CW_USEDEFAULT, 0, 0,
+                                         HWND_MESSAGE, nullptr, GetModuleHandleW(nullptr), nullptr);
+        if (hidden_st == nullptr) return 150;
+        nfui::StaticText t;
+        nfui::ControlCreateParams tp{};
+        tp.instance = GetModuleHandleW(nullptr);
+        tp.parent = hidden_st;
+        tp.control_id = 9030;
+        tp.text = L"Hello";
+        tp.width = 120; tp.height = 20;
+        if (!t.create(tp) || !t.valid()) { DestroyWindow(hidden_st); return 151; }
+        if ((GetWindowLongPtrW(t.hwnd(), GWL_STYLE) & SS_TYPEMASK) != SS_LEFT) { DestroyWindow(hidden_st); return 152; }
+        nfui::Edit e;
+        nfui::ControlCreateParams ep{};
+        ep.instance = GetModuleHandleW(nullptr);
+        ep.parent = hidden_st;
+        ep.control_id = 9031;
+        ep.text = L"editable";
+        ep.width = 120; ep.height = 24;
+        if (!e.create(ep) || !e.valid()) { DestroyWindow(hidden_st); return 153; }
+        // ES_LEFT is 0x0000L on modern SDK — verify ES_AUTOHSCROLL bit instead.
+        if ((GetWindowLongPtrW(e.hwnd(), GWL_STYLE) & ES_AUTOHSCROLL) == 0) { DestroyWindow(hidden_st); return 154; }
+        DestroyWindow(hidden_st);
+
+        // ----- nfui_listbox (T8) ListBox + ComboBox -----
+        HWND hidden_lb = CreateWindowExW(0, L"STATIC", L"", WS_OVERLAPPED,
+                                         CW_USEDEFAULT, CW_USEDEFAULT, 0, 0,
+                                         HWND_MESSAGE, nullptr, GetModuleHandleW(nullptr), nullptr);
+        if (hidden_lb == nullptr) return 160;
+        nfui::ListBox lb;
+        nfui::ControlCreateParams lbp{};
+        lbp.instance = GetModuleHandleW(nullptr);
+        lbp.parent = hidden_lb;
+        lbp.control_id = 9040;
+        lbp.width = 160; lbp.height = 120;
+        if (!lb.create(lbp) || !lb.valid()) { DestroyWindow(hidden_lb); return 161; }
+        if ((GetWindowLongPtrW(lb.hwnd(), GWL_STYLE) & LBS_OWNERDRAWFIXED) == 0) { DestroyWindow(hidden_lb); return 162; }
+        nfui::ComboBox cb;
+        nfui::ControlCreateParams cbp{};
+        cbp.instance = GetModuleHandleW(nullptr);
+        cbp.parent = hidden_lb;
+        cbp.control_id = 9041;
+        cbp.width = 160; cbp.height = 24;
+        if (!cb.create(cbp) || !cb.valid()) { DestroyWindow(hidden_lb); return 163; }
+        if ((GetWindowLongPtrW(cb.hwnd(), GWL_STYLE) & CBS_DROPDOWNLIST) == 0) { DestroyWindow(hidden_lb); return 164; }
+        DestroyWindow(hidden_lb);
+
+        // ----- nfui_listview (T9) -----
+        HWND hidden_lv = CreateWindowExW(0, L"STATIC", L"", WS_OVERLAPPED,
+                                         CW_USEDEFAULT, CW_USEDEFAULT, 0, 0,
+                                         HWND_MESSAGE, nullptr, GetModuleHandleW(nullptr), nullptr);
+        if (hidden_lv == nullptr) return 170;
+        nfui::ListView lv;
+        nfui::ControlCreateParams lvp{};
+        lvp.instance = GetModuleHandleW(nullptr);
+        lvp.parent = hidden_lv;
+        lvp.control_id = 9050;
+        lvp.width = 240; lvp.height = 160;
+        if (!lv.create(lvp) || !lv.valid()) { DestroyWindow(hidden_lv); return 171; }
+        if ((GetWindowLongPtrW(lv.hwnd(), GWL_STYLE) & LVS_REPORT) == 0) { DestroyWindow(hidden_lv); return 172; }
+        DestroyWindow(hidden_lv);
+
+        // ----- nfui_treeview (T10) -----
+        HWND hidden_tv = CreateWindowExW(0, L"STATIC", L"", WS_OVERLAPPED,
+                                         CW_USEDEFAULT, CW_USEDEFAULT, 0, 0,
+                                         HWND_MESSAGE, nullptr, GetModuleHandleW(nullptr), nullptr);
+        if (hidden_tv == nullptr) return 180;
+        nfui::TreeView tv;
+        nfui::ControlCreateParams tvp{};
+        tvp.instance = GetModuleHandleW(nullptr);
+        tvp.parent = hidden_tv;
+        tvp.control_id = 9060;
+        tvp.width = 200; tvp.height = 200;
+        if (!tv.create(tvp) || !tv.valid()) { DestroyWindow(hidden_tv); return 181; }
+        if ((GetWindowLongPtrW(tv.hwnd(), GWL_STYLE) & TVS_HASLINES) == 0) { DestroyWindow(hidden_tv); return 182; }
+        DestroyWindow(hidden_tv);
+
+        // ----- nfui_iconview (T11) -----
+        HWND hidden_iv = CreateWindowExW(0, L"STATIC", L"", WS_OVERLAPPED,
+                                         CW_USEDEFAULT, CW_USEDEFAULT, 0, 0,
+                                         HWND_MESSAGE, nullptr, GetModuleHandleW(nullptr), nullptr);
+        if (hidden_iv == nullptr) return 190;
+        nfui::IconView iv;
+        nfui::ControlCreateParams ivp{};
+        ivp.instance = GetModuleHandleW(nullptr);
+        ivp.parent = hidden_iv;
+        ivp.control_id = 9070;
+        ivp.width = 24; ivp.height = 24;
+        if (!iv.create(ivp) || !iv.valid()) { DestroyWindow(hidden_iv); return 191; }
+        if ((GetWindowLongPtrW(iv.hwnd(), GWL_STYLE) & SS_OWNERDRAW) == 0) { DestroyWindow(hidden_iv); return 192; }
+        DestroyWindow(hidden_iv);
+
+        // ----- nfui_frame (T12) StatusBar + Splitter -----
+        HWND hidden_sb = CreateWindowExW(0, L"STATIC", L"", WS_OVERLAPPED,
+                                         CW_USEDEFAULT, CW_USEDEFAULT, 0, 0,
+                                         HWND_MESSAGE, nullptr, GetModuleHandleW(nullptr), nullptr);
+        if (hidden_sb == nullptr) return 200;
+        nfui::StatusBar sb;
+        nfui::ControlCreateParams sbp{};
+        sbp.instance = GetModuleHandleW(nullptr);
+        sbp.parent = hidden_sb;
+        sbp.control_id = 9080;
+        sbp.width = 200; sbp.height = 20;
+        if (!sb.create(sbp) || !sb.valid()) { DestroyWindow(hidden_sb); return 201; }
+        nfui::Splitter sp;
+        nfui::ControlCreateParams spp{};
+        spp.instance = GetModuleHandleW(nullptr);
+        spp.parent = hidden_sb;
+        spp.control_id = 9081;
+        spp.width = 4; spp.height = 100;
+        if (!sp.create(spp) || !sp.valid()) { DestroyWindow(hidden_sb); return 202; }
+        sp.set_ratio(0.3);
+        if (sp.ratio() != 0.3) { DestroyWindow(hidden_sb); return 203; }
+        DestroyWindow(hidden_sb);
+    }
+    return 0;
 }
