@@ -913,5 +913,27 @@ int wmain() {
                     L"HoverState mouse_leave clears hover") && ok;
     }
 
+    {
+        using namespace nfui;
+        // OwnerDrawDC wraps BeginPaint/MemoryDC/EndPaint around a real HWND.
+        HWND msg_hwnd = CreateWindowExW(0, L"STATIC", L"", WS_OVERLAPPED,
+                                        CW_USEDEFAULT, CW_USEDEFAULT, 100, 50,
+                                        HWND_MESSAGE, nullptr,
+                                        GetModuleHandleW(nullptr), nullptr);
+        ok = expect(msg_hwnd != nullptr, L"OwnerDrawDC test creates a message-only HWND") && ok;
+        if (msg_hwnd != nullptr) {
+            RECT rc{0, 0, 100, 50};
+            {
+                OwnerDrawDC odc(msg_hwnd, rc);
+                ok = expect(odc.valid(), L"OwnerDrawDC is valid") && ok;
+                ok = expect(odc.dc() != nullptr, L"OwnerDrawDC exposes its DC") && ok;
+                const RECT got = odc.bounds();
+                ok = expect(got.right - got.left == 100 && got.bottom - got.top == 50,
+                            L"OwnerDrawDC bounds round-trip") && ok;
+            }
+            DestroyWindow(msg_hwnd);
+        }
+    }
+
     return ok ? 0 : 1;
 }

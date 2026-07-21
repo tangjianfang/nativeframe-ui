@@ -3,6 +3,7 @@
 #include <nfui/Theme.hpp>     // Color
 #include <windows.h>
 
+#include <optional>
 #include <string_view>
 
 namespace nfui {
@@ -43,6 +44,30 @@ private:
     int     y_{0};
     int     w_{0};
     int     h_{0};
+};
+
+// RAII wrapper for the WM_PAINT lifecycle. Owns the BeginPaint / MemoryDC / EndPaint
+// triple and enforces the scope-before-EndPaint invariant mechanically (the destructor
+// flushes the offscreen buffer via MemoryDC's BitBlt, then calls EndPaint).
+// Use for owner-draw controls that paint in their own WM_PAINT handler.
+class OwnerDrawDC {
+public:
+    OwnerDrawDC(HWND hwnd, const RECT& bounds) noexcept;
+    ~OwnerDrawDC() noexcept;
+    OwnerDrawDC(const OwnerDrawDC&) = delete;
+    OwnerDrawDC& operator=(const OwnerDrawDC&) = delete;
+    OwnerDrawDC(OwnerDrawDC&&) = delete;
+    OwnerDrawDC& operator=(OwnerDrawDC&&) = delete;
+    [[nodiscard]] HDC dc() const noexcept { return target_; }
+    [[nodiscard]] RECT bounds() const noexcept { return bounds_; }
+    [[nodiscard]] bool valid() const noexcept { return valid_; }
+private:
+    HWND       hwnd_{};
+    RECT       bounds_{};
+    PAINTSTRUCT ps_{};
+    std::optional<MemoryDC> mem_;   // optional because MemoryDC is non-movable; held by value, not assigned
+    HDC        target_{};
+    bool       valid_{false};
 };
 
 } // namespace nfui

@@ -147,4 +147,26 @@ MemoryDC::~MemoryDC() noexcept {
     DeleteDC(mem_dc_);
 }
 
+OwnerDrawDC::OwnerDrawDC(HWND hwnd, const RECT& bounds) noexcept
+    : hwnd_(hwnd), bounds_(bounds) {
+    if (hwnd == nullptr) return;
+    HDC dc = BeginPaint(hwnd, &ps_);
+    if (dc == nullptr) return;
+    mem_.emplace(dc, bounds);
+    target_ = mem_->valid() ? mem_->dc() : dc;
+    valid_ = true;
+}
+
+OwnerDrawDC::~OwnerDrawDC() noexcept {
+    if (hwnd_ != nullptr && valid_) {
+        // mem_ destructor runs first (member destruction order: ps_ -> mem_ ->
+        // target_ -> valid_ -> hwnd_/bounds_ in reverse declaration order). The
+        // optional<MemoryDC> resets MemoryDC which flushes the offscreen buffer
+        // to the BeginPaint DC via BitBlt while the BeginPaint DC is still
+        // valid. Only then does EndPaint release it.
+        mem_.reset();
+        EndPaint(hwnd_, &ps_);
+    }
+}
+
 } // namespace nfui
