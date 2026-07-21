@@ -19,7 +19,10 @@ void Button::on_paint(HDC dc, const PaintState& state) noexcept {
     Color face = p.accent;
     Color text_color = p.accent_text;
     if (!state.enabled) {
-        face = p.border;
+        // WCAG AA: lighten border 12% toward surface for disabled face so
+        // text_secondary clears the 4.5:1 contrast threshold. Reference:
+        // docs/KNOWLEDGE/polish/2026-07-22-button-disabled-state-color.md.
+        face = alpha_blend(p.border, p.surface, 0.12f);
         text_color = p.text_secondary;
     } else if (state.pressed || state.hover) {
         face = p.accent_hover;
