@@ -25,7 +25,8 @@ class WorkbenchWindow final : public nfui::Window {
 public:
     explicit WorkbenchWindow(HINSTANCE instance)
         : instance_(instance),
-          resources_(instance) {
+          resources_(instance),
+          palette_(nfui::theme_palette(nfui::ThemeMode::light)) {
         commands_.set_handler(nfui::CommandId{IDM_NFUI_EXIT}, [this](nfui::CommandId) {
             destroy();
             return true;
@@ -79,9 +80,49 @@ protected:
         case WM_SIZE:
             layout();
             return 0;
+        case WM_DPICHANGED: {
+            auto* suggested = reinterpret_cast<RECT*>(lparam);
+            dpi_ = nfui::DpiScale(HIWORD(wparam));
+            if (suggested != nullptr) {
+                SetWindowPos(hwnd(),
+                             nullptr,
+                             suggested->left,
+                             suggested->top,
+                             suggested->right - suggested->left,
+                             suggested->bottom - suggested->top,
+                             SWP_NOACTIVATE | SWP_NOZORDER);
+            }
+            // The cached HFONT handles are DPI-keyed, so re-apply WM_SETFONT
+            // after a DPI bump so the native chrome tracks the new face.
+            apply_native_fonts();
+            layout();
+            InvalidateRect(hwnd(), nullptr, FALSE);
+            return 0;
+        }
         case WM_CONTEXTMENU:
             show_context_menu(GET_X_LPARAM(lparam), GET_Y_LPARAM(lparam));
             return 0;
+        case WM_ERASEBKGND:
+            // We paint the cream background in WM_PAINT; suppress the default
+            // COLOR_WINDOW erase so the area between native panes is ours.
+            return 1;
+        case WM_PAINT: {
+            PAINTSTRUCT paint{};
+            HDC hdc = BeginPaint(hwnd(), &paint);
+            RECT client{};
+            GetClientRect(hwnd(), &client);
+            // Flicker-free offscreen buffer over the full client area. The
+            // MemoryDC destructor BitBlts back to the target rect origin while
+            // the BeginPaint DC is still valid, so the buffer flush MUST
+            // happen before EndPaint (R6 fix from SettingsDemo).
+            {
+                nfui::MemoryDC mem(hdc, client);
+                HDC target = mem.valid() ? mem.dc() : hdc;
+                nfui::fill_rect(target, client, palette_.background);
+            }
+            EndPaint(hwnd(), &paint);
+            return 0;
+        }
         case WM_DESTROY:
             PostQuitMessage(0);
             return 0;
@@ -160,6 +201,31 @@ private:
         params.control_id = id_status;
         static_cast<void>(status_.create(params));
         set_status(L"Ready - NativeFrame UI Workbench");
+
+        // The self-painting inspector (StaticText) needs the Claude palette +
+        // Segoe UI font injected so it matches the cream background. The
+        // ListView's custom-draw path reads the palette too, so inject there
+        // as well so themed rows pick up the warm ink + selection tokens.
+        inspector_.set_palette(&palette_);
+        inspector_.set_font_cache(&fonts_);
+        list_.set_palette(&palette_);
+        list_.set_font_cache(&fonts_);
+
+        // Native controls keep their Win32 chrome but adopt Segoe UI so the
+        // text matches the shared paint. lParam=TRUE forces an immediate
+        // redraw with the new font. Re-applied on DPI changes via
+        // apply_native_fonts() so the HFONT tracks the cached face.
+        apply_native_fonts();
+    }
+
+    void apply_native_fonts() noexcept {
+        const int dpi_value = dpi_.dpi();
+        const HFONT ui_font = fonts_.regular(dpi_value, 9);
+        SendMessageW(search_.hwnd(),       WM_SETFONT, reinterpret_cast<WPARAM>(ui_font), TRUE);
+        SendMessageW(tree_.hwnd(),         WM_SETFONT, reinterpret_cast<WPARAM>(ui_font), TRUE);
+        SendMessageW(tabs_.hwnd(),         WM_SETFONT, reinterpret_cast<WPARAM>(ui_font), TRUE);
+        SendMessageW(progress_.hwnd(),     WM_SETFONT, reinterpret_cast<WPARAM>(ui_font), TRUE);
+        SendMessageW(status_.hwnd(),       WM_SETFONT, reinterpret_cast<WPARAM>(ui_font), TRUE);
     }
 
     static TVINSERTSTRUCTW tree_item(const wchar_t* text) {
@@ -183,6 +249,7 @@ private:
             return;
         }
 
+        dpi_ = nfui::DpiScale(nfui::dpi_of(hwnd()));
         RECT client{};
         GetClientRect(hwnd(), &client);
         SendMessageW(status_.hwnd(), WM_SIZE, 0, 0);
@@ -232,6 +299,8 @@ private:
     HINSTANCE instance_{};
     nfui::ResourceContext resources_;
     nfui::CommandRouter commands_;
+    nfui::ThemePalette palette_;
+    nfui::FontCache fonts_;
     nfui::Edit search_;
     nfui::TreeView tree_;
     nfui::TabControl tabs_;
@@ -241,6 +310,7 @@ private:
     nfui::ProgressBar progress_;
     nfui::Splitter left_splitter_;
     nfui::Splitter right_splitter_;
+    nfui::DpiScale dpi_{96};
 };
 
 } // namespace
