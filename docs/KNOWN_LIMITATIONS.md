@@ -1,5 +1,9 @@
 # NativeFrame UI Known Limitations
 
+## V1.3 charts AA
+
+V1.3 enables GDI+ antialiasing for the line and spline chart renderers. The GDI+ session is opt-in via `nfui::initialize_chart_aa()`; consumers not using charts do not pay the GDI+ startup cost. Bar / horizontal-bar renderers stay pure GDI. `gdiplus.lib` is a `PRIVATE` link dep on `nfui_charts` only. The boundary check is unchanged (gdiplus / Gdiplus are not in the forbidden marker list).
+
 ## V1.2 charts module
 
 V1.2 introduces the `nfui_charts` module plus the `NativeFrameUICharts` sample gallery (2x2 grid: vertical bar / horizontal bar / line / spline). Renderer behaviour, lifecycle, and smoke-test coverage are documented in [Charts Guide](CHARTS.md).

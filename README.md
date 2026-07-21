@@ -22,6 +22,8 @@ V1.1 introduces a Claude Code-inspired visual refresh across all product-growth 
 
 `NativeFrameUIControls` and all owner-draw / custom-draw demos follow the MemoryDC scope-before-`EndPaint` invariant (R6/R8/R9 pattern): create the buffer at the start of `WM_PAINT`, paint into it, flush through `BitBlt`, and let the destructor close the DC before `EndPaint` returns. This is the only correct lifecycle — any code path that delays the flush past `EndPaint` flickers. Demos that allocate native child controls must also re-apply `WM_SETFONT` from the DPI handler; relying on `create_child` alone leaves the child's HFONT at the creation-time DPI.
 
+Charts module (V1.3) uses GDI+ `SmoothingModeAntiAlias` for line and spline renderers — opt-in via `nfui::initialize_chart_aa()`.
+
 ## V1 Baseline
 
 - Product name: NativeFrame UI
