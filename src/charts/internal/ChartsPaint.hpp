@@ -1,11 +1,12 @@
 #pragma once
 
-// Internal AA-aware primitives for the chart line + spline renderers.
-// These are NOT part of the nfui public surface — only nfui_charts itself
-// needs them. Each function falls back to the equivalent GDI primitive
-// when the GDI+ runtime is not active, so the renderer always paints.
+// Internal AA-aware primitives for the chart line + spline renderers plus the
+// shared legend-column helper that all four chart views (bar, hbar, line,
+// spline) draw identically. None of this is part of the nfui public surface —
+// only nfui_charts itself calls into these. The AA primitives fall back to
+// pure GDI when the GDI+ runtime isn't active, so the renderer always paints.
 
-#include <nfui/Theme.hpp>
+#include <nfui/Charts.hpp>
 
 #include <windows.h>
 
@@ -36,5 +37,17 @@ void fill_circles_aa(HDC hdc,
                      int count,
                      int radius_px,
                      Color color) noexcept;
+
+// Draws a vertical legend column (color swatch + series name per row) on the
+// right side of the chart plot. Lifted from the four ChartView subclasses
+// so bar / hbar / line / spline read consistently when shown side-by-side.
+// Falls back gracefully when `palette` or `fonts` is null.
+void draw_legend_column(HDC hdc,
+                        const RECT& plot_bounds,
+                        int legend_width_px,
+                        const std::vector<ChartSeries>& series,
+                        const ThemePalette* palette,
+                        FontCache* fonts,
+                        int dpi) noexcept;
 
 } // namespace nfui::charts_internal

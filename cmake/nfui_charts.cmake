@@ -1,5 +1,6 @@
 add_library(nfui_charts STATIC
     src/charts/Charts.cpp
+    src/charts/internal/ChartsPaint.cpp
     src/charts/ChartView.cpp
     src/charts/BarChartView.cpp
     src/charts/HBarChartView.cpp
