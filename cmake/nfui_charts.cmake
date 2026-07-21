@@ -1,6 +1,5 @@
 add_library(nfui_charts STATIC
     src/charts/Charts.cpp
-    src/charts/ChartsPaint.cpp
     src/charts/ChartView.cpp
     src/charts/BarChartView.cpp
     src/charts/HBarChartView.cpp
@@ -18,7 +17,5 @@ target_link_libraries(nfui_charts
     PUBLIC
         NativeFrameUI::nfui_core
         NativeFrameUI::nfui_theme
-    PRIVATE
-        gdiplus
 )
 nfui_apply_compiler_options(nfui_charts)

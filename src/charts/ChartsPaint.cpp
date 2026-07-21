@@ -1,12 +1,12 @@
-// Implementation of the AA-aware chart paint primitives. TU-folded so the
-// GdiplusContext translation unit links cleanly into nfui_charts: when this
-// file is built, ChartsPaint.cpp gets its own object that already references
-// GdiplusContext's static members. We #include the .cpp at the top instead
-// of the .hpp because GdiplusContext owns the inline static storage; touching
-// it from a separate TU would require separate storage definitions.
+// Implementation of the AA-aware chart paint primitives. GdiplusContext's
+// method bodies live in their own translation unit (internal/GdiplusContext.cpp)
+// inside nfui_charts_aa, so we don't need the old TU-folding include here any
+// more — that was a workaround for when both files shipped as one TU inside
+// nfui_charts. The header still declares GdiplusContext with inline static
+// storage so the token / ref-count remain shared across the program.
 
-#include "internal/GdiplusContext.cpp"
 #include "internal/ChartsPaint.hpp"
+#include "internal/GdiplusContext.hpp"
 
 #include <nfui/Paint.hpp>
 
@@ -149,3 +149,19 @@ void fill_circles_aa(HDC hdc,
 }
 
 } // namespace nfui::charts_internal
+
+// Public antialiasing entry points. Live in nfui_charts_aa rather than
+// nfui_charts so the GDI+ runtime dependency stays out of consumers that
+// only want the GDI fallback path. Declared in <nfui/Charts.hpp> alongside
+// the rest of the nfui public surface.
+namespace nfui {
+
+bool initialize_chart_aa() noexcept {
+    return charts_internal::GdiplusContext::initialize();
+}
+
+void shutdown_chart_aa() noexcept {
+    charts_internal::GdiplusContext::shutdown();
+}
+
+} // namespace nfui

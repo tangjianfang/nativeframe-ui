@@ -10,6 +10,7 @@ include(cmake/nfui_core.cmake)
 include(cmake/nfui_theme.cmake)
 include(cmake/nfui_controls.cmake)
 include(cmake/nfui_charts.cmake)
+include(cmake/nfui_charts_aa.cmake)
 
 add_library(NativeFrameUI INTERFACE)
 add_library(NativeFrameUI::NativeFrameUI ALIAS NativeFrameUI)
@@ -76,6 +77,7 @@ target_link_libraries(NativeFrameUICharts
     PRIVATE
         NativeFrameUI::NativeFrameUI
         NativeFrameUI::nfui_charts
+        NativeFrameUI::nfui_charts_aa
 )
 nfui_apply_compiler_options(NativeFrameUICharts)
 nfui_add_resources(NativeFrameUICharts)
@@ -84,7 +86,7 @@ if(BUILD_TESTING)
     add_executable(NativeFrameUISmokeTest
         tests/nativeframeui_smoke.cpp
     )
-    target_link_libraries(NativeFrameUISmokeTest PRIVATE NativeFrameUI::NativeFrameUI psapi)
+    target_link_libraries(NativeFrameUISmokeTest PRIVATE NativeFrameUI::NativeFrameUI NativeFrameUI::nfui_charts_aa psapi)
     nfui_apply_compiler_options(NativeFrameUISmokeTest)
     nfui_add_resources(NativeFrameUISmokeTest)
     add_test(NAME NativeFrameUISmokeTest COMMAND NativeFrameUISmokeTest)
