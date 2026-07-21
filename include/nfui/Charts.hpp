@@ -166,4 +166,54 @@ private:
     bool stacked_ = false;
 };
 
+// C4: multi-series line chart renderer. One polyline per series, optionally
+// punctuated by filled circle markers (point_radius_px_ > 0). Shares the C3
+// plot frame + tick labels + legend column so multi-series line charts read
+// the same as bar charts when shown side-by-side.
+class LineChartView : public ChartView {
+public:
+    LineChartView() = default;
+    ~LineChartView() override = default;
+
+    LineChartView(const LineChartView&) = delete;
+    LineChartView& operator=(const LineChartView&) = delete;
+    LineChartView(LineChartView&&) = delete;
+    LineChartView& operator=(LineChartView&&) = delete;
+
+    // Marker radius in logical pixels. 0 disables markers so the line reads
+    // as a clean unbroken stroke.
+    void set_point_radius(int logical_px) noexcept;
+
+protected:
+    void on_paint(HDC hdc, const RECT& bounds) override;
+
+private:
+    int point_radius_px_ = 3;
+};
+
+// C4: multi-series smooth-curve chart renderer. Each polyline is converted
+// to cubic Bezier control points via catmull_rom_to_bezier and drawn with
+// GDI PolyBezier. Markers are intentionally omitted; the smooth curve and
+// fixed markers fight each other and produce a muddy result.
+class SplineChartView : public ChartView {
+public:
+    SplineChartView() = default;
+    ~SplineChartView() override = default;
+
+    SplineChartView(const SplineChartView&) = delete;
+    SplineChartView& operator=(const SplineChartView&) = delete;
+    SplineChartView(SplineChartView&&) = delete;
+    SplineChartView& operator=(SplineChartView&&) = delete;
+
+    // Catmull-Rom tension in [0, 1]; clamped. 0 collapses the curve to a
+    // straight-line Catmull-Rom; 1 maximises the control-point offset.
+    void set_tension(double t) noexcept;
+
+protected:
+    void on_paint(HDC hdc, const RECT& bounds) override;
+
+private:
+    double tension_ = 0.5;
+};
+
 } // namespace nfui

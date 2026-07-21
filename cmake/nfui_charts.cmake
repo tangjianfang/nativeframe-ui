@@ -3,6 +3,8 @@ add_library(nfui_charts STATIC
     src/charts/ChartView.cpp
     src/charts/BarChartView.cpp
     src/charts/HBarChartView.cpp
+    src/charts/LineChartView.cpp
+    src/charts/SplineChartView.cpp
 )
 add_library(NativeFrameUI::nfui_charts ALIAS nfui_charts)
 
