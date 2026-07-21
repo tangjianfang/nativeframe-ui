@@ -6,6 +6,7 @@
 
 #include <cstddef>
 #include <optional>
+#include <string>
 #include <string_view>
 #include <vector>
 
@@ -44,7 +45,7 @@ struct ChartSeries {
 struct ChartAxisRange {
     double min{};
     double max{};
-    std::wstring_view label_format = L"{:.1f}";  // printf-style placeholders
+    std::wstring_view label_format = L"{:.0f}";  // printf-style placeholders
 };
 
 struct ChartLayout {
@@ -73,6 +74,13 @@ struct ChartLayout {
 // Returns 4*(n-1) POINTs (cubic segments share endpoints with neighbors).
 [[nodiscard]] std::vector<POINT> catmull_rom_to_bezier(const std::vector<POINT>& points,
                                                       double tension = 0.5) noexcept;
+
+// Formats a double using a Rust-style placeholder (L"{:.Nf}"|L"{:.N%}"} where N is
+// an optional decimal digit count). Supported forms: L"{:.0f}", L"{:.1f}",
+// L"{:.2f}", L"{:.0%}", L"{:.1%}", L"{:.2%}". Anything else falls back to L"{:.0f}"
+// so a malformed label_format never panics out of on_paint.
+[[nodiscard]] std::wstring format_axis_tick(double value,
+                                            std::wstring_view label_format) noexcept;
 
 // Self-painted HWND-based chart control. Receives ChartKind + ChartSeries data,
 // renders into its own client area. C2 wires the control + paint cycle (MemoryDC

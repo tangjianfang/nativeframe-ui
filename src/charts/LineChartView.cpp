@@ -7,6 +7,7 @@
 #include <algorithm>
 #include <cstdio>
 #include <string>
+#include <string_view>
 #include <vector>
 
 namespace nfui {
@@ -21,10 +22,8 @@ constexpr int kTickCount = 5;
 constexpr int kAxisLabelGutter = 18;
 constexpr int kLineWidthPx = 2;
 
-void format_tick(wchar_t (&buf)[32], double value) noexcept {
-    std::swprintf(buf, std::size(buf), L"%.0f", value);
-    buf[std::size(buf) - 1] = L'\0';
-}
+// (Tick labels are formatted inline via nfui::format_axis_tick so callers can
+// pick the precision per axis via ChartAxisRange::label_format.)
 
 void draw_plot_frame(HDC hdc, const ChartLayout& layout, const ThemePalette& pal) noexcept {
     const RECT& pb = layout.plot_bounds;
@@ -42,14 +41,13 @@ void draw_value_axis_ticks_v(HDC hdc,
     const RECT& pb = layout.plot_bounds;
     const int plot_h = pb.bottom - pb.top;
     if (plot_h <= 0) return;
-    wchar_t buf[32]{};
     for (int i = 0; i <= kTickCount; ++i) {
         const double t = static_cast<double>(i) / kTickCount;
         const double value = axis_y.min + t * (axis_y.max - axis_y.min);
         const int py = pb.top + static_cast<int>((1.0 - t) * static_cast<double>(plot_h) + 0.5);
-        format_tick(buf, value);
+        const std::wstring text = format_axis_tick(value, axis_y.label_format);
         RECT label{pb.left - kAxisLabelGutter - 4, py - 8, pb.left - 4, py + 8};
-        draw_text(hdc, label, buf, font, pal.text_secondary,
+        draw_text(hdc, label, text, font, pal.text_secondary,
                   DT_RIGHT | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX);
 
         draw_line(hdc, POINT{pb.left - 3, py}, POINT{pb.left, py}, pal.border, 1);
