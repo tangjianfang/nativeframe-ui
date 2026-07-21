@@ -71,16 +71,24 @@ protected:
                              new_rect->bottom - new_rect->top,
                              SWP_NOZORDER | SWP_NOACTIVATE);
             }
+            const int dpi = nfui::dpi_of(hwnd());
             if (view_.hwnd() != nullptr) {
-                if (HFONT f = fonts_.regular(nfui::dpi_of(hwnd()), 9)) {
+                if (HFONT f = fonts_.regular(dpi, 9)) {
                     SendMessageW(view_.hwnd(), WM_SETFONT, reinterpret_cast<WPARAM>(f), FALSE);
                 }
             }
+            theme_toggle_.set_font_cache(&fonts_);
+            if (HFONT toggle_font = fonts_.regular(dpi, 9)) {
+                SendMessageW(theme_toggle_.hwnd(),
+                             WM_SETFONT,
+                             reinterpret_cast<WPARAM>(toggle_font),
+                             FALSE);
+            }
             if (list_.hwnd() != nullptr) {
                 SendMessageW(list_.hwnd(),
-                              LB_SETITEMHEIGHT,
-                              0,
-                              static_cast<LPARAM>(nfui::font_pixel_height(9, nfui::dpi_of(hwnd())) + 8));
+                             LB_SETITEMHEIGHT,
+                             0,
+                             static_cast<LPARAM>(nfui::font_pixel_height(9, dpi) + 8));
                 InvalidateRect(list_.hwnd(), nullptr, TRUE);
             }
             InvalidateRect(ok_.hwnd(), nullptr, FALSE);
@@ -109,19 +117,22 @@ protected:
             HDC hdc = BeginPaint(hwnd(), &paint);
             RECT client{};
             GetClientRect(hwnd(), &client);
-            nfui::MemoryDC mem(hdc, client);
-            HDC target = mem.valid() ? mem.dc() : hdc;
-            nfui::fill_rect(target, client, palette_.background);
-            const int dpi = nfui::dpi_of(hwnd());
-            const int header_height = nfui::font_pixel_height(16, dpi);
-            RECT header_rect{16, 16, client.right - 16, 16 + header_height};
-            HFONT header_font = fonts_.serif(dpi, 16);
-            nfui::draw_text(target,
-                            header_rect,
-                            L"NativeFrame UI Controls",
-                            header_font,
-                            palette_.text,
-                            DT_LEFT | DT_TOP | DT_SINGLELINE | DT_NOPREFIX);
+            // Flicker-free offscreen buffer over the full client area.
+            {
+                nfui::MemoryDC mem(hdc, client);
+                HDC target = mem.valid() ? mem.dc() : hdc;
+                nfui::fill_rect(target, client, palette_.background);
+                const int dpi = nfui::dpi_of(hwnd());
+                const int header_height = nfui::font_pixel_height(16, dpi);
+                RECT header_rect{16, 16, client.right - 16, 16 + header_height};
+                HFONT header_font = fonts_.serif(dpi, 16);
+                nfui::draw_text(target,
+                                header_rect,
+                                L"NativeFrame UI Controls",
+                                header_font,
+                                palette_.text,
+                                DT_LEFT | DT_TOP | DT_SINGLELINE | DT_NOPREFIX);
+            }
             EndPaint(hwnd(), &paint);
             return 0;
         }
