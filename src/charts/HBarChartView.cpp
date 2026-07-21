@@ -2,9 +2,10 @@
 #include <nfui/Dpi.hpp>
 #include <nfui/Paint.hpp>
 
+#include "internal/ChartsPaint.hpp"
+
 #include <algorithm>
 #include <cstdio>
-#include <cstring>
 #include <string>
 #include <vector>
 
@@ -12,14 +13,11 @@ namespace nfui {
 
 namespace {
 
-// Tick and legend visual constants match BarChartView so the two renders stay
-// visually consistent when shown side-by-side.
+// Tick visual constants match BarChartView so the two renders stay visually
+// consistent when shown side-by-side. Legend-specific constants live in
+// internal/ChartsPaint.cpp.
 constexpr int kTickFontPt = 9;
 constexpr int kTickCount = 5;
-constexpr int kLegendSwatch = 12;
-constexpr int kLegendPadX = 8;
-constexpr int kLegendPadY = 6;
-constexpr int kLegendRowH = 18;
 constexpr int kAxisLabelGutter = 18;
 
 void format_tick(wchar_t (&buf)[32], double value) noexcept {
@@ -80,43 +78,10 @@ void draw_category_axis_ticks_h(HDC hdc,
     }
 }
 
-void draw_legend_column(HDC hdc,
-                        const ChartLayout& layout,
-                        const RECT& bounds,
-                        const std::vector<ChartSeries>& series,
-                        HFONT font,
-                        const ThemePalette& pal) noexcept {
-    if (series.size() < 2 || layout.legend_width_px <= 0) return;
-
-    const int col_w = layout.legend_width_px;
-    const int col_left = bounds.left +
-                         (layout.plot_bounds.right - bounds.left) +
-                         (col_w > 0 ? 8 : 0);
-    const int col_right = col_left + col_w - kLegendPadX;
-    const int col_h = static_cast<int>(series.size()) * kLegendRowH + 2 * kLegendPadY;
-    const int col_top = layout.plot_bounds.top +
-                        ((layout.plot_bounds.bottom - layout.plot_bounds.top) - col_h) / 2;
-    const int col_bottom = col_top + col_h;
-
-    RECT col{col_left, col_top, col_right, col_bottom};
-    fill_rect(hdc, col, pal.surface);
-    draw_line(hdc, POINT{col.left, col.top}, POINT{col.right, col.top}, pal.border, 1);
-    draw_line(hdc, POINT{col.left, col.bottom}, POINT{col.right, col.bottom}, pal.border, 1);
-    draw_line(hdc, POINT{col.left, col.top}, POINT{col.left, col.bottom}, pal.border, 1);
-    draw_line(hdc, POINT{col.right, col.top}, POINT{col.right, col.bottom}, pal.border, 1);
-
-    for (std::size_t i = 0; i < series.size(); ++i) {
-        const int row_y = col.top + kLegendPadY + static_cast<int>(i) * kLegendRowH;
-        RECT swatch{col.left + kLegendPadX, row_y + 2,
-                    col.left + kLegendPadX + kLegendSwatch,
-                    row_y + 2 + kLegendSwatch};
-        fill_rounded_rect(hdc, swatch, theme_metrics().corner_radius_control,
-                          series[i].color, series[i].color);
-        RECT text_rc{swatch.right + kLegendPadX, row_y, col.right - kLegendPadX, row_y + kLegendRowH};
-        draw_text(hdc, text_rc, series[i].name, font, pal.text,
-                  DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS | DT_NOPREFIX);
-    }
-}
+// Column of color swatches + series names on the right of the plot. The
+// implementation lives in internal/ChartsPaint.cpp so all four chart views
+// (BarChartView / HBarChartView / LineChartView / SplineChartView) render
+// the legend identically.
 
 } // namespace
 
@@ -150,8 +115,9 @@ void HBarChartView::on_paint(HDC hdc, const RECT& bounds) {
     if (bar_count == 0) {
         draw_plot_frame(hdc, layout, pal);
         const int dpi = (hwnd() != nullptr) ? dpi_of(hwnd()) : 96;
-        HFONT font = (fonts_ != nullptr) ? fonts_->mono(dpi, kTickFontPt) : nullptr;
-        draw_legend_column(hdc, layout, bounds, series_, font, pal);
+        charts_internal::draw_legend_column(hdc, layout.plot_bounds,
+                                            layout.legend_width_px, series_,
+                                            palette_, fonts_, dpi);
         return;
     }
 
@@ -209,7 +175,9 @@ void HBarChartView::on_paint(HDC hdc, const RECT& bounds) {
 
     draw_value_axis_ticks_h(hdc, layout, axis_y_, tick_font, pal);
     draw_category_axis_ticks_h(hdc, layout, bar_count, tick_font, pal);
-    draw_legend_column(hdc, layout, bounds, series_, tick_font, pal);
+    charts_internal::draw_legend_column(hdc, layout.plot_bounds,
+                                        layout.legend_width_px, series_,
+                                        palette_, fonts_, dpi);
 }
 
 } // namespace nfui
