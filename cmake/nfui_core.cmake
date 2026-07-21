@@ -6,7 +6,6 @@ add_library(nfui_core STATIC
     src/dpi/Dpi.cpp
     src/font/Font.cpp
     src/icon/Icon.cpp
-    src/layout/Layout.cpp
     src/paint/Paint.cpp
     src/persistence/Persistence.cpp
     src/resource/ResourceContext.cpp
