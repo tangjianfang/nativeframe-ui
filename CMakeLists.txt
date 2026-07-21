@@ -6,29 +6,25 @@ include(CTest)
 include(cmake/NativeFrameUICompilerOptions.cmake)
 include(cmake/NativeFrameUIResources.cmake)
 
-add_library(NativeFrameUI STATIC
-    src/command/Command.cpp
-    src/controls/Controls.cpp
-    src/core/Application.cpp
-    src/core/Window.cpp
-    src/dpi/Dpi.cpp
-    src/font/Font.cpp
-    src/icon/Icon.cpp
-    src/layout/Layout.cpp
-    src/paint/Paint.cpp
-    src/persistence/Persistence.cpp
-    src/resource/ResourceContext.cpp
-    src/theme/Theme.cpp
-)
-add_library(NativeFrameUI::NativeFrameUI ALIAS NativeFrameUI)
+include(cmake/nfui_core.cmake)
+include(cmake/nfui_theme.cmake)
+include(cmake/nfui_controls.cmake)
+include(cmake/nfui_charts.cmake)
 
+add_library(NativeFrameUI INTERFACE)
+add_library(NativeFrameUI::NativeFrameUI ALIAS NativeFrameUI)
 target_include_directories(NativeFrameUI
-    PUBLIC
+    INTERFACE
         $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
         $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/resources>
 )
-target_link_libraries(NativeFrameUI PUBLIC comctl32)
-nfui_apply_compiler_options(NativeFrameUI)
+target_link_libraries(NativeFrameUI
+    INTERFACE
+        NativeFrameUI::nfui_core
+        NativeFrameUI::nfui_theme
+        NativeFrameUI::nfui_controls
+        NativeFrameUI::nfui_charts
+)
 
 add_executable(NativeFrameUIWorkbench WIN32
     samples/NativeFrameUIWorkbench/NativeFrameUIWorkbench.cpp

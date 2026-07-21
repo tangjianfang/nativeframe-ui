@@ -2,6 +2,8 @@
 
 #include "NativeFrameUIResource.h"
 
+#include <nfui/Charts.hpp>
+
 #include <psapi.h>
 #include <windows.h>
 #include <windowsx.h>
@@ -9,6 +11,7 @@
 #include <filesystem>
 #include <iostream>
 #include <string_view>
+#include <vector>
 
 namespace {
 
@@ -733,6 +736,67 @@ int wmain() {
         SetPixel(screen, 210, 210, RGB(0, 0, 0));
         ReleaseDC(nullptr, screen);
         ok = expect(true, L"MemoryDC non-zero-origin: regression test completes without crash") && ok;
+    }
+
+    {
+        using namespace nfui;
+        const RECT content{0, 0, 400, 300};
+        ChartLayout layout = compute_chart_layout(content, ChartKind::bar_vertical, 2);
+        ok = expect((layout.plot_bounds.right - layout.plot_bounds.left) > 0 &&
+                    (layout.plot_bounds.bottom - layout.plot_bounds.top) > 0,
+                    L"compute_chart_layout yields non-empty plot bounds") && ok;
+        ok = expect(layout.legend_width_px == 120,
+                    L"compute_chart_layout reserves 120px legend column for multi-series") && ok;
+    }
+
+    {
+        using namespace nfui;
+        ChartLayout layout = compute_chart_layout(RECT{0, 0, 400, 300}, ChartKind::line, 1);
+        const ChartAxisRange x{0.0, 1.0};
+        const ChartAxisRange y{0.0, 1.0};
+        const std::vector<ChartPoint> samples{ {0.0, 0.0}, {1.0, 1.0} };
+        const std::vector<POINT> pts = normalize_points(samples, layout, x, y);
+        ok = expect(pts.size() == 2, L"normalize_points returns 2 points for 2 samples") && ok;
+        const int w = layout.plot_bounds.right - layout.plot_bounds.left;
+        const int h = layout.plot_bounds.bottom - layout.plot_bounds.top;
+        for (std::size_t i = 0; i < pts.size(); ++i) {
+            const POINT p = pts[i];
+            const bool inside = p.x >= layout.plot_bounds.left &&
+                                p.x <= layout.plot_bounds.left + w &&
+                                p.y >= layout.plot_bounds.top &&
+                                p.y <= layout.plot_bounds.top + h;
+            ok = expect(inside, L"normalized point lies within plot bounds") && ok;
+        }
+    }
+
+    {
+        using namespace nfui;
+        ChartLayout layout = compute_chart_layout(RECT{0, 0, 400, 300}, ChartKind::bar_vertical, 1);
+        const std::vector<RECT> bars = compute_bar_geometry(layout, 1, 4, 0.2);
+        ok = expect(bars.size() == 4, L"compute_bar_geometry returns one RECT per bar") && ok;
+        for (std::size_t i = 0; i < bars.size(); ++i) {
+            const RECT r = bars[i];
+            ok = expect(r.right > r.left && r.bottom > r.top,
+                        L"compute_bar_geometry bar has positive area") && ok;
+        }
+        for (std::size_t i = 1; i < bars.size(); ++i) {
+            const RECT prev = bars[i - 1];
+            const RECT curr = bars[i];
+            const bool disjoint = prev.right <= curr.left;
+            ok = expect(disjoint, L"compute_bar_geometry bars do not overlap") && ok;
+        }
+    }
+
+    {
+        using namespace nfui;
+        const std::vector<POINT> pts{ POINT{0, 0}, POINT{10, 10}, POINT{20, 5} };
+        const std::vector<POINT> bez = catmull_rom_to_bezier(pts, 0.5);
+        ok = expect(bez.size() == 8,
+                    L"catmull_rom_to_bezier returns 4 control points per segment") && ok;
+        // Segment 0 endpoint x: B0 of segment 0 == P0.x; B3 of segment 0 == P1.x.
+        // Sanity: first and last control-point x values match the first/last inputs.
+        ok = expect(bez.front().x == pts.front().x && bez.back().x == pts.back().x,
+                    L"catmull_rom_to_bezier endpoint x matches input endpoints") && ok;
     }
 
     return ok ? 0 : 1;

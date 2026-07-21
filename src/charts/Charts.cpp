@@ -1,0 +1,162 @@
+#include <nfui/Charts.hpp>
+
+#include <algorithm>
+#include <cstddef>
+#include <vector>
+
+namespace nfui {
+
+namespace {
+
+constexpr int kAxisGutter = 8;       // px reserved for axis ticks/labels
+constexpr int kTopGutter = 4;        // px reserved above the plot
+constexpr int kBottomGutter = 4;     // px reserved below the plot
+
+[[nodiscard]] int normalize_axis(double v, double axis_min, double axis_max, int span) noexcept {
+    if (span <= 0) return 0;
+    if (!(axis_max > axis_min)) return 0; // degenerate range; clamp to origin
+    double t = (v - axis_min) / (axis_max - axis_min);
+    if (t <= 0.0) return 0;
+    if (t >= 1.0) return span;
+    return static_cast<int>(t * static_cast<double>(span) + 0.5);
+}
+
+} // namespace
+
+ChartLayout compute_chart_layout(RECT content_bounds,
+                                 ChartKind kind,
+                                 std::size_t series_count) noexcept {
+    ChartLayout layout{};
+    const int width = content_bounds.right - content_bounds.left;
+    const int height = content_bounds.bottom - content_bounds.top;
+
+    // Reserve a legend column when there is more than one series. A single
+    // series does not need a legend box; the title names it.
+    layout.legend_width_px = (series_count > 1) ? 120 : 0;
+
+    const int reserved_w = layout.legend_width_px + kAxisGutter;
+    const int reserved_h = kTopGutter + kBottomGutter + kAxisGutter;
+
+    int plot_w = width - reserved_w;
+    int plot_h = height - reserved_h;
+    if (plot_w < 0) plot_w = 0;
+    if (plot_h < 0) plot_h = 0;
+
+    // Horizontal bars swap the natural aspect so bars stack as tall columns.
+    if (kind == ChartKind::bar_horizontal) {
+        std::swap(plot_w, plot_h);
+    }
+
+    layout.plot_bounds = RECT{
+        content_bounds.left + kAxisGutter,
+        content_bounds.top + kTopGutter,
+        content_bounds.left + kAxisGutter + plot_w,
+        content_bounds.top + kTopGutter + plot_h,
+    };
+    return layout;
+}
+
+std::vector<POINT> normalize_points(const std::vector<ChartPoint>& points,
+                                    const ChartLayout& layout,
+                                    const ChartAxisRange& x,
+                                    const ChartAxisRange& y) noexcept {
+    std::vector<POINT> out;
+    out.reserve(points.size());
+    const int plot_w = layout.plot_bounds.right - layout.plot_bounds.left;
+    const int plot_h = layout.plot_bounds.bottom - layout.plot_bounds.top;
+    for (const auto& p : points) {
+        const int px = layout.plot_bounds.left + normalize_axis(p.x, x.min, x.max, plot_w);
+        // Screen y axis is inverted: top of plot == max y value.
+        const int plot_y = normalize_axis(p.y, y.min, y.max, plot_h);
+        const int py = layout.plot_bounds.top + (plot_h - plot_y);
+        out.push_back(POINT{ px, py });
+    }
+    return out;
+}
+
+std::vector<RECT> compute_bar_geometry(const ChartLayout& layout,
+                                       std::size_t series_count,
+                                       std::size_t bar_count,
+                                       double gap_ratio) noexcept {
+    std::vector<RECT> out;
+    if (series_count == 0 || bar_count == 0) return out;
+    out.resize(bar_count);
+
+    const int plot_w = layout.plot_bounds.right - layout.plot_bounds.left;
+    const int plot_h = layout.plot_bounds.bottom - layout.plot_bounds.top;
+    if (plot_w <= 0 || plot_h <= 0) return out;
+
+    // Clamp gap ratio into a sane band so degenerate inputs don't collapse the bar.
+    const double clamped_gap = std::clamp(gap_ratio, 0.0, 0.9);
+
+    const int total_band_w = plot_w / static_cast<int>(bar_count);
+    if (total_band_w <= 0) return out;
+
+    const int gap = std::max(1, static_cast<int>(total_band_w * clamped_gap + 0.5));
+    const int cluster_w = total_band_w - gap;
+    // Single series: bar spans the full cluster minus a single gap; otherwise split.
+    const int bar_w = std::max(1, cluster_w / static_cast<int>(series_count));
+
+    for (std::size_t i = 0; i < bar_count; ++i) {
+        const int band_x = layout.plot_bounds.left + total_band_w * static_cast<int>(i);
+        const int x = band_x + gap / 2;
+        out[i] = RECT{
+            x,
+            layout.plot_bounds.top,
+            x + bar_w,
+            layout.plot_bounds.bottom,
+        };
+    }
+    return out;
+}
+
+std::vector<POINT> catmull_rom_to_bezier(const std::vector<POINT>& points,
+                                          double tension) noexcept {
+    std::vector<POINT> out;
+    if (points.size() < 2) return out;
+    out.reserve(4 * (points.size() - 1));
+
+    const double t = std::clamp(tension, 0.0, 1.0);
+    const double k = t / 3.0;
+
+    auto lerp_x = [](const POINT& a, const POINT& b, double factor) {
+        return static_cast<LONG>(static_cast<double>(a.x) +
+                                 (static_cast<double>(b.x) - static_cast<double>(a.x)) * factor);
+    };
+    auto lerp_y = [](const POINT& a, const POINT& b, double factor) {
+        return static_cast<LONG>(static_cast<double>(a.y) +
+                                 (static_cast<double>(b.y) - static_cast<double>(a.y)) * factor);
+    };
+
+    auto emit_segment = [&](const POINT& b0, const POINT& b1,
+                            const POINT& b2, const POINT& b3) {
+        out.push_back(b0);
+        out.push_back(b1);
+        out.push_back(b2);
+        out.push_back(b3);
+    };
+
+    for (std::size_t i = 0; i + 1 < points.size(); ++i) {
+        const POINT& p1 = points[i];
+        const POINT& p2 = points[i + 1];
+        // Mirror endpoints: p0 = p1, p3 = p2 for the first/last segments.
+        const POINT& p0 = (i == 0) ? p1 : points[i - 1];
+        const POINT& p3 = (i + 2 >= points.size()) ? p2 : points[i + 2];
+
+        const POINT b0 = p1;
+        const POINT b1 = POINT{
+            lerp_x(p1, p1, 0.0) + static_cast<LONG>(k * (p2.x - p0.x) + 0.5),
+            lerp_y(p1, p1, 0.0) + static_cast<LONG>(k * (p2.y - p0.y) + 0.5),
+        };
+        const POINT b2 = POINT{
+            lerp_x(p2, p2, 0.0) - static_cast<LONG>(k * (p3.x - p1.x) + 0.5),
+            lerp_y(p2, p2, 0.0) - static_cast<LONG>(k * (p3.y - p1.y) + 0.5),
+        };
+        const POINT b3 = p2;
+
+        emit_segment(b0, b1, b2, b3);
+    }
+    return out;
+}
+
+} // namespace nfui
