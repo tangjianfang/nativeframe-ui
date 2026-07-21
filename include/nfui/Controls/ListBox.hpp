@@ -32,6 +32,13 @@ public:
     // so Control::subclass_proc can dispatch here for ODT_LISTBOX; the function
     // itself is still safe to call from any code that owns a valid DRAWITEMSTRUCT.
     void draw_item(DRAWITEMSTRUCT* di) noexcept;
+
+protected:
+    // Per-component extension points — overridden to keep listbox-specific
+    // logic out of nfui_control_base. Default Control base impls are no-ops.
+    void on_reflected_draw_item(DRAWITEMSTRUCT* di) noexcept override;
+    void on_subclass_mouse_move(LPARAM lparam) noexcept override;
+    void on_subclass_mouse_leave() noexcept override;
 private:
     ListStyle style_{};
     int hovered_row_{-1};

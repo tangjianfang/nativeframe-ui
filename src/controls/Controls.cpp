@@ -1,10 +1,8 @@
 #include <nfui/Controls.hpp>
-#include <nfui/Controls/ListBox.hpp>
 #include <nfui/Dpi.hpp>
 #include <nfui/Paint.hpp>
 
 #include <commctrl.h>
-#include <windowsx.h>
 #include <string>
 
 namespace nfui {
@@ -91,11 +89,11 @@ LRESULT CALLBACK Control::subclass_proc(HWND hwnd,
             state.enabled = (di->itemState & ODS_DISABLED) == 0;
             control->on_paint(di->hDC, state);
         } else if (di->CtlType == ODT_LISTBOX) {
-            // Dispatch to ListBox::draw_item so per-row hover (and any other
-            // ListBox-specific styling) is honored. draw_list_item remains
-            // available for any non-ListBox ODT_LISTBOX owner.
-            auto* lb = static_cast<ListBox*>(control);
-            lb->draw_item(di);
+            // Dispatch to the leaf class via virtual on_reflected_draw_item.
+            // ListBox overrides this; other ODT_LISTBOX owners (none today)
+            // get the default no-op. This keeps nfui_control_base free of
+            // any direct dependency on nfui_listbox.
+            control->on_reflected_draw_item(di);
         }
         return TRUE;
     }
@@ -111,20 +109,12 @@ LRESULT CALLBACK Control::subclass_proc(HWND hwnd,
         if (control != nullptr && control_is_owner_draw(hwnd)) {
             control->hover_state_.on_mouse_move(hwnd);
         }
-        // ListBox row hover: track which row is under the cursor. The subclass
-        // proc is shared across all controls, so we gate on the window class
-        // name (LISTBOX) to avoid running LB_ITEMFROMPOINT on non-list HWNDs.
+        // Leaf-specific subclass hooks (ListBox row-hover tracking, etc.).
+        // Default impls are no-ops; ListBox overrides on_subclass_mouse_move
+        // to do LB_ITEMFROMPOINT work. This keeps the control_base TU free
+        // of any listbox-specific symbols.
         if (control != nullptr) {
-            wchar_t cls[32]{};
-            if (GetClassNameW(hwnd, cls, 32) > 0 && lstrcmpW(cls, WC_LISTBOXW) == 0) {
-                POINT pt{GET_X_LPARAM(lparam), GET_Y_LPARAM(lparam)};
-                LRESULT hit = SendMessageW(hwnd, LB_ITEMFROMPOINT, 0, MAKELPARAM(pt.x, pt.y));
-                int row = (hit != LB_ERR && HIWORD(hit) == 0) ? static_cast<int>(LOWORD(hit)) : -1;
-                auto* lb = static_cast<ListBox*>(control);
-                if (lb->hovered_row() != row) {
-                    lb->set_hovered_row(row);
-                }
-            }
+            control->on_subclass_mouse_move(lparam);
         }
         break;
     }
@@ -134,13 +124,7 @@ LRESULT CALLBACK Control::subclass_proc(HWND hwnd,
             if (!control->hover_state_.hover()) {
                 InvalidateRect(hwnd, nullptr, FALSE);
             }
-            // Clear any ListBox row hover tracking when the cursor leaves the
-            // control entirely (set_hovered_row will InvalidateRect for us).
-            wchar_t cls[32]{};
-            if (GetClassNameW(hwnd, cls, 32) > 0 && lstrcmpW(cls, WC_LISTBOXW) == 0) {
-                auto* lb = static_cast<ListBox*>(control);
-                lb->set_hovered_row(-1);
-            }
+            control->on_subclass_mouse_leave();
         }
         break;
     }

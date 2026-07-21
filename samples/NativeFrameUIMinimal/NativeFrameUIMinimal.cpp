@@ -1,14 +1,11 @@
 // NativeFrameUIMinimal -- proves the per-component library split delivers
-// value by linking ONLY nfui_core + nfui_theme + nfui_controls + nfui_button
-// (NOT the NativeFrameUI umbrella). Verifies that consumers can ship a
-// minimal product with a small dependency footprint.
+// value by linking ONLY nfui_core + nfui_theme + nfui_control_base +
+// nfui_button (NOT the NativeFrameUI umbrella). Verifies that consumers
+// can ship a minimal product with a small dependency footprint.
 //
 // Build deps (see CMakeLists.txt): NativeFrameUI::nfui_core,
-// NativeFrameUI::nfui_theme, NativeFrameUI::nfui_controls,
+// NativeFrameUI::nfui_theme, NativeFrameUI::nfui_control_base,
 // NativeFrameUI::nfui_button. Total 4 libs vs. 13 via the umbrella.
-//
-// TODO(P2.1): switch nfui_controls to nfui_control_base once the base-class
-// extraction lands.
 
 #include <nfui/Application.hpp>
 #include <nfui/Controls/Button.hpp>

@@ -55,4 +55,30 @@ void ListBox::draw_item(DRAWITEMSTRUCT* di) noexcept {
     }
 }
 
+void ListBox::on_reflected_draw_item(DRAWITEMSTRUCT* di) noexcept {
+    draw_item(di);
+}
+
+void ListBox::on_subclass_mouse_move(LPARAM lparam) noexcept {
+    if (!valid()) return;
+    // Use the standard listbox control message to find which row is under the
+    // cursor. LB_ITEMFROMPOINT is harmless on non-list HWNDs, but we still
+    // gate on the class name to keep the behavior explicit and to avoid
+    // surprise cost on busy controls.
+    wchar_t cls[32]{};
+    if (GetClassNameW(hwnd(), cls, 32) <= 0 || lstrcmpW(cls, WC_LISTBOXW) != 0) {
+        return;
+    }
+    POINT pt{GET_X_LPARAM(lparam), GET_Y_LPARAM(lparam)};
+    LRESULT hit = SendMessageW(hwnd(), LB_ITEMFROMPOINT, 0, MAKELPARAM(pt.x, pt.y));
+    int row = (hit != LB_ERR && HIWORD(hit) == 0) ? static_cast<int>(LOWORD(hit)) : -1;
+    if (hovered_row() != row) {
+        set_hovered_row(row);
+    }
+}
+
+void ListBox::on_subclass_mouse_leave() noexcept {
+    set_hovered_row(-1);
+}
+
 } // namespace nfui

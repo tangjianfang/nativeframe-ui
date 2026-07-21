@@ -66,6 +66,16 @@ protected:
     virtual void on_paint(HDC dc, const PaintState& state) noexcept { (void)dc; (void)state; }
     [[nodiscard]] virtual bool wants_self_paint() const noexcept { return false; }
 
+    // Per-component extension points. Default implementations are no-ops so
+    // nfui_control_base has no transitive dependency on any leaf library
+    // (e.g., nfui_listbox). Subclasses that need subclass-proc-level
+    // dispatch override these. The subclass proc calls them with the raw
+    // message arguments and lets the leaf perform any class-name-gated
+    // work internally.
+    virtual void on_reflected_draw_item(DRAWITEMSTRUCT*) noexcept {}
+    virtual void on_subclass_mouse_move([[maybe_unused]] LPARAM lparam) noexcept {}
+    virtual void on_subclass_mouse_leave() noexcept {}
+
 private:
     void detach_destroyed_hwnd(HWND hwnd) noexcept;
     static LRESULT CALLBACK subclass_proc(HWND hwnd, UINT message, WPARAM wparam, LPARAM lparam, UINT_PTR subclass_id, DWORD_PTR ref_data) noexcept;

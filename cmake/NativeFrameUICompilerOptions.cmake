@@ -12,6 +12,10 @@ function(nfui_apply_compiler_options target)
     if(MSVC)
         set_property(TARGET ${target} PROPERTY
             MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>DLL")
-        target_compile_options(${target} PRIVATE /W4 /permissive- /EHsc /utf-8)
+        # /FS forces synchronous PDB writes so parallel cl.exe invocations
+        # targeting the same .pdb don't collide (C1041). Required because
+        # our per-component libraries compile multiple TUs into one static
+        # lib with a shared target PDB.
+        target_compile_options(${target} PRIVATE /W4 /permissive- /EHsc /utf-8 /FS /MP)
     endif()
 endfunction()
