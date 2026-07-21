@@ -528,6 +528,98 @@ int wmain() {
             }
         }
 
+        // Chart control smoke tests — one of each nfui::ChartView subclass
+        // (BarChartView, HBarChartView, LineChartView, SplineChartView). All
+        // four share the NativeFrameUIChartView window class registered by the
+        // first create() call; ChartView::create overrides the requested class
+        // name to that private class so Window::register_window_class accepts
+        // it. Charts are nfui::Window subclasses, not Control subclasses, so
+        // create() takes WindowCreateParams (no control_id, no text).
+        {
+            using namespace nfui;
+            BarChartView bar;
+            WindowCreateParams p{};
+            p.instance = GetModuleHandleW(nullptr);
+            p.parent = controls_parent.hwnd();
+            p.style = WS_CHILD | WS_VISIBLE | WS_CLIPCHILDREN;
+            p.x = 0; p.y = 0; p.width = 240; p.height = 160;
+            ok = expect(bar.create(p), L"BarChartView::create") && ok;
+            ok = expect(bar.hwnd() != nullptr, L"BarChartView exposes HWND") && ok;
+            const ThemePalette palette_for_test = theme_palette(ThemeMode::light);
+            FontCache fonts_for_test;
+            bar.set_palette(&palette_for_test);
+            bar.set_font_cache(&fonts_for_test);
+            bar.set_series({ChartSeries{L"Revenue", palette_for_test.accent,
+                            {{0.0, 10.0}, {1.0, 20.0}, {2.0, 15.0}}}});
+            bar.set_axis_x(ChartAxisRange{0.0, 2.0, L"{:.0f}"});
+            bar.set_axis_y(ChartAxisRange{0.0, 25.0, L"{:.0f}"});
+            RedrawWindow(bar.hwnd(), nullptr, nullptr, RDW_INVALIDATE | RDW_UPDATENOW);
+            ok = expect(bar.hwnd() != nullptr, L"BarChartView paint cycle completes without crash") && ok;
+        }
+        {
+            using namespace nfui;
+            HBarChartView hbar;
+            WindowCreateParams p{};
+            p.instance = GetModuleHandleW(nullptr);
+            p.parent = controls_parent.hwnd();
+            p.style = WS_CHILD | WS_VISIBLE | WS_CLIPCHILDREN;
+            p.x = 0; p.y = 0; p.width = 240; p.height = 160;
+            ok = expect(hbar.create(p), L"HBarChartView::create") && ok;
+            ok = expect(hbar.hwnd() != nullptr, L"HBarChartView exposes HWND") && ok;
+            const ThemePalette palette_for_test = theme_palette(ThemeMode::light);
+            FontCache fonts_for_test;
+            hbar.set_palette(&palette_for_test);
+            hbar.set_font_cache(&fonts_for_test);
+            hbar.set_series({ChartSeries{L"Q1", palette_for_test.accent,
+                             {{0.0, 30.0}, {1.0, 45.0}, {2.0, 25.0}}}});
+            RedrawWindow(hbar.hwnd(), nullptr, nullptr, RDW_INVALIDATE | RDW_UPDATENOW);
+            ok = expect(hbar.hwnd() != nullptr, L"HBarChartView paint cycle completes without crash") && ok;
+        }
+        {
+            using namespace nfui;
+            LineChartView line;
+            WindowCreateParams p{};
+            p.instance = GetModuleHandleW(nullptr);
+            p.parent = controls_parent.hwnd();
+            p.style = WS_CHILD | WS_VISIBLE | WS_CLIPCHILDREN;
+            p.x = 0; p.y = 0; p.width = 240; p.height = 160;
+            ok = expect(line.create(p), L"LineChartView::create") && ok;
+            ok = expect(line.hwnd() != nullptr, L"LineChartView exposes HWND") && ok;
+            const ThemePalette palette_for_test = theme_palette(ThemeMode::light);
+            FontCache fonts_for_test;
+            line.set_palette(&palette_for_test);
+            line.set_font_cache(&fonts_for_test);
+            line.set_series({
+                ChartSeries{L"Revenue", palette_for_test.accent,
+                            {{0.0, 10.0}, {1.0, 25.0}, {2.0, 18.0}, {3.0, 30.0}}},
+                ChartSeries{L"Costs", palette_for_test.warning,
+                            {{0.0, 8.0}, {1.0, 12.0}, {2.0, 10.0}, {3.0, 15.0}}},
+            });
+            line.set_point_radius(3);
+            RedrawWindow(line.hwnd(), nullptr, nullptr, RDW_INVALIDATE | RDW_UPDATENOW);
+            ok = expect(line.hwnd() != nullptr, L"LineChartView paint cycle completes without crash") && ok;
+        }
+        {
+            using namespace nfui;
+            SplineChartView spline;
+            WindowCreateParams p{};
+            p.instance = GetModuleHandleW(nullptr);
+            p.parent = controls_parent.hwnd();
+            p.style = WS_CHILD | WS_VISIBLE | WS_CLIPCHILDREN;
+            p.x = 0; p.y = 0; p.width = 240; p.height = 160;
+            ok = expect(spline.create(p), L"SplineChartView::create") && ok;
+            ok = expect(spline.hwnd() != nullptr, L"SplineChartView exposes HWND") && ok;
+            const ThemePalette palette_for_test = theme_palette(ThemeMode::light);
+            FontCache fonts_for_test;
+            spline.set_palette(&palette_for_test);
+            spline.set_font_cache(&fonts_for_test);
+            spline.set_series({ChartSeries{L"Sensor", palette_for_test.accent,
+                             {{0.0, 10.0}, {1.0, 30.0}, {2.0, 15.0}, {3.0, 35.0}, {4.0, 20.0}}}});
+            spline.set_tension(0.5);
+            RedrawWindow(spline.hwnd(), nullptr, nullptr, RDW_INVALIDATE | RDW_UPDATENOW);
+            ok = expect(spline.hwnd() != nullptr, L"SplineChartView paint cycle completes without crash") && ok;
+        }
+
         controls_parent.destroy();
         ok = expect(!button.valid() && button.hwnd() == nullptr,
                     L"Button wrapper invalidates HWND after parent destruction") && ok;
@@ -580,6 +672,8 @@ int wmain() {
                 L"ResourceGallery target is registered in generated build artifacts") && ok;
     ok = expect(target_registered(L"NativeFrameUIControls"),
                 L"NativeFrameUIControls target is registered in generated build artifacts") && ok;
+    ok = expect(target_registered(L"NativeFrameUICharts"),
+                L"NativeFrameUICharts target is registered in generated build artifacts") && ok;
 
     HWND dialog = resources.create_dialog(IDD_NFUI_ABOUT, nullptr, test_dialog_proc, 0);
     ok = expect(dialog != nullptr, L"modeless dialog resource creates a HWND") && ok;
