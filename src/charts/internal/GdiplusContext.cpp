@@ -3,7 +3,7 @@
 // <gdiplus.h> here would leak GDI+ types through the public surface and
 // force every consumer of NativeFrameUI::nfui_charts to link gdiplus too.
 
-#include "internal/GdiplusContext.hpp"
+#include "GdiplusContext.hpp"
 
 // gdiplus.h requires COM interface declarations (IStream, HRESULT, ...)
 // which WIN32_LEAN_AND_MEAN strips from <windows.h>.
