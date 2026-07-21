@@ -8,7 +8,7 @@
 
 namespace {
 
-enum class FontWeight { regular, semibold };
+enum class FontWeight { regular, semibold, serif, mono };
 
 struct ShowcasePalette {
     nfui::Color window;
@@ -105,8 +105,13 @@ constexpr std::array<std::wstring_view, 3> inspector_values{
                                int dpi,
                                FontWeight weight,
                                int point_size) noexcept {
-    return weight == FontWeight::semibold ? fonts.semibold(dpi, point_size)
-                                          : fonts.regular(dpi, point_size);
+    switch (weight) {
+    case FontWeight::semibold: return fonts.semibold(dpi, point_size);
+    case FontWeight::serif:    return fonts.serif(dpi, point_size);
+    case FontWeight::mono:     return fonts.mono(dpi, point_size);
+    case FontWeight::regular:
+    default:                   return fonts.regular(dpi, point_size);
+    }
 }
 
 [[nodiscard]] ShowcasePalette palette_for(nfui::ThemeMode mode) noexcept {
@@ -333,9 +338,9 @@ void ShowcaseView::paint(HDC hdc, nfui::FontCache& fonts) const noexcept {
                     L"NativeFrame UI",
                     fonts,
                     dpi(),
-                    FontWeight::semibold,
-                    21,
-                    palette.text,
+                    FontWeight::serif,
+                    22,
+                    palette.accent,
                     DT_LEFT | DT_TOP | DT_SINGLELINE | DT_NOPREFIX);
 
     RECT tagline_rect = brand_rect;
@@ -430,7 +435,7 @@ void ShowcaseView::paint(HDC hdc, nfui::FontCache& fonts) const noexcept {
                         card_values[index],
                         fonts,
                         dpi(),
-                        FontWeight::semibold,
+                        FontWeight::mono,
                         20,
                         palette.text,
                         DT_LEFT | DT_TOP | DT_SINGLELINE | DT_NOPREFIX);

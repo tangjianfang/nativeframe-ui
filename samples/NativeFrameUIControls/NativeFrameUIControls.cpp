@@ -8,12 +8,12 @@
 
 namespace {
 
-constexpr int id_header = 101;
 constexpr int id_ok = 102;
 constexpr int id_cancel = 103;
 constexpr int id_list = 104;
 constexpr int id_view = 105;
 constexpr int id_icon = 106;
+constexpr int id_theme_toggle = 107;
 
 class ControlsWindow final : public nfui::Window {
 public:
@@ -45,7 +45,8 @@ public:
             return false;
         }
 
-        palette_ = nfui::theme_palette(nfui::ThemeMode::light);
+        mode_ = nfui::ThemeMode::light;
+        palette_ = nfui::theme_palette(mode_);
 
         if (!create_children()) {
             return false;
@@ -82,22 +83,50 @@ protected:
                               static_cast<LPARAM>(nfui::font_pixel_height(9, nfui::dpi_of(hwnd())) + 8));
                 InvalidateRect(list_.hwnd(), nullptr, TRUE);
             }
-            InvalidateRect(header_.hwnd(), nullptr, FALSE);
             InvalidateRect(ok_.hwnd(), nullptr, FALSE);
             InvalidateRect(cancel_.hwnd(), nullptr, FALSE);
+            InvalidateRect(theme_toggle_.hwnd(), nullptr, FALSE);
             InvalidateRect(list_.hwnd(), nullptr, FALSE);
             InvalidateRect(view_.hwnd(), nullptr, FALSE);
             InvalidateRect(icon_.hwnd(), nullptr, FALSE);
+            InvalidateRect(hwnd(), nullptr, FALSE);
             return 0;
         }
         case WM_COMMAND: {
             const int command_id = LOWORD(wparam);
+            if (command_id == id_theme_toggle) {
+                apply_toggle_theme();
+                return 0;
+            }
             if (command_id == id_ok || command_id == id_cancel) {
                 destroy();
                 return 0;
             }
             break;
         }
+        case WM_PAINT: {
+            PAINTSTRUCT paint{};
+            HDC hdc = BeginPaint(hwnd(), &paint);
+            RECT client{};
+            GetClientRect(hwnd(), &client);
+            nfui::MemoryDC mem(hdc, client);
+            HDC target = mem.valid() ? mem.dc() : hdc;
+            nfui::fill_rect(target, client, palette_.background);
+            const int dpi = nfui::dpi_of(hwnd());
+            const int header_height = nfui::font_pixel_height(16, dpi);
+            RECT header_rect{16, 16, client.right - 16, 16 + header_height};
+            HFONT header_font = fonts_.serif(dpi, 16);
+            nfui::draw_text(target,
+                            header_rect,
+                            L"NativeFrame UI Controls",
+                            header_font,
+                            palette_.text,
+                            DT_LEFT | DT_TOP | DT_SINGLELINE | DT_NOPREFIX);
+            EndPaint(hwnd(), &paint);
+            return 0;
+        }
+        case WM_ERASEBKGND:
+            return 1;
         case WM_DESTROY: {
             if (app_icon_ != nullptr) {
                 DestroyIcon(app_icon_);
@@ -141,7 +170,7 @@ private:
     }
 
     [[nodiscard]] bool create_children() noexcept {
-        if (!create_child(header_, id_header, L"NativeFrame UI Controls", 16, 16, 448, 24)) {
+        if (!create_child(theme_toggle_, id_theme_toggle, L"Switch to dark", 360, 12, 104, 28)) {
             return false;
         }
         if (!create_child(ok_, id_ok, L"OK", 16, 56, 96, 32)) {
@@ -189,14 +218,35 @@ private:
 
     HINSTANCE instance_{};
     HICON app_icon_{};
+    nfui::ThemeMode mode_{nfui::ThemeMode::light};
     nfui::ThemePalette palette_{};
     nfui::FontCache fonts_{};
-    nfui::StaticText header_;
+    nfui::Button theme_toggle_;
     nfui::Button ok_;
     nfui::Button cancel_;
     nfui::ListBox list_;
     nfui::ListView view_;
     nfui::IconView icon_;
+
+    void apply_toggle_theme() noexcept {
+        mode_ = (mode_ == nfui::ThemeMode::dark) ? nfui::ThemeMode::light : nfui::ThemeMode::dark;
+        palette_ = nfui::theme_palette(mode_);
+        theme_toggle_.set_palette(&palette_);
+        ok_.set_palette(&palette_);
+        cancel_.set_palette(&palette_);
+        list_.set_palette(&palette_);
+        view_.set_palette(&palette_);
+        icon_.set_palette(&palette_);
+        SetWindowTextW(theme_toggle_.hwnd(),
+                       mode_ == nfui::ThemeMode::dark ? L"Switch to light" : L"Switch to dark");
+        InvalidateRect(theme_toggle_.hwnd(), nullptr, FALSE);
+        InvalidateRect(ok_.hwnd(), nullptr, FALSE);
+        InvalidateRect(cancel_.hwnd(), nullptr, FALSE);
+        InvalidateRect(list_.hwnd(), nullptr, FALSE);
+        InvalidateRect(view_.hwnd(), nullptr, FALSE);
+        InvalidateRect(icon_.hwnd(), nullptr, FALSE);
+        InvalidateRect(hwnd(), nullptr, FALSE);
+    }
 };
 
 } // namespace
