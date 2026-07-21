@@ -1,5 +1,15 @@
 # NativeFrame UI Known Limitations
 
+## V1.2 charts module
+
+V1.2 introduces the `nfui_charts` module plus the `NativeFrameUICharts` sample gallery (2x2 grid: vertical bar / horizontal bar / line / spline). Renderer behaviour, lifecycle, and smoke-test coverage are documented in [Charts Guide](CHARTS.md).
+
+- Four chart kinds ship in V1.2: `bar_vertical` (`BarChartView`), `bar_horizontal` (`HBarChartView`), `line` (`LineChartView`), and `spline` (`SplineChartView`). Area / filled-stack / scatter are V2.
+- Renderers are split into pure HWND-free geometry helpers (`compute_chart_layout`, `normalize_points`, `compute_bar_geometry`, `catmull_rom_to_bezier`) plus thin `on_paint` overrides on the four `ChartView` subclasses. The pure helpers are exercised by the smoke test without ever touching a window, so the geometry math is unit-testable in isolation from paint lifecycle.
+- `PolyBezier` point count invariant: `catmull_rom_to_bezier(n)` returns `4*(n-1)` `POINT`s (one cubic Bezier segment per input gap, four control points each). `PolyBezier` consumes `3*(n-1)+1` control points per polyline, which is `4*(n-1)` — they match exactly because each cubic segment shares its endpoint with the next.
+- `SplineChartView` is smooth-only: point markers are intentionally omitted because they fight the Catmull-Rom curve and produce a muddy result. `LineChartView` keeps markers via `set_point_radius(0)` to disable.
+- `set_stacked(true)` on `BarChartView` / `HBarChartView` is a V2 TODO (currently a no-op); V1.2 ships un-stacked / grouped bars only. The setter exists so consumer code can declare intent and stay binary-compatible when stacking lands.
+
 ## V1.1 refresh (Claude Code UI restyle)
 
 V1.1 is a visual and paint-lifecycle refresh; the public `nfui` API surface and V1 scope are unchanged.

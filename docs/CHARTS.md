@@ -52,14 +52,27 @@ The default placeholder paints:
 
 `nfui::ChartKind` enumerates four kinds in V1:
 
-| Kind | Renderer (planned) | Notes |
-| --- | --- | --- |
-| `bar_vertical` | `draw_bar_chart(..., horizontal=false)` | C3. |
-| `bar_horizontal` | `draw_bar_chart(..., horizontal=true)` | C3. |
-| `line` | `draw_line_chart(..., ChartType::line)` | C4. Polyline + markers. |
-| `spline` | `draw_line_chart(..., ChartType::spline)` | C4. Catmull-Rom -> cubic Bezier (`catmull_rom_to_bezier` helper already in place). |
+| Kind | Renderer | Class | Notes |
+| --- | --- | --- | --- |
+| `bar_vertical` | grouped vertical bars | `BarChartView` | C3. `set_stacked(true)` is a V2 TODO; V1 ships un-stacked/grouped. |
+| `bar_horizontal` | grouped horizontal bars | `HBarChartView` | C3. Plot width/height swapped via `compute_chart_layout(bar_horizontal)`. |
+| `line` | polyline + markers | `LineChartView` | C4. `set_point_radius(logical_px)` controls marker radius; 0 disables markers. |
+| `spline` | Catmull-Rom -> cubic Bezier | `SplineChartView` | C4. `set_tension(double)` in [0, 1], clamped. Markers intentionally omitted (see Renderers). |
 
 **Area charts are V2.** The `compute_chart_layout` helper already reserves a legend column when more than one series is present, but the area-fill path is intentionally not yet implemented.
+
+## Renderers
+
+Each chart kind is its own `nfui::ChartView` subclass with a thin `on_paint` override that dispatches into the shared pure-geometry helpers. The renderer classes share the placeholder paint frame (legend box, axis gutter, mono tick labels) so multi-series charts read consistently when stacked side by side.
+
+| Class | Header | Description | Key setters |
+| --- | --- | --- | --- |
+| `nfui::BarChartView` | `include/nfui/Charts.hpp` | Grouped vertical bars; sub-bars per x slot are placed side-by-side. The bars grow upward from the plot baseline toward the y maximum. | `set_series(std::vector<ChartSeries>)`, `set_axis_x(ChartAxisRange)`, `set_axis_y(ChartAxisRange)`, `set_stacked(bool)` (V2 TODO, currently a no-op) |
+| `nfui::HBarChartView` | `include/nfui/Charts.hpp` | Grouped horizontal bars; sub-bars per y slot are stacked vertically within the slot and grow rightward from the plot baseline. | `set_series(std::vector<ChartSeries>)`, `set_axis_y(ChartAxisRange)` (carries the value range), `set_stacked(bool)` (V2 TODO) |
+| `nfui::LineChartView` | `include/nfui/Charts.hpp` | One `Polyline` per series, optionally punctuated by filled circle markers. Multi-series line charts share the legend-column layout so they read identically to bar charts side-by-side. | `set_series(std::vector<ChartSeries>)`, `set_point_radius(int logical_px)`, `set_axis_x(ChartAxisRange)`, `set_axis_y(ChartAxisRange)` |
+| `nfui::SplineChartView` | `include/nfui/Charts.hpp` | Each polyline is converted to cubic Bezier control points via `catmull_rom_to_bezier` and drawn with GDI `PolyBezier`. Markers are intentionally omitted — fixed point markers and a smooth curve fight each other and produce a muddy result. | `set_series(std::vector<ChartSeries>)`, `set_tension(double t)` (clamped to [0, 1]), `set_axis_x(ChartAxisRange)`, `set_axis_y(ChartAxisRange)` |
+
+All four subclasses inherit `set_palette(const ThemePalette*)` and `set_font_cache(FontCache*)` from `nfui::ChartView`. The framework's `set_kind(ChartKind)` is retained as a no-op-style override so the sample gallery can swap chart kinds at runtime if a future cross-kind view lands; in V1 each subclass hard-wires its own kind in `on_paint`.
 
 ## Custom-Draw `OCM_DRAWITEM` Path
 
