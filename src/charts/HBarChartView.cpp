@@ -121,13 +121,10 @@ void draw_legend_column(HDC hdc,
 } // namespace
 
 void HBarChartView::set_stacked(bool stacked) noexcept {
-    // TODO(c3-stacked): same caveat as BarChartView::set_stacked.
     stacked_ = stacked;
 }
 
 void HBarChartView::on_paint(HDC hdc, const RECT& bounds) {
-    (void)stacked_;  // reserved for the stacking implementation below
-
     const ThemePalette& pal =
         palette_ != nullptr ? *palette_ : theme_palette(ThemeMode::light);
 
@@ -175,39 +172,108 @@ void HBarChartView::on_paint(HDC hdc, const RECT& bounds) {
     // Vertical gap of 1px between rows so adjacent categories do not fuse.
     const int row_gap = std::min(2, std::max(0, row_h / 4));
 
+    // In stacked mode the per-row sum governs the row's visual extent, so we
+    // pre-compute row sums + the global max once and reuse them for the value
+    // axis range (passed to the tick renderer) and the per-segment widths.
+    std::vector<double> row_sums(bar_count, 0.0);
+    double max_row_sum = 0.0;
+    if (stacked_) {
+        for (const auto& s : series_) {
+            for (std::size_t i = 0; i < s.points.size() && i < bar_count; ++i) {
+                // Negative contributions collapse to 0 so the row still grows
+                // rightward from the baseline (no separate "leftward" channel).
+                const double v = std::max(0.0, s.points[i].y);
+                row_sums[i] += v;
+            }
+        }
+        for (double rs : row_sums) {
+            if (rs > max_row_sum) max_row_sum = rs;
+        }
+    }
+
     draw_plot_frame(hdc, layout, pal);
 
-    for (std::size_t s = 0; s < series_count; ++s) {
-        const ChartSeries& series = series_[s];
-        for (std::size_t i = 0; i < series.points.size() && i < bar_count; ++i) {
-            const ChartPoint& p = series.points[i];
+    if (stacked_) {
+        // Stack segments horizontally inside each row. The x-axis range is
+        // [axis_y_.min, eff_max] where eff_max covers the largest row sum so a
+        // max-sized row reaches plot_right and smaller rows scale proportionally.
+        // Each segment occupies (v / (eff_max - axis_y_.min)) of plot_w to the
+        // right of the previous cursor position.
+        double eff_min = axis_y_.min;
+        double eff_max = std::max(max_row_sum, axis_y_.max);
+        if (!(eff_max > eff_min)) eff_max = eff_min + 1.0;
+        const double y_range = eff_max - eff_min;
+
+        for (std::size_t i = 0; i < bar_count; ++i) {
+            if (row_sums[i] <= 0.0) continue;  // empty row; nothing to stack
             const int row_top = layout.plot_bounds.top +
                                 static_cast<int>(i) * row_h + row_gap / 2;
-            const int sub_top = row_top + static_cast<int>(s) * sub_h;
-            const int sub_bottom = sub_top + sub_h - row_gap;
-            if (sub_bottom <= sub_top) continue;
-
-            // The value axis is x; bars grow rightward from the plot left baseline.
-            const double v = std::clamp(p.y, axis_y_.min, axis_y_.max);
-            int bar_len = 0;
-            if (axis_y_.max > axis_y_.min) {
-                const double t = (v - axis_y_.min) / (axis_y_.max - axis_y_.min);
-                bar_len = static_cast<int>(t * static_cast<double>(plot_w) + 0.5);
+            const int row_bottom = row_top + row_h - row_gap;
+            if (row_bottom <= row_top) continue;
+            double cursor = eff_min;
+            for (std::size_t s = 0; s < series_count; ++s) {
+                const ChartSeries& series = series_[s];
+                if (i >= series.points.size()) continue;
+                const double v = std::max(0.0, series.points[i].y);
+                if (v <= 0.0) continue;
+                const double v_end = std::min(cursor + v, eff_max);
+                const int bar_left = layout.plot_bounds.left +
+                    static_cast<int>(((cursor - eff_min) / y_range) *
+                                      static_cast<double>(plot_w) + 0.5);
+                const int bar_right = layout.plot_bounds.left +
+                    static_cast<int>(((v_end - eff_min) / y_range) *
+                                      static_cast<double>(plot_w) + 0.5);
+                if (bar_right > bar_left) {
+                    RECT bar{bar_left, row_top, bar_right, row_bottom};
+                    fill_rounded_rect(hdc, bar, theme_metrics().corner_radius_control,
+                                      series.color, series.color);
+                }
+                cursor = v_end;
+                if (cursor >= eff_max) break;  // row saturated; drop later segments
             }
-            const int bar_left = layout.plot_bounds.left;
-            const int bar_right = bar_left + bar_len;
-            if (bar_right <= bar_left) continue;
+        }
+    } else {
+        // Grouped: sub-bars subdivide each row vertically (preserves the prior
+        // C3 behavior; each series gets its own sub-row within the cluster).
+        for (std::size_t s = 0; s < series_count; ++s) {
+            const ChartSeries& series = series_[s];
+            for (std::size_t i = 0; i < series.points.size() && i < bar_count; ++i) {
+                const ChartPoint& p = series.points[i];
+                const int row_top = layout.plot_bounds.top +
+                                    static_cast<int>(i) * row_h + row_gap / 2;
+                const int sub_top = row_top + static_cast<int>(s) * sub_h;
+                const int sub_bottom = sub_top + sub_h - row_gap;
+                if (sub_bottom <= sub_top) continue;
 
-            RECT bar{bar_left, sub_top, bar_right, sub_bottom};
-            fill_rounded_rect(hdc, bar, theme_metrics().corner_radius_control,
-                              series.color, series.color);
+                // The value axis is x; bars grow rightward from the plot left baseline.
+                const double v = std::clamp(p.y, axis_y_.min, axis_y_.max);
+                int bar_len = 0;
+                if (axis_y_.max > axis_y_.min) {
+                    const double t = (v - axis_y_.min) / (axis_y_.max - axis_y_.min);
+                    bar_len = static_cast<int>(t * static_cast<double>(plot_w) + 0.5);
+                }
+                const int bar_left = layout.plot_bounds.left;
+                const int bar_right = bar_left + bar_len;
+                if (bar_right <= bar_left) continue;
+
+                RECT bar{bar_left, sub_top, bar_right, sub_bottom};
+                fill_rounded_rect(hdc, bar, theme_metrics().corner_radius_control,
+                                  series.color, series.color);
+            }
         }
     }
 
     const int dpi = (hwnd() != nullptr) ? dpi_of(hwnd()) : 96;
     HFONT tick_font = (fonts_ != nullptr) ? fonts_->mono(dpi, kTickFontPt) : nullptr;
 
-    draw_value_axis_ticks_h(hdc, layout, axis_y_, tick_font, pal);
+    // In stacked mode the tick labels should reflect the row-sum range, not
+    // the per-series axis range, so the x-axis reads [axis_y_.min, max_row_sum].
+    ChartAxisRange tick_axis = axis_y_;
+    if (stacked_ && max_row_sum > tick_axis.max) {
+        tick_axis.max = max_row_sum;
+    }
+
+    draw_value_axis_ticks_h(hdc, layout, tick_axis, tick_font, pal);
     draw_category_axis_ticks_h(hdc, layout, bar_count, tick_font, pal);
     draw_legend_column(hdc, layout, bounds, series_, tick_font, pal);
 }

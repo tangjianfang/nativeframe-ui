@@ -128,10 +128,12 @@ protected:
     FontCache* fonts_{nullptr};
 };
 
-// C3: vertical grouped bar chart renderer. Bars grow upward from the plot baseline;
-// when multiple series are present, sub-bars for each x slot are placed side-by-side
-// horizontally within that slot (un-stacked, the default). Stacked composition is a
-// TODO (toggleable via set_stacked, currently a no-op in on_paint).
+// C3: vertical grouped or stacked bar chart renderer. Bars grow upward from the
+// plot baseline. Default (set_stacked(false)): sub-bars for each x slot are placed
+// side-by-side horizontally within that slot. set_stacked(true): each x slot's
+// series segments pile vertically inside the slot, with column totals scaled
+// against the max column sum (so a max-sized stack reaches plot_top) and the
+// y-axis tick labels widened to cover that range.
 class BarChartView : public ChartView {
 public:
     BarChartView() = default;
@@ -142,8 +144,9 @@ public:
     BarChartView(BarChartView&&) = delete;
     BarChartView& operator=(BarChartView&&) = delete;
 
-    // When true, future renders would sum y values column-wise so each x renders as
-    // a single stacked bar (TODO: not implemented yet). Default: false (grouped).
+    // When true, y values are summed column-wise and each x renders as a single
+    // stacked bar (segments pile vertically, column totals scaled to the global
+    // max). Default: false (grouped, sub-bars side-by-side).
     void set_stacked(bool stacked) noexcept;
 
 protected:
@@ -153,10 +156,13 @@ private:
     bool stacked_ = false;
 };
 
-// C3: horizontal grouped bar chart renderer. Same data shape as BarChartView but
-// the plot width/height are swapped via compute_chart_layout(bar_horizontal).
-// Bars grow rightward from the plot baseline; sub-bars for each y slot are stacked
-// vertically within that slot. set_stacked is currently a no-op (TODO).
+// C3: horizontal grouped or stacked bar chart renderer. Same data shape as
+// BarChartView but the plot width/height are swapped via compute_chart_layout(
+// bar_horizontal). Default (set_stacked(false)): sub-bars for each y slot
+// subdivide the row vertically. set_stacked(true): each y slot's series
+// segments tile horizontally inside the row, with row totals scaled against
+// the max row sum (so a max-sized row reaches plot_right) and the x-axis tick
+// labels widened to cover that range.
 class HBarChartView : public ChartView {
 public:
     HBarChartView() = default;

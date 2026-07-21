@@ -54,7 +54,7 @@ The default placeholder paints:
 
 | Kind | Renderer | Class | Notes |
 | --- | --- | --- | --- |
-| `bar_vertical` | grouped vertical bars | `BarChartView` | C3. `set_stacked(true)` is a V2 TODO; V1 ships un-stacked/grouped. |
+| `bar_vertical` | grouped or stacked vertical bars | `BarChartView` | C3. Default grouped (sub-bars side-by-side); `set_stacked(true)` switches to stacked (segments piled vertically, column totals scaled to the max column sum). |
 | `bar_horizontal` | grouped horizontal bars | `HBarChartView` | C3. Plot width/height swapped via `compute_chart_layout(bar_horizontal)`. |
 | `line` | polyline + markers | `LineChartView` | C4. `set_point_radius(logical_px)` controls marker radius; 0 disables markers. |
 | `spline` | Catmull-Rom -> cubic Bezier | `SplineChartView` | C4. `set_tension(double)` in [0, 1], clamped. Markers intentionally omitted (see Renderers). |
@@ -67,8 +67,8 @@ Each chart kind is its own `nfui::ChartView` subclass with a thin `on_paint` ove
 
 | Class | Header | Description | Key setters |
 | --- | --- | --- | --- |
-| `nfui::BarChartView` | `include/nfui/Charts.hpp` | Grouped vertical bars; sub-bars per x slot are placed side-by-side. The bars grow upward from the plot baseline toward the y maximum. | `set_series(std::vector<ChartSeries>)`, `set_axis_x(ChartAxisRange)`, `set_axis_y(ChartAxisRange)`, `set_stacked(bool)` (V2 TODO, currently a no-op) |
-| `nfui::HBarChartView` | `include/nfui/Charts.hpp` | Grouped horizontal bars; sub-bars per y slot are stacked vertically within the slot and grow rightward from the plot baseline. | `set_series(std::vector<ChartSeries>)`, `set_axis_y(ChartAxisRange)` (carries the value range), `set_stacked(bool)` (V2 TODO) |
+| `nfui::BarChartView` | `include/nfui/Charts.hpp` | Grouped or stacked vertical bars. Default grouped: sub-bars per x slot sit side-by-side and grow upward from the plot baseline. `set_stacked(true)` switches to stacked: each x slot's series segments pile vertically inside the slot, the column totals are scaled against the max column sum so a max-sized stack reaches the plot top, and the y-axis tick labels reflect that range. | `set_series(std::vector<ChartSeries>)`, `set_axis_x(ChartAxisRange)`, `set_axis_y(ChartAxisRange)`, `set_stacked(bool)` |
+| `nfui::HBarChartView` | `include/nfui/Charts.hpp` | Grouped or stacked horizontal bars. Default grouped: sub-bars per y slot subdivide the row vertically and grow rightward from the plot baseline. `set_stacked(true)` switches to stacked: each y slot's series segments tile horizontally inside the row, the row totals are scaled against the max row sum so a max-sized row reaches the plot right, and the x-axis tick labels reflect that range. | `set_series(std::vector<ChartSeries>)`, `set_axis_y(ChartAxisRange)` (carries the value range), `set_stacked(bool)` |
 | `nfui::LineChartView` | `include/nfui/Charts.hpp` | One `Polyline` per series (GDI by default; GDI+ `SmoothingModeAntiAlias` + `PixelOffsetModeHalf` when the chart AA session is active), optionally punctuated by filled circle markers. Multi-series line charts share the legend-column layout so they read identically to bar charts side-by-side. | `set_series(std::vector<ChartSeries>)`, `set_point_radius(int logical_px)`, `set_axis_x(ChartAxisRange)`, `set_axis_y(ChartAxisRange)` |
 | `nfui::SplineChartView` | `include/nfui/Charts.hpp` | Each polyline is converted to cubic Bezier control points via `catmull_rom_to_bezier` and drawn with GDI `PolyBezier` (GDI+ smooth curve when the chart AA session is active). Markers are intentionally omitted — fixed point markers and a smooth curve fight each other and produce a muddy result. | `set_series(std::vector<ChartSeries>)`, `set_tension(double t)` (clamped to [0, 1]), `set_axis_x(ChartAxisRange)`, `set_axis_y(ChartAxisRange)` |
 
