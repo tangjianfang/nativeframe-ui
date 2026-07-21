@@ -1,6 +1,7 @@
 add_library(nfui_core STATIC
     src/command/Command.cpp
     src/core/Application.cpp
+    src/core/HoverState.cpp
     src/core/Window.cpp
     src/dpi/Dpi.cpp
     src/font/Font.cpp

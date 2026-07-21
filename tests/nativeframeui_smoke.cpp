@@ -1,4 +1,5 @@
 #include <nfui/NativeFrameUI.hpp>
+#include <nfui/HoverState.hpp>
 
 #include "NativeFrameUIResource.h"
 
@@ -892,6 +893,24 @@ int wmain() {
         // Sanity: first and last control-point x values match the first/last inputs.
         ok = expect(bez.front().x == pts.front().x && bez.back().x == pts.back().x,
                     L"catmull_rom_to_bezier endpoint x matches input endpoints") && ok;
+    }
+
+    {
+        using namespace nfui;
+        // Pure-logic: state transitions without an HWND.
+        HoverState h;
+        ok = expect(!h.hover() && !h.pressed(),
+                    L"HoverState starts idle") && ok;
+        h.on_lbutton_down();
+        ok = expect(h.pressed(),
+                    L"HoverState tracks lbutton down") && ok;
+        h.on_lbutton_up();
+        ok = expect(!h.pressed(),
+                    L"HoverState releases on lbutton up") && ok;
+        h.on_mouse_move(nullptr); // null hwnd tolerated
+        h.on_mouse_leave();
+        ok = expect(!h.hover(),
+                    L"HoverState mouse_leave clears hover") && ok;
     }
 
     return ok ? 0 : 1;
