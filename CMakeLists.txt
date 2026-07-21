@@ -69,6 +69,17 @@ target_link_libraries(NativeFrameUIControls PRIVATE NativeFrameUI::NativeFrameUI
 nfui_apply_compiler_options(NativeFrameUIControls)
 nfui_add_resources(NativeFrameUIControls)
 
+add_executable(NativeFrameUICharts WIN32
+    samples/NativeFrameUICharts/NativeFrameUICharts.cpp
+)
+target_link_libraries(NativeFrameUICharts
+    PRIVATE
+        NativeFrameUI::NativeFrameUI
+        NativeFrameUI::nfui_charts
+)
+nfui_apply_compiler_options(NativeFrameUICharts)
+nfui_add_resources(NativeFrameUICharts)
+
 if(BUILD_TESTING)
     add_executable(NativeFrameUISmokeTest
         tests/nativeframeui_smoke.cpp
