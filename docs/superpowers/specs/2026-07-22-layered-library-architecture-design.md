@@ -470,6 +470,24 @@ Each `Mn` is one PR; smoke test gets the new per-component assertions at the mat
 - This spec is the **rulebook** for the layered-architecture migration. Any later change to layer boundaries, per-component lib scope, style-slot semantics, or knowledge-base layout MUST update this file first (or be appended as a dated amendment at the bottom).
 - Day-to-day technical decisions within these rules are delegated to the implementing agent. User involvement is reserved for directional changes.
 
+## Execution model: parallel sub-agents + main as controller
+
+The implementing session follows the **subagent-driven-development** workflow (`superpowers:subagent-driven-development`).
+
+- **Main session role**: requirement controller, aggregation point, validation gate, and commit sequencer. The main session does **not** implement tasks itself when a sub-agent can do them in parallel.
+- **Sub-agent role**: execute one bounded task from `docs/superpowers/plans/2026-07-22-layered-library-architecture.md`. Each sub-agent gets the exact task text + file paths + code from the plan, implements + builds + runs smoke + commits, then reports DONE / DONE_WITH_CONCERNS / NEEDS_CONTEXT / BLOCKED.
+- **Parallelization rule**: when the dependency graph permits, dispatch **as many sub-agents in one batch as the graph admits**. Cap is the available worker slots; never serialize independent tasks.
+- **Dependency batching** (initial pass for this migration):
+  - **Batch 0** (main session): T1 `HoverState`, T2 `OwnerDrawDC` — these create new foundation symbols other tasks depend on.
+  - **Batch 1** (main session): T3 — migrate `Controls.cpp` to consume the foundation helpers. Unblocks the per-component splits.
+  - **Batch 2** (parallel sub-agents): T4-T12 — the 9 per-component lib splits (`Button`, `CheckBox`, `RadioButton`, `Text`, `ListBox`, `ListView`, `TreeView`, `IconView`, `Frame`). Independent of each other; all depend on Batch 1.
+  - **Batch 3** (parallel sub-agents): T13 (forwarding umbrella + delete monolithic `Controls.cpp`) AND T15-T17 (knowledge base creation) — independent of each other; both depend on Batch 2.
+  - **Batch 4** (main session): T14 (sample link lists) — depends on T13.
+  - **Batch 5** (main session): T18 (final validation + push) — depends on everything.
+- **Sub-agent contract**: each sub-agent works in its own git worktree branch (`polish/T<n>-<slug>`), commits its task as one PR, and reports the commit SHA + smoke test result. Main session merges each branch sequentially after smoke + visual regression.
+- **Failure handling**: if a sub-agent reports BLOCKED or DONE_WITH_CONCERNS, main session assesses (provide context, escalate to more capable model, or break the task smaller) and re-dispatches. Sub-agents do not retry on their own.
+- **No peer escalation**: sub-agents cannot grant authority to other sub-agents; only main session can change direction.
+
 ## Resolved decisions (user delegated; lock-in)
 
 These four open questions are **resolved** per the recommended option in each case. Subsequent plans and code MUST follow these without re-litigation.
