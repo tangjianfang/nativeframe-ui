@@ -107,13 +107,63 @@ protected:
     // dispatch the appropriate renderer's draw routine.
     virtual void on_paint(HDC hdc, const RECT& bounds);
 
-private:
+    // Storage and service pointers are protected so subclass renderers (C3 bar,
+    // C4 line/spline) can read them directly inside their on_paint overrides.
+    // Mutation stays exclusively via the public setters above.
     ChartKind kind_{ChartKind::line};
     std::vector<ChartSeries> series_{};
     ChartAxisRange axis_x_{0.0, 1.0};
     ChartAxisRange axis_y_{0.0, 1.0};
     const ThemePalette* palette_{nullptr};
     FontCache* fonts_{nullptr};
+};
+
+// C3: vertical grouped bar chart renderer. Bars grow upward from the plot baseline;
+// when multiple series are present, sub-bars for each x slot are placed side-by-side
+// horizontally within that slot (un-stacked, the default). Stacked composition is a
+// TODO (toggleable via set_stacked, currently a no-op in on_paint).
+class BarChartView : public ChartView {
+public:
+    BarChartView() = default;
+    ~BarChartView() override = default;
+
+    BarChartView(const BarChartView&) = delete;
+    BarChartView& operator=(const BarChartView&) = delete;
+    BarChartView(BarChartView&&) = delete;
+    BarChartView& operator=(BarChartView&&) = delete;
+
+    // When true, future renders would sum y values column-wise so each x renders as
+    // a single stacked bar (TODO: not implemented yet). Default: false (grouped).
+    void set_stacked(bool stacked) noexcept;
+
+protected:
+    void on_paint(HDC hdc, const RECT& bounds) override;
+
+private:
+    bool stacked_ = false;
+};
+
+// C3: horizontal grouped bar chart renderer. Same data shape as BarChartView but
+// the plot width/height are swapped via compute_chart_layout(bar_horizontal).
+// Bars grow rightward from the plot baseline; sub-bars for each y slot are stacked
+// vertically within that slot. set_stacked is currently a no-op (TODO).
+class HBarChartView : public ChartView {
+public:
+    HBarChartView() = default;
+    ~HBarChartView() override = default;
+
+    HBarChartView(const HBarChartView&) = delete;
+    HBarChartView& operator=(const HBarChartView&) = delete;
+    HBarChartView(HBarChartView&&) = delete;
+    HBarChartView& operator=(HBarChartView&&) = delete;
+
+    void set_stacked(bool stacked) noexcept;
+
+protected:
+    void on_paint(HDC hdc, const RECT& bounds) override;
+
+private:
+    bool stacked_ = false;
 };
 
 } // namespace nfui
