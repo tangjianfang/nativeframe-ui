@@ -45,7 +45,7 @@ public:
             instance_,
             L"NativeFrameUIWorkbenchWindow",
             L"NativeFrame UI Workbench",
-            WS_OVERLAPPEDWINDOW,
+            WS_OVERLAPPEDWINDOW | WS_CLIPCHILDREN,
             0,
             CW_USEDEFAULT,
             CW_USEDEFAULT,
@@ -66,6 +66,10 @@ public:
         AppendMenuW(menu, MF_POPUP, reinterpret_cast<UINT_PTR>(help_menu), L"&Help");
         SetMenu(hwnd(), menu);
 
+        // create_children() -> apply_native_fonts() needs a valid DPI before
+        // the HFONT cache lookup. Seed it from the live HWND so the initial
+        // WM_SETFONT pass uses the correct scaled face (matches layout()).
+        dpi_ = nfui::DpiScale(nfui::dpi_of(hwnd()));
         create_children();
         layout();
 
@@ -171,6 +175,11 @@ private:
         insert_tab(1, L"Output");
 
         params.control_id = id_list;
+        // Wire the ListView to the Claude palette + Segoe UI cache before
+        // create(): the Win32 chrome is initialised inside create() and our
+        // custom-draw path reads palette_, so it must be live by then.
+        list_.set_palette(&palette_);
+        list_.set_font_cache(&fonts_);
         static_cast<void>(list_.create(params));
         ListView_SetExtendedListViewStyle(list_.hwnd(), LVS_EX_FULLROWSELECT | LVS_EX_GRIDLINES);
         LVCOLUMNW column{};
@@ -204,12 +213,10 @@ private:
 
         // The self-painting inspector (StaticText) needs the Claude palette +
         // Segoe UI font injected so it matches the cream background. The
-        // ListView's custom-draw path reads the palette too, so inject there
-        // as well so themed rows pick up the warm ink + selection tokens.
+        // ListView's set_palette/set_font_cache were wired above so its
+        // custom-draw path adopts the warm ink + selection tokens.
         inspector_.set_palette(&palette_);
         inspector_.set_font_cache(&fonts_);
-        list_.set_palette(&palette_);
-        list_.set_font_cache(&fonts_);
 
         // Native controls keep their Win32 chrome but adopt Segoe UI so the
         // text matches the shared paint. lParam=TRUE forces an immediate
@@ -224,6 +231,7 @@ private:
         SendMessageW(search_.hwnd(),       WM_SETFONT, reinterpret_cast<WPARAM>(ui_font), TRUE);
         SendMessageW(tree_.hwnd(),         WM_SETFONT, reinterpret_cast<WPARAM>(ui_font), TRUE);
         SendMessageW(tabs_.hwnd(),         WM_SETFONT, reinterpret_cast<WPARAM>(ui_font), TRUE);
+        SendMessageW(list_.hwnd(),         WM_SETFONT, reinterpret_cast<WPARAM>(ui_font), TRUE);
         SendMessageW(progress_.hwnd(),     WM_SETFONT, reinterpret_cast<WPARAM>(ui_font), TRUE);
         SendMessageW(status_.hwnd(),       WM_SETFONT, reinterpret_cast<WPARAM>(ui_font), TRUE);
     }
