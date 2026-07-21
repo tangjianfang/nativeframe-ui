@@ -8,6 +8,20 @@ The goal is to provide a lightweight framework around native `HWND`, Windows res
 
 The engineering baseline is implemented and validated in Debug and Release. The repository now also includes a product-growth sample portfolio: `NativeFrameUIShowcase`, `NativeFrameUIDarkStudio`, `NativeFrameUISettingsDemo`, and `NativeFrameUIResourceGallery`.
 
+## Visual Style
+
+V1.1 introduces a Claude Code-inspired visual refresh across all product-growth samples and the `NativeFrameUIControls` gallery. The refresh is expressed entirely through the shared `nfui::ThemePalette` and `nfui::FontCache` primitives, so consumers can adopt the same tokens without copying sample code.
+
+- **Light surfaces** — warm cream `#FAF9F5`
+- **Dark surfaces** — warm ink `#1F1E1D`
+- **Accent** — coral `#D97757` (Claude Code signature)
+- **Headings** — serif via `nfui::FontCache::serif()` (Georgia)
+- **Digits / code** — mono via `nfui::FontCache::mono()` (Cascadia Mono with Consolas fallback)
+
+### Flicker-free paint contract
+
+`NativeFrameUIControls` and all owner-draw / custom-draw demos follow the MemoryDC scope-before-`EndPaint` invariant (R6/R8/R9 pattern): create the buffer at the start of `WM_PAINT`, paint into it, flush through `BitBlt`, and let the destructor close the DC before `EndPaint` returns. This is the only correct lifecycle — any code path that delays the flush past `EndPaint` flickers. Demos that allocate native child controls must also re-apply `WM_SETFONT` from the DPI handler; relying on `create_child` alone leaves the child's HFONT at the creation-time DPI.
+
 ## V1 Baseline
 
 - Product name: NativeFrame UI
@@ -121,22 +135,20 @@ Phase 6 baseline coverage includes pure DPI conversion helpers, splitter and hor
 
 See [Validation Matrix](docs/VALIDATION_MATRIX.md) for automated and manual compatibility checks.
 
-## Quick Evaluation Path
+## Demos
 
-1. Configure, build, and run `ctest` with the commands above.
-2. Launch the visual samples from `out\build\x64-debug\Debug\` or `out\build\x64-release\Release\`.
-3. Use the walkthroughs and matrix docs to decide whether you need the integration-focused Workbench or one of the product-growth demos.
+All five product-growth demos and the `NativeFrameUIControls` gallery now consume the shared `nfui::ThemePalette` (warm cream / warm ink / coral accent) and `nfui::FontCache` (serif headings, mono digits). Configure, build, and run `ctest` with the commands above, then launch the visual samples from `out\build\x64-debug\Debug\` or `out\build\x64-release\Release\`.
 
-| Executable | Purpose | Key evidence |
+| Executable | Visual character | Key evidence |
 | --- | --- | --- |
-| `NativeFrameUIWorkbench.exe` | Integration baseline for menus, splitters, controls, status, and command routing | [Workbench Walkthrough](docs/WORKBENCH_WALKTHROUGH.md) |
-| `NativeFrameUIShowcase.exe` | Modern dashboard shell with light/dark toggle and DPI-aware painting | [Showcase Guide](docs/SHOWCASE_GUIDE.md) |
-| `NativeFrameUIDarkStudio.exe` | Dark navigation shell with preview canvas and native status bar | [DarkStudio Walkthrough](docs/DARK_STUDIO_WALKTHROUGH.md) |
-| `NativeFrameUISettingsDemo.exe` | Category navigation with native edit/combo/check inputs and save-state feedback | [SettingsDemo Walkthrough](docs/SETTINGS_DEMO_WALKTHROUGH.md) |
-| `NativeFrameUIResourceGallery.exe` | Explicit string/menu/dialog/icon/bitmap resource loading gallery | [ResourceGallery Walkthrough](docs/RESOURCE_GALLERY_WALKTHROUGH.md) |
-| `NativeFrameUIControls.exe` | Owner-draw/custom-draw control gallery (Button, StaticText, ListBox, ListView, IconView) themed from a shared `ThemePalette` | — |
+| `NativeFrameUIWorkbench.exe` | Integration baseline with native chrome (menus, splitters, controls, status, command routing) over the Claude palette | [Workbench Walkthrough](docs/WORKBENCH_WALKTHROUGH.md) |
+| `NativeFrameUIShowcase.exe` | Modern dashboard shell with light/dark toggle, serif headings, mono digits, and DPI-aware painting | [Showcase Guide](docs/SHOWCASE_GUIDE.md) |
+| `NativeFrameUIDarkStudio.exe` | Dark navigation shell with warm-ink surfaces, coral accent, preview canvas, and native status bar | [DarkStudio Walkthrough](docs/DARK_STUDIO_WALKTHROUGH.md) |
+| `NativeFrameUISettingsDemo.exe` | Category navigation with cream surfaces, native edit / combo / check inputs, save-state feedback, and MemoryDC flicker-free paint | [SettingsDemo Walkthrough](docs/SETTINGS_DEMO_WALKTHROUGH.md) |
+| `NativeFrameUIResourceGallery.exe` | Explicit string / menu / dialog / icon / bitmap resource loading gallery on palette.surface panels | [ResourceGallery Walkthrough](docs/RESOURCE_GALLERY_WALKTHROUGH.md) |
+| `NativeFrameUIControls.exe` | Owner-draw / custom-draw gallery (Button, StaticText, ListBox, ListView, IconView) themed from the shared `ThemePalette` with editorial serif / mono typography | — |
 
-Showcase, demo, and control-gallery visuals are sample-local evaluation surfaces built on the same shared primitives (`theme_palette`, `FontCache`, `fill_rounded_rect`, `draw_text`, `load_scaled_icon`). Stable framework guarantees remain the documented `nfui` APIs: application startup, HWND-oriented windows and controls, commands, layout, DPI helpers, persistence, and explicit resource handling.
+Showcase, demo, and control-gallery visuals are sample-local evaluation surfaces built on the same shared primitives (`theme_palette`, `FontCache`, `fill_rounded_rect`, `draw_text`, `load_scaled_icon`, `MemoryDC`). Stable framework guarantees remain the documented `nfui` APIs: application startup, HWND-oriented windows and controls, commands, layout, DPI helpers, persistence, and explicit resource handling. See [Visual Style](#visual-style) above for the palette tokens, font selections, and the MemoryDC scope-before-`EndPaint` paint contract that all five demos follow.
 
 ## License
 
