@@ -1,7 +1,7 @@
 # Layered Library Architecture + Component Split — Design
 
 **Date:** 2026-07-22
-**Status:** Draft (awaiting user review)
+**Status:** Approved (user delegated decisions to author; 4 open questions resolved per "Recommendations" below — see §6)
 
 ## Context
 
@@ -465,9 +465,16 @@ Each `Mn` is one PR; smoke test gets the new per-component assertions at the mat
 - [ ] At least one new `competitive/` entry exists (a reference comparison).
 - [ ] Boundary check, both presets, full smoke test, all green.
 
-## Open questions for user review
+## Governance
 
-1. **`nfui_listbox` ↔ `nfui_text` dependency** — does `ListBox` row text render through a shared `draw_text` helper from `nfui_text`, or stay inlined? Affects whether `nfui_listbox` PUBLIC-links `nfui_text` or not. Recommendation: keep inlined in V1.5 to avoid the cross-component edge; promote to shared helper in a later cycle if profiling shows it worth it.
-2. **Should `nfui_frame` (StatusBar/Tab/Tooltip/ProgressBar/Panel/Splitter) stay grouped, or split earlier?** Recommendation: stay grouped in this cycle; revisit when V1.4 visual-controls work lands on any of them.
-3. **`docs/KNOWLEDGE/problems/` vs. keep `docs/LEARNINGS/`** — rename outright (recommended) or keep `LEARNINGS` as a thin alias. Recommendation: rename, since the new schema is materially different.
-4. **Style-slot default resolution** — when a consumer sets `ButtonStyle{corner_radius=10}` and leaves everything else default, are unspecified fields "inherit from ThemePalette" or "inherit from a per-component baked default"? Recommendation: layered (theme → per-component default → consumer override), in that order. Matches CSS cascade intuition.
+- This spec is the **rulebook** for the layered-architecture migration. Any later change to layer boundaries, per-component lib scope, style-slot semantics, or knowledge-base layout MUST update this file first (or be appended as a dated amendment at the bottom).
+- Day-to-day technical decisions within these rules are delegated to the implementing agent. User involvement is reserved for directional changes.
+
+## Resolved decisions (user delegated; lock-in)
+
+These four open questions are **resolved** per the recommended option in each case. Subsequent plans and code MUST follow these without re-litigation.
+
+1. **`nfui_listbox` ↔ `nfui_text`**: **no** PUBLIC dependency. `ListBox` row text rendering stays inlined in V1.5. A shared `draw_text` helper may be extracted into `nfui_core` (Layer 1) in a later cycle if profiling shows it worth it.
+2. **`nfui_frame` grouping**: stays grouped (`StatusBar`, `TabControl`, `Tooltip`, `ProgressBar`, `Panel`, `Splitter`). Revisit on first owner-draw polish to any member.
+3. **`docs/LEARNINGS/` → `docs/KNOWLEDGE/problems/`**: rename outright. New schema (frontmatter + 6 sections) is materially different. No alias directory kept.
+4. **Style-slot cascade order**: **ThemePalette → per-component baked default → consumer override**, evaluated at paint time. Mirrors CSS cascade intuition. Optional fields on the `*Style` struct mean "not overridden" and fall through to the next layer.
