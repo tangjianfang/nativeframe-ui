@@ -1,0 +1,46 @@
+#include <nfui/Controls/Button.hpp>
+#include <nfui/Dpi.hpp>
+#include <nfui/Paint.hpp>
+
+namespace nfui {
+
+bool Button::create(const ControlCreateParams& params) noexcept {
+    ControlCreateParams owner_params = params;
+    owner_params.style &= ~WS_BORDER;
+    return create_native(L"BUTTON", owner_params, BS_OWNERDRAW | BS_FLAT);
+}
+
+void Button::on_paint(HDC dc, const PaintState& state) noexcept {
+    const ThemePalette* palette_ptr = palette();
+    const ThemePalette& p = palette_ptr ? *palette_ptr : theme_palette(ThemeMode::light);
+    const int theme_radius = theme_metrics().corner_radius_control;
+    const int radius = style_.corner_radius.value_or(theme_radius);
+    const Color border = style_.border_color.value_or(p.border);
+    Color face = p.accent;
+    Color text_color = p.accent_text;
+    if (!state.enabled) {
+        face = p.border;
+        text_color = p.text_secondary;
+    } else if (state.pressed || state.hover) {
+        face = p.accent_hover;
+    }
+    const RECT& b = state.bounds;
+    MemoryDC mem(dc, b);
+    HDC target = mem.valid() ? mem.dc() : dc;
+    const RECT paint_bounds = mem.valid()
+        ? RECT{0, 0, b.right - b.left, b.bottom - b.top}
+        : b;
+    fill_rounded_rect(target, paint_bounds, radius, face, border);
+    FontCache* cache = fonts();
+    HFONT font = nullptr;
+    if (cache != nullptr) {
+        const int dpi = dpi_of(hwnd());
+        font = style_.use_semibold.value_or(false)
+            ? cache->semibold(dpi, 9)
+            : cache->regular(dpi, 9);
+    }
+    draw_text(target, paint_bounds, caption(), font, text_color,
+              DT_CENTER | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS);
+}
+
+} // namespace nfui

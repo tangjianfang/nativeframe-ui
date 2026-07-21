@@ -9,6 +9,15 @@ include(cmake/NativeFrameUIResources.cmake)
 include(cmake/nfui_core.cmake)
 include(cmake/nfui_theme.cmake)
 include(cmake/nfui_controls.cmake)
+include(cmake/nfui_button.cmake)
+include(cmake/nfui_checkbox.cmake)
+include(cmake/nfui_radio.cmake)
+include(cmake/nfui_text.cmake)
+include(cmake/nfui_listbox.cmake)
+include(cmake/nfui_listview.cmake)
+include(cmake/nfui_treeview.cmake)
+include(cmake/nfui_iconview.cmake)
+include(cmake/nfui_frame.cmake)
 include(cmake/nfui_charts.cmake)
 include(cmake/nfui_charts_aa.cmake)
 
@@ -24,6 +33,15 @@ target_link_libraries(NativeFrameUI
         NativeFrameUI::nfui_core
         NativeFrameUI::nfui_theme
         NativeFrameUI::nfui_controls
+        NativeFrameUI::nfui_button
+        NativeFrameUI::nfui_checkbox
+        NativeFrameUI::nfui_radio
+        NativeFrameUI::nfui_text
+        NativeFrameUI::nfui_listbox
+        NativeFrameUI::nfui_listview
+        NativeFrameUI::nfui_treeview
+        NativeFrameUI::nfui_iconview
+        NativeFrameUI::nfui_frame
         NativeFrameUI::nfui_charts
 )
 
