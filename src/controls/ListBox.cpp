@@ -12,6 +12,18 @@ bool ListBox::create(const ControlCreateParams& params) noexcept {
     return true;
 }
 
+void ListBox::set_hovered_row(int row) noexcept {
+    if (hovered_row_ == row) {
+        return;
+    }
+    hovered_row_ = row;
+    if (valid()) {
+        // Whole-control invalidation. Cheap for typical list sizes; per-row rect
+        // invalidation is deferred to V1.5 (see docs/KNOWLEDGE/polish/...).
+        InvalidateRect(hwnd(), nullptr, FALSE);
+    }
+}
+
 void ListBox::draw_item(DRAWITEMSTRUCT* di) noexcept {
     if (di == nullptr) return;
     const ThemePalette* pal = palette();
@@ -19,7 +31,13 @@ void ListBox::draw_item(DRAWITEMSTRUCT* di) noexcept {
     const bool selected = (di->itemState & ODS_SELECTED) != 0;
     const bool disabled = (di->itemState & ODS_DISABLED) != 0;
     RECT rc = di->rcItem;
-    const Color bg = selected ? style_.selected_background.value_or(p.selection) : p.surface;
+    Color bg = selected ? style_.selected_background.value_or(p.selection) : p.surface;
+    if (!selected && static_cast<int>(di->itemID) == hovered_row_) {
+        // Hover overlay: tint surface toward text at 6% so the hover state reads
+        // on both light (text is darker → subtle darken) and dark (text is lighter
+        // → subtle lighten) palettes. Selection styling still takes priority.
+        bg = alpha_blend(p.surface, p.text, 0.06f);
+    }
     const Color fg = disabled ? p.text_secondary : (selected ? style_.selected_foreground.value_or(p.selection_text) : p.text);
     const int radius = theme_metrics().corner_radius_control;
     fill_rounded_rect(di->hDC, rc, radius, bg, bg);
