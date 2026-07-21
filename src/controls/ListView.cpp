@@ -16,6 +16,19 @@ bool ListView::create(const ControlCreateParams& params) noexcept {
         }
     }
     ListView_SetExtendedListViewStyle(hwnd(), LVS_EX_FULLROWSELECT);
+    // P1.4: when a palette is injected and the user has supplied chrome_bg /
+    // chrome_text, push those into the ListView control's native base colours
+    // via the documented ComCtl32 ListView_SetBkColor / ListView_SetTextColor
+    // helpers. The custom-draw handler below still wins per-item, so this
+    // just guarantees the empty-area background and the base text colour
+    // agree with the palette even when no items are present.
+    const ThemePalette* pal = palette();
+    if (pal != nullptr) {
+        const Color bg = style_.row_background.value_or(pal->surface);
+        const Color fg = style_.row_foreground.value_or(pal->text);
+        ListView_SetBkColor(hwnd(), bg.rgb);
+        ListView_SetTextColor(hwnd(), fg.rgb);
+    }
     return true;
 }
 
