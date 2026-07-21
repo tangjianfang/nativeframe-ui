@@ -78,17 +78,17 @@ protected:
                 }
             }
             theme_toggle_.set_font_cache(&fonts_);
-            if (HFONT toggle_font = fonts_.regular(dpi, 9)) {
-                SendMessageW(theme_toggle_.hwnd(),
-                             WM_SETFONT,
-                             reinterpret_cast<WPARAM>(toggle_font),
-                             FALSE);
-            }
             if (list_.hwnd() != nullptr) {
                 SendMessageW(list_.hwnd(),
                              LB_SETITEMHEIGHT,
                              0,
                              static_cast<LPARAM>(nfui::font_pixel_height(9, dpi) + 8));
+                if (HFONT list_font = fonts_.regular(dpi, 9)) {
+                    SendMessageW(list_.hwnd(),
+                                 WM_SETFONT,
+                                 reinterpret_cast<WPARAM>(list_font),
+                                 TRUE);  // TRUE = redraw immediately
+                }
                 InvalidateRect(list_.hwnd(), nullptr, TRUE);
             }
             InvalidateRect(ok_.hwnd(), nullptr, FALSE);
