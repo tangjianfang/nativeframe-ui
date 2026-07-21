@@ -11,6 +11,6 @@ target_link_libraries(nfui_radio
     PUBLIC
         NativeFrameUI::nfui_core
         NativeFrameUI::nfui_theme
-        NativeFrameUI::nfui_controls
+        NativeFrameUI::nfui_control_base
 )
 nfui_apply_compiler_options(nfui_radio)
