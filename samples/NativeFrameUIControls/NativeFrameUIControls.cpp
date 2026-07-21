@@ -77,7 +77,6 @@ protected:
                     SendMessageW(view_.hwnd(), WM_SETFONT, reinterpret_cast<WPARAM>(f), FALSE);
                 }
             }
-            theme_toggle_.set_font_cache(&fonts_);
             if (list_.hwnd() != nullptr) {
                 SendMessageW(list_.hwnd(),
                              LB_SETITEMHEIGHT,
