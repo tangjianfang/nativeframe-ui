@@ -2,6 +2,8 @@
 #include <nfui/Dpi.hpp>
 #include <nfui/Paint.hpp>
 
+#include "internal/ChartsPaint.hpp"
+
 #include <algorithm>
 #include <cstdio>
 #include <string>
@@ -159,24 +161,18 @@ void LineChartView::on_paint(HDC hdc, const RECT& bounds) {
         if (pts.size() < 2) {
             // Single-point series: draw a single marker (if enabled) and continue.
             if (point_radius_px_ > 0) {
-                const LONG r = static_cast<LONG>(point_radius_px_);
-                Ellipse(hdc, pts[0].x - r, pts[0].y - r, pts[0].x + r, pts[0].y + r);
+                charts_internal::fill_circles_aa(
+                    hdc, &pts[0], 1, point_radius_px_, series.color);
             }
             continue;
         }
-        draw_polyline(hdc, pts.data(), static_cast<int>(pts.size()),
-                      series.color, kLineWidthPx);
+        charts_internal::draw_polyline_aa(
+            hdc, pts.data(), static_cast<int>(pts.size()),
+            series.color, kLineWidthPx);
         if (point_radius_px_ > 0) {
-            const LONG r = static_cast<LONG>(point_radius_px_);
-            HBRUSH brush = CreateSolidBrush(series.color.rgb);
-            HGDIOBJ prev_brush = SelectObject(hdc, brush);
-            HGDIOBJ prev_pen = SelectObject(hdc, GetStockObject(NULL_PEN));
-            for (const POINT& p : pts) {
-                Ellipse(hdc, p.x - r, p.y - r, p.x + r, p.y + r);
-            }
-            SelectObject(hdc, prev_pen);
-            SelectObject(hdc, prev_brush);
-            DeleteObject(brush);
+            charts_internal::fill_circles_aa(
+                hdc, pts.data(), static_cast<int>(pts.size()),
+                point_radius_px_, series.color);
         }
     }
 

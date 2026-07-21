@@ -2,6 +2,8 @@
 #include <nfui/Dpi.hpp>
 #include <nfui/Paint.hpp>
 
+#include "internal/ChartsPaint.hpp"
+
 #include <algorithm>
 #include <cstdio>
 #include <string>
@@ -169,13 +171,8 @@ void SplineChartView::on_paint(HDC hdc, const RECT& bounds) {
 
         // Build a coloured pen sized for the spline stroke; PolyBezier uses the
         // currently selected pen for the curve (no width parameter).
-        HPEN pen = CreatePen(PS_SOLID, kSplineLineWidthPx, series.color.rgb);
-        HGDIOBJ prev_pen = SelectObject(hdc, pen);
-        HGDIOBJ prev_brush = SelectObject(hdc, GetStockObject(NULL_BRUSH));
-        PolyBezier(hdc, bez.data(), bez_count);
-        SelectObject(hdc, prev_brush);
-        SelectObject(hdc, prev_pen);
-        DeleteObject(pen);
+        charts_internal::draw_beziers_aa(
+            hdc, bez.data(), bez_count, series.color, kSplineLineWidthPx);
     }
 
     const int dpi = (hwnd() != nullptr) ? dpi_of(hwnd()) : 96;

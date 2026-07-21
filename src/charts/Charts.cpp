@@ -1,5 +1,7 @@
 #include <nfui/Charts.hpp>
 
+#include "internal/GdiplusContext.hpp"
+
 #include <algorithm>
 #include <cstddef>
 #include <vector>
@@ -157,6 +159,14 @@ std::vector<POINT> catmull_rom_to_bezier(const std::vector<POINT>& points,
         emit_segment(b0, b1, b2, b3);
     }
     return out;
+}
+
+bool initialize_chart_aa() noexcept {
+    return charts_internal::GdiplusContext::initialize();
+}
+
+void shutdown_chart_aa() noexcept {
+    charts_internal::GdiplusContext::shutdown();
 }
 
 } // namespace nfui

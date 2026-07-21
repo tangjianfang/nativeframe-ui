@@ -13,6 +13,16 @@
 
 namespace nfui {
 
+// Process-lifetime GDI+ bring-up for the chart line + spline renderers.
+// Must be called BEFORE the first paint of a LineChartView / SplineChartView
+// when antialiased strokes are desired; until then the renderers fall back to
+// pure GDI. Idempotent — each successful initialize_chart_aa() must be paired
+// with one shutdown_chart_aa(). No-op when GDI+ isn't available, so callers
+// must not assume AA is enabled just because initialize_chart_aa() returned
+// true (return value reflects successful startup, not success-on-a-given-HDC).
+[[nodiscard]] bool initialize_chart_aa() noexcept;
+void           shutdown_chart_aa() noexcept;
+
 enum class ChartKind {
     bar_vertical,
     bar_horizontal,
