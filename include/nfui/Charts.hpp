@@ -109,6 +109,14 @@ public:
     void set_palette(const ThemePalette* palette) noexcept;
     void set_font_cache(FontCache* fonts) noexcept;
 
+    // Bind both palette + FontCache in one call. Equivalent to:
+    //   set_palette(palette);
+    //   set_font_cache(fonts);
+    void inject_theme(const ThemePalette* palette, FontCache* fonts) noexcept {
+        palette_ = palette;
+        fonts_ = fonts;
+    }
+
 protected:
     LRESULT handle_message(UINT message, WPARAM wparam, LPARAM lparam) override;
 

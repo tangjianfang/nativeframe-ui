@@ -49,6 +49,14 @@ public:
     void set_palette(const ThemePalette* palette) noexcept { palette_ = palette; }
     void set_font_cache(FontCache* fonts) noexcept { fonts_ = fonts; }
 
+    // Bind both palette + FontCache in one call. Equivalent to:
+    //   set_palette(palette);
+    //   set_font_cache(fonts);
+    void inject_theme(const ThemePalette* palette, FontCache* fonts) noexcept {
+        set_palette(palette);
+        set_font_cache(fonts);
+    }
+
 protected:
     [[nodiscard]] bool create_native(std::wstring_view class_name, const ControlCreateParams& params, DWORD extra_style) noexcept;
     [[nodiscard]] const std::wstring& caption() const noexcept { return caption_; }
