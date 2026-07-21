@@ -32,10 +32,33 @@ dpi         -> core, Win32 DPI APIs
 theme       -> core, dpi, UxTheme, DWM
 layout      -> core, dpi
 controls    -> core, resource, theme, dpi, layout
+            (owns Control base infra: subclass_proc, create_native, anon helpers)
+nfui_button     -> core, theme, controls
+nfui_checkbox   -> core, theme, controls
+nfui_radio      -> core, theme, controls
+nfui_text       -> core, theme, controls   (StaticText + Edit)
+nfui_listbox    -> core, theme, controls   (ListBox + ComboBox)
+nfui_listview   -> core, theme, controls
+nfui_treeview   -> core, theme, controls
+nfui_iconview   -> core, theme, controls
+nfui_frame      -> core, theme, controls   (StatusBar + TabControl + Tooltip +
+                                            ProgressBar + Panel + Splitter)
 command     -> core
 persistence -> core, file system, JSON parsing
-sample      -> public modules
+sample      -> public modules (typically NativeFrameUI umbrella)
 ```
+
+Each per-component library is a self-contained `STATIC` library exposing
+`NativeFrameUI::nfui_<name>`. Consumers can link individual components for
+minimal footprint, or link the umbrella `NativeFrameUI::NativeFrameUI` for
+the full surface. The umbrella `NativeFrameUI::NativeFrameUI` re-exports
+all per-component targets via `target_link_libraries(... INTERFACE ...)`.
+
+The base `Control` class (`subclass_proc`, `create_native`, owner-draw
+dispatch, hover-state plumbing) lives in `nfui_controls`. Per-component
+libraries depend on `nfui_controls` to access the base class vtable; this
+is the documented V1.5 dependency until the `Control` base is split into
+its own `nfui_control_base` library in a later migration.
 
 Forbidden dependencies:
 
