@@ -10,7 +10,7 @@ include(cmake/nfui_core.cmake)
 include(cmake/nfui_layout.cmake)
 include(cmake/nfui_theme.cmake)
 include(cmake/nfui_window.cmake)
-include(cmake/nfui_controls.cmake)
+include(cmake/nfui_control_base.cmake)
 include(cmake/nfui_button.cmake)
 include(cmake/nfui_checkbox.cmake)
 include(cmake/nfui_radio.cmake)
@@ -36,7 +36,7 @@ target_link_libraries(NativeFrameUI
         NativeFrameUI::nfui_layout
         NativeFrameUI::nfui_theme
         NativeFrameUI::nfui_window
-        NativeFrameUI::nfui_controls
+        NativeFrameUI::nfui_control_base
         NativeFrameUI::nfui_button
         NativeFrameUI::nfui_checkbox
         NativeFrameUI::nfui_radio

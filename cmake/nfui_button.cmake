@@ -11,5 +11,6 @@ target_link_libraries(nfui_button
     PUBLIC
         NativeFrameUI::nfui_core
         NativeFrameUI::nfui_theme
+        NativeFrameUI::nfui_control_base
 )
 nfui_apply_compiler_options(nfui_button)
