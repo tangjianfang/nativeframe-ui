@@ -1,8 +1,10 @@
 #include <nfui/Controls.hpp>
+#include <nfui/Controls/ListBox.hpp>
 #include <nfui/Dpi.hpp>
 #include <nfui/Paint.hpp>
 
 #include <commctrl.h>
+#include <windowsx.h>
 #include <string>
 
 namespace nfui {
@@ -11,38 +13,14 @@ namespace {
 constexpr UINT ocm_base = WM_USER + 0x1c00;
 
 bool control_is_owner_draw(HWND hwnd) noexcept {
-    // LBS_OWNERDRAW* excluded: per-row hover highlight not yet implemented; avoids needless repaint.
+    // ListBox owner-draw now supports per-row hover via ListBox::set_hovered_row.
+    // Invalidation is whole-control (cheap for typical list sizes); per-row rect
+    // optimization deferred to V1.5.
     const LONG style = GetWindowLongW(hwnd, GWL_STYLE);
     return (style & BS_OWNERDRAW) != 0
         || (style & SS_OWNERDRAW) != 0;
 }
 
-void draw_list_item(DRAWITEMSTRUCT* di, const ThemePalette& p, FontCache* fonts) noexcept {
-    if (di == nullptr) {
-        return;
-    }
-    const bool selected = (di->itemState & ODS_SELECTED) != 0;
-    const bool disabled = (di->itemState & ODS_DISABLED) != 0;
-    RECT rc = di->rcItem;
-    const Color bg = selected ? p.selection : p.surface;
-    const Color fg = disabled ? p.text_secondary : (selected ? p.selection_text : p.text);
-    // ListBox owner-draw uses per-item DRAWITEMSTRUCT DCs (one per row); buffering each row
-    // separately is wasteful. Paint directly into di->hDC with metrics-driven corner radius.
-    const int radius = theme_metrics().corner_radius_control;
-    fill_rounded_rect(di->hDC, rc, radius, bg, bg);
-    if (di->itemID != LB_ERR) {
-        LRESULT len = SendMessageW(di->hwndItem, LB_GETTEXTLEN, di->itemID, 0);
-        if (len != LB_ERR && len < 255) { // leave room for null terminator
-            wchar_t buf[256]{};
-            if (SendMessageW(di->hwndItem, LB_GETTEXT, di->itemID, reinterpret_cast<LPARAM>(buf)) != LB_ERR) {
-                HFONT font = fonts ? fonts->regular(dpi_of(di->hwndItem), 9) : nullptr;
-                RECT text_rc = rc;
-                text_rc.left += 8;
-                draw_text(di->hDC, text_rc, buf, font, fg, DT_LEFT | DT_VCENTER | DT_SINGLELINE);
-            }
-        }
-    }
-}
 }
 
 HWND Control::hwnd() const noexcept {
@@ -113,9 +91,11 @@ LRESULT CALLBACK Control::subclass_proc(HWND hwnd,
             state.enabled = (di->itemState & ODS_DISABLED) == 0;
             control->on_paint(di->hDC, state);
         } else if (di->CtlType == ODT_LISTBOX) {
-            const ThemePalette* pal = control->palette();
-            const ThemePalette& palref = pal ? *pal : theme_palette(ThemeMode::light);
-            draw_list_item(di, palref, control->fonts());
+            // Dispatch to ListBox::draw_item so per-row hover (and any other
+            // ListBox-specific styling) is honored. draw_list_item remains
+            // available for any non-ListBox ODT_LISTBOX owner.
+            auto* lb = static_cast<ListBox*>(control);
+            lb->draw_item(di);
         }
         return TRUE;
     }
@@ -131,6 +111,21 @@ LRESULT CALLBACK Control::subclass_proc(HWND hwnd,
         if (control != nullptr && control_is_owner_draw(hwnd)) {
             control->hover_state_.on_mouse_move(hwnd);
         }
+        // ListBox row hover: track which row is under the cursor. The subclass
+        // proc is shared across all controls, so we gate on the window class
+        // name (LISTBOX) to avoid running LB_ITEMFROMPOINT on non-list HWNDs.
+        if (control != nullptr) {
+            wchar_t cls[32]{};
+            if (GetClassNameW(hwnd, cls, 32) > 0 && lstrcmpW(cls, WC_LISTBOXW) == 0) {
+                POINT pt{GET_X_LPARAM(lparam), GET_Y_LPARAM(lparam)};
+                LRESULT hit = SendMessageW(hwnd, LB_ITEMFROMPOINT, 0, MAKELPARAM(pt.x, pt.y));
+                int row = (hit != LB_ERR && HIWORD(hit) == 0) ? static_cast<int>(LOWORD(hit)) : -1;
+                auto* lb = static_cast<ListBox*>(control);
+                if (lb->hovered_row() != row) {
+                    lb->set_hovered_row(row);
+                }
+            }
+        }
         break;
     }
     case WM_MOUSELEAVE: {
@@ -138,6 +133,13 @@ LRESULT CALLBACK Control::subclass_proc(HWND hwnd,
             control->hover_state_.on_mouse_leave();
             if (!control->hover_state_.hover()) {
                 InvalidateRect(hwnd, nullptr, FALSE);
+            }
+            // Clear any ListBox row hover tracking when the cursor leaves the
+            // control entirely (set_hovered_row will InvalidateRect for us).
+            wchar_t cls[32]{};
+            if (GetClassNameW(hwnd, cls, 32) > 0 && lstrcmpW(cls, WC_LISTBOXW) == 0) {
+                auto* lb = static_cast<ListBox*>(control);
+                lb->set_hovered_row(-1);
             }
         }
         break;
