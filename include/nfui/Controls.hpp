@@ -3,6 +3,7 @@
 #include <nfui/Handle.hpp>
 #include <nfui/Theme.hpp>
 #include <nfui/Font.hpp>
+#include <nfui/HoverState.hpp>
 
 #include <string>
 #include <string_view>
@@ -71,7 +72,7 @@ private:
 
     const ThemePalette* palette_{nullptr};
     FontCache* fonts_{nullptr};
-    bool hover_{false};
+    HoverState hover_state_;
     std::wstring caption_;
     OwnedHwnd hwnd_{};
 };

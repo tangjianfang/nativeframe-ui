@@ -107,7 +107,7 @@ LRESULT CALLBACK Control::subclass_proc(HWND hwnd,
         if (di->CtlType == ODT_BUTTON || di->CtlType == ODT_STATIC) {
             PaintState state{};
             state.bounds = di->rcItem;
-            state.hover = control->hover_;
+            state.hover = control->hover_state_.hover();
             state.pressed = (di->itemState & ODS_SELECTED) != 0;
             state.focused = (di->itemState & ODS_FOCUS) != 0;
             state.enabled = (di->itemState & ODS_DISABLED) == 0;
@@ -128,21 +128,29 @@ LRESULT CALLBACK Control::subclass_proc(HWND hwnd,
         break; // let DefSubclassProc handle unknown CtlTypes
     }
     case WM_MOUSEMOVE: {
-        if (control != nullptr && !control->hover_ && control_is_owner_draw(hwnd)) {
-            control->hover_ = true;
-            TRACKMOUSEEVENT tme{};
-            tme.cbSize = static_cast<DWORD>(sizeof(tme));
-            tme.dwFlags = TME_LEAVE;
-            tme.hwndTrack = hwnd;
-            TrackMouseEvent(&tme);
-            InvalidateRect(hwnd, nullptr, FALSE);
+        if (control != nullptr && control_is_owner_draw(hwnd)) {
+            control->hover_state_.on_mouse_move(hwnd);
         }
         break;
     }
     case WM_MOUSELEAVE: {
-        if (control != nullptr && control->hover_) {
-            control->hover_ = false;
-            InvalidateRect(hwnd, nullptr, FALSE);
+        if (control != nullptr) {
+            control->hover_state_.on_mouse_leave();
+            if (!control->hover_state_.hover()) {
+                InvalidateRect(hwnd, nullptr, FALSE);
+            }
+        }
+        break;
+    }
+    case WM_LBUTTONDOWN: {
+        if (control != nullptr && control_is_owner_draw(hwnd)) {
+            control->hover_state_.on_lbutton_down();
+        }
+        break;
+    }
+    case WM_LBUTTONUP: {
+        if (control != nullptr) {
+            control->hover_state_.on_lbutton_up();
         }
         break;
     }
@@ -182,7 +190,7 @@ LRESULT CALLBACK Control::subclass_proc(HWND hwnd,
             HDC dc = BeginPaint(hwnd, &ps);
             if (dc != nullptr) {
                 PaintState state{};
-                state.hover = control->hover_;
+                state.hover = control->hover_state_.hover();
                 state.pressed = false;
                 state.focused = false;
                 state.enabled = IsWindowEnabled(hwnd) != FALSE;
