@@ -7,6 +7,7 @@ include(cmake/NativeFrameUICompilerOptions.cmake)
 include(cmake/NativeFrameUIResources.cmake)
 
 include(cmake/nfui_core.cmake)
+include(cmake/nfui_layout.cmake)
 include(cmake/nfui_theme.cmake)
 include(cmake/nfui_controls.cmake)
 include(cmake/nfui_button.cmake)
@@ -31,6 +32,7 @@ target_include_directories(NativeFrameUI
 target_link_libraries(NativeFrameUI
     INTERFACE
         NativeFrameUI::nfui_core
+        NativeFrameUI::nfui_layout
         NativeFrameUI::nfui_theme
         NativeFrameUI::nfui_controls
         NativeFrameUI::nfui_button
