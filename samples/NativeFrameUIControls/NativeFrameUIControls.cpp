@@ -310,19 +310,16 @@ private:
         splitter_style.surface_brush = palette_.accent;
         splitter_.set_style(splitter_style);
         // Tooltip style stores concrete colours, so rebuild it from the new
-        // palette before updating the live ComCtl32 tooltip window.
+        // palette; Tooltip::on_palette_changed (core) re-applies them to the
+        // live ComCtl32 tooltip window.
         nfui::FrameStyle tooltip_style{};
         tooltip_style.chrome_text = palette_.text;
         tooltip_style.chrome_bg   = palette_.surface;
         tooltip_.set_style(tooltip_style);
-        if (tooltip_.hwnd() != nullptr) {
-            // CP6: Win32 expects COLORREF in **wParam** (lParam reserved,
-            // must be zero). The historical bug here used lParam and was a
-            // no-op against ComCtl32; fix is mirrored from src/controls/
-            // Tooltip.cpp so live runtime verification matches the lib path.
-            SendMessageW(tooltip_.hwnd(), TTM_SETTIPTEXTCOLOR, palette_.text.rgb,    0);
-            SendMessageW(tooltip_.hwnd(), TTM_SETTIPBKCOLOR,   palette_.surface.rgb, 0);
-        }
+        // Tooltip::on_palette_changed (core, CP6) re-applies the stored
+        // chrome_text/chrome_bg to the live ComCtl32 tooltip window, so the
+        // sample does not need to send TTM_SETTIPTEXTCOLOR/TTM_SETTIPBKCOLOR
+        // here.
         SetWindowTextW(theme_toggle_.hwnd(),
                        mode_ == nfui::ThemeMode::dark ? L"Switch to light" : L"Switch to dark");
         InvalidateRect(theme_toggle_.hwnd(), nullptr, FALSE);
