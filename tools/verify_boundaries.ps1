@@ -5,6 +5,12 @@ param(
 
 $forbidden = @('BCGControlBar', '#include <afx', '#include <atl', '#include <wtl', 'BCGCBPro')
 $paths = @('include', 'src', 'samples', 'tests', 'resources', 'cmake', 'CMakeLists.txt')
+# Excluded relative paths under each scanned root. Files matching these
+# patterns contain forbidden markers as fixture content (negative tests
+# for this very script, BCP-delim samples, etc.) and must not be scanned.
+$excludePatterns = @(
+    'tests/verify_boundaries_tests.ps1'
+)
 $violations = @()
 
 foreach ($relative in $paths) {
@@ -20,6 +26,16 @@ foreach ($relative in $paths) {
     }
 
     foreach ($item in $items) {
+        $skip = $false
+        foreach ($ex in $excludePatterns) {
+            $absoluteEx = Join-Path $Root $ex
+            if ($item.FullName -eq $absoluteEx) {
+                $skip = $true
+                break
+            }
+        }
+        if ($skip) { continue }
+
         $content = Get-Content -Path $item.FullName -Raw -ErrorAction Stop
         foreach ($marker in $forbidden) {
             if ($content -like "*$marker*") {
