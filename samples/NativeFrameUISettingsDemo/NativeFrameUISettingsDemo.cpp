@@ -232,6 +232,14 @@ private:
         if (!description_.create(params)) {
             return false;
         }
+        // CP8: enable word-wrap on the description so the long category blurb
+        // stacks inside its 56-logical-px tall band instead of being clipped
+        // (StaticText defaults to single-line + DT_END_ELLIPSIS).
+        nfui::TextStyle description_style{};
+        description_style.single_line = false;
+        description_style.align_v = nfui::StaticTextAlignV::top;
+        description_style.vertical_padding = 2;
+        description_.set_style(description_style);
 
         params.control_id = id_status_bar;
         params.text = L"";
