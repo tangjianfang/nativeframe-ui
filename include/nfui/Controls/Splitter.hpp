@@ -20,7 +20,13 @@ public:
     void set_ratio(double ratio) noexcept;
     [[nodiscard]] double ratio() const noexcept;
     [[nodiscard]] bool is_dragging() const noexcept { return dragging_; }
-    void set_dragging(bool dragging) noexcept { dragging_ = dragging; }
+    // Toggles the dragging state and invalidates the HWND so the new colour
+    // (palette.accent vs. idle) repaints immediately. CP7: prior versions
+    // assigned `dragging_` without invalidating, so the bar stayed visually
+    // idle until the next paint cycle (which for a STATIC in a mouse loop
+    // could be many seconds). Consumers should call this from their
+    // WM_LBUTTONDOWN / WM_LBUTTONUP handlers.
+    void set_dragging(bool dragging) noexcept;
     void set_orientation(SplitterOrientation orientation) noexcept;
     [[nodiscard]] SplitterOrientation orientation() const noexcept { return orientation_; }
     void set_style(FrameStyle style) noexcept { style_ = style; }
