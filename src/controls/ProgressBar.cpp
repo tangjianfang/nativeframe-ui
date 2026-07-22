@@ -1,49 +1,149 @@
 #include <nfui/Controls/ProgressBar.hpp>
+#include <nfui/Dpi.hpp>
+#include <nfui/Font.hpp>
 #include <nfui/Paint.hpp>
+#include <nfui/Theme.hpp>
+
+#include <algorithm>
 #include <commctrl.h>
 
 namespace nfui {
-bool ProgressBar::create(const ControlCreateParams& params) noexcept {
-    // P1.4: drop PBS_SMOOTH so the native bar chrome stops painting over our
-    // self-paint output. WS_CLIPCHILDREN keeps neighbouring controls from
-    // leaving paste marks during repaint storms.
-    return create_native(PROGRESS_CLASSW, params, WS_CLIPCHILDREN);
-}
 
-void ProgressBar::on_paint(HDC dc, const PaintState& state) noexcept {
-    const ThemePalette* pal = palette();
-    const ThemePalette& p = pal ? *pal : theme_palette(ThemeMode::light);
-    const Color track = style_.surface_brush.value_or(p.surface);
+namespace {
+
+// CP24-B: paint the rounded track + filled portion into `dc` covering the
+// bar's client rect. This is a static helper that takes the resolved
+// palette and style explicitly so the member paint_chrome can forward
+// them — the chrome subclass proc is a free function and cannot reach
+// the protected palette()/fonts() accessors directly.
+void paint_progress_chrome(HDC dc, HWND bar_hwnd,
+                            const ThemePalette& p,
+                            const FrameStyle& style,
+                            bool enabled) noexcept {
+    if (bar_hwnd == nullptr || dc == nullptr) return;
+
+    RECT bounds{};
+    GetClientRect(bar_hwnd, &bounds);
+    if (bounds.right <= bounds.left || bounds.bottom <= bounds.top) return;
+
+    const DpiScale dpi{dpi_of(bar_hwnd)};
+    const int radius = dpi.logical_to_pixels(theme_metrics().corner_radius_control);
+
+    const Color track = style.surface_brush.value_or(p.surface);
     // CP8: text_secondary clears WCAG AA against the surface track in light,
     // dark, and HC palettes (the prior 0.55 blend fell below 4.5:1 on light
-    // and made the disabled fill nearly invisible). Disabled reads as "faded
-    // secondary tone" instead of "tinted grey that blends into the track".
-    const Color fill  = state.enabled
-        ? style_.bar_color.value_or(p.accent)
+    // and made the disabled fill nearly invisible). Disabled reads as
+    // "faded secondary tone" instead of "tinted grey that blends in".
+    const Color fill = enabled
+        ? style.bar_color.value_or(p.accent)
         : p.text_secondary;
-    // CP8: radius mirrors Button::corner_radius_control so the rounded track
-    // sits in the same visual language as the rest of the chrome.
-    const int radius = theme_metrics().corner_radius_control;
-    const RECT& b = state.bounds;
+
+    // PBM_GETRANGE fills the low word of wParam via return; lParam is the
+    // PPBRANGE. Capture range + position so the bar reflects the live
+    // control state set via PBM_SETPOS / PBM_SETRANGE.
     PBRANGE range{};
-    // PBM_GETRANGE fills the low word of wParam via return; lParam is the PPBRANGE.
-    SendMessageW(hwnd(), PBM_GETRANGE, FALSE, reinterpret_cast<LPARAM>(&range));
-    const int pos = static_cast<int>(SendMessageW(hwnd(), PBM_GETPOS, 0, 0));
+    SendMessageW(bar_hwnd, PBM_GETRANGE, FALSE,
+                 reinterpret_cast<LPARAM>(&range));
+    const int pos = static_cast<int>(SendMessageW(bar_hwnd, PBM_GETPOS, 0, 0));
     const int span = range.iHigh - range.iLow;
-    MemoryDC mem(dc, b);
+
+    MemoryDC mem(dc, bounds);
     HDC target = mem.valid() ? mem.dc() : dc;
-    const RECT paint_bounds = mem.valid()
-        ? RECT{0, 0, b.right - b.left, b.bottom - b.top}
-        : b;
-    // CP8: RoundRect leaves outside-corner pixels untouched; clear them with
-    // the current palette first so a theme swap cannot preserve a frame from
-    // the previous palette in the rounded boundary (mirrors Button::on_paint).
+    const int width = bounds.right - bounds.left;
+    const int height = bounds.bottom - bounds.top;
+    const RECT paint_bounds{0, 0, width, height};
+    // CP8: RoundRect leaves outside-corner pixels untouched; clear them
+    // with the window background so a theme swap cannot preserve a frame
+    // from the previous palette in the rounded boundary (mirrors Button).
     fill_rect(target, paint_bounds, p.background);
     fill_rounded_rect(target, paint_bounds, radius, track, p.border);
     if (span > 0 && pos > range.iLow && paint_bounds.right > paint_bounds.left) {
-        const int fill_w = (paint_bounds.right - paint_bounds.left) * (pos - range.iLow) / span;
-        RECT bar{ paint_bounds.left, paint_bounds.top, paint_bounds.left + fill_w, paint_bounds.bottom };
+        const int fill_w = paint_bounds.right * (pos - range.iLow) / span;
+        RECT bar{paint_bounds.left,
+                 paint_bounds.top,
+                 paint_bounds.left + fill_w,
+                 paint_bounds.bottom};
         fill_rect(target, bar, fill);
     }
 }
+
+} // namespace
+
+bool ProgressBar::create(const ControlCreateParams& params) noexcept {
+    ControlCreateParams pb_params = params;
+    pb_params.style = WS_CHILD | WS_VISIBLE;
+    if (!create_native(PROGRESS_CLASSW, pb_params, WS_CLIPCHILDREN)) {
+        return false;
+    }
+    // CP24-B: install the chrome subclass AFTER create_native. SetWindowSubclass
+    // dispatches in REVERSE install order (last-installed-runs-first); our
+    // chrome proc intercepts WM_PAINT FIRST and short-circuits the native
+    // PBS_SMOOTH pass so the themed fill is the only paint ever visible.
+    if (SetWindowSubclass(hwnd(), &ProgressBar::visual_subclass_proc,
+                          reinterpret_cast<UINT_PTR>(this),
+                          reinterpret_cast<DWORD_PTR>(this)) == FALSE) {
+        DestroyWindow(hwnd());
+        return false;
+    }
+    return true;
+}
+
+void ProgressBar::set_style(FrameStyle style) noexcept {
+    style_ = style;
+    if (hwnd() != nullptr) {
+        InvalidateRect(hwnd(), nullptr, FALSE);
+    }
+}
+
+void ProgressBar::paint_chrome(HDC dc) noexcept {
+    if (dc == nullptr) return;
+    HWND bar_hwnd = hwnd();
+    if (bar_hwnd == nullptr) return;
+    const ThemePalette* pal_ptr = palette();
+    const ThemePalette& p = pal_ptr ? *pal_ptr : theme_palette(ThemeMode::light);
+    const bool enabled = IsWindowEnabled(bar_hwnd) != FALSE;
+    paint_progress_chrome(dc, bar_hwnd, p, style_, enabled);
+}
+
+void ProgressBar::on_paint(HDC dc, const PaintState& state) noexcept {
+    // Fallback path: if any caller dispatches paint directly (e.g. via
+    // framework internals), paint via paint_chrome so the visual contract
+    // holds. The chrome subclass normally intercepts WM_PAINT first.
+    (void)state;
+    paint_chrome(dc);
+}
+
+LRESULT CALLBACK ProgressBar::visual_subclass_proc(HWND hwnd, UINT message,
+                                                   WPARAM wparam, LPARAM lparam,
+                                                   UINT_PTR subclass_id,
+                                                   DWORD_PTR ref_data) noexcept {
+    auto* pb = reinterpret_cast<ProgressBar*>(ref_data);
+    switch (message) {
+    case WM_PAINT: {
+        // CP24-B: chrome proc runs FIRST (last-installed-runs-first). Paint
+        // the themed chrome ourselves and return 0 so DefSubclassProc does
+        // not chain into the native ComCtl32 progress-bar pass (which would
+        // draw PBS_SMOOTH / native chrome on top of our themed fill).
+        PAINTSTRUCT ps{};
+        HDC dc = BeginPaint(hwnd, &ps);
+        if (dc != nullptr) {
+            if (pb != nullptr) {
+                pb->paint_chrome(dc);
+            }
+            EndPaint(hwnd, &ps);
+        }
+        return 0;
+    }
+    case WM_ERASEBKGND:
+        // Suppress native erase — paint_chrome paints the background.
+        return 1;
+    case WM_NCDESTROY:
+        RemoveWindowSubclass(hwnd, &ProgressBar::visual_subclass_proc, subclass_id);
+        return DefSubclassProc(hwnd, message, wparam, lparam);
+    default:
+        break;
+    }
+    return DefSubclassProc(hwnd, message, wparam, lparam);
+}
+
 } // namespace nfui
