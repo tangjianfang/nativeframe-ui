@@ -65,28 +65,61 @@ add_executable(NativeFrameUIShowcase WIN32
     samples/NativeFrameUIShowcase/NativeFrameUIShowcase.cpp
     samples/NativeFrameUIShowcase/ShowcaseView.cpp
 )
-target_link_libraries(NativeFrameUIShowcase PRIVATE NativeFrameUI::NativeFrameUI)
+# CP11: Showcase paints via foundation helpers only — no framework controls.
+# nfui_window is needed because the sample owns a custom : public nfui::Window.
+target_link_libraries(NativeFrameUIShowcase PRIVATE
+    NativeFrameUI::nfui_core
+    NativeFrameUI::nfui_theme
+    NativeFrameUI::nfui_window
+)
 nfui_apply_compiler_options(NativeFrameUIShowcase)
 nfui_add_resources(NativeFrameUIShowcase)
 
 add_executable(NativeFrameUIDarkStudio WIN32
     samples/NativeFrameUIDarkStudio/NativeFrameUIDarkStudio.cpp
 )
-target_link_libraries(NativeFrameUIDarkStudio PRIVATE NativeFrameUI::NativeFrameUI)
+# CP11: DarkStudio uses only StatusBar (a frame-typed control).
+# nfui_window is needed because the sample owns a custom : public nfui::Window.
+target_link_libraries(NativeFrameUIDarkStudio PRIVATE
+    NativeFrameUI::nfui_core
+    NativeFrameUI::nfui_theme
+    NativeFrameUI::nfui_window
+    NativeFrameUI::nfui_frame
+)
 nfui_apply_compiler_options(NativeFrameUIDarkStudio)
 nfui_add_resources(NativeFrameUIDarkStudio)
 
 add_executable(NativeFrameUISettingsDemo WIN32
     samples/NativeFrameUISettingsDemo/NativeFrameUISettingsDemo.cpp
 )
-target_link_libraries(NativeFrameUISettingsDemo PRIVATE NativeFrameUI::NativeFrameUI)
+# CP11: SettingsDemo uses Button, CheckBox, Edit, ComboBox, ListBox,
+# StaticText, and StatusBar. Link only the components it actually uses.
+# nfui_window is needed because the sample owns a custom : public nfui::Window.
+target_link_libraries(NativeFrameUISettingsDemo PRIVATE
+    NativeFrameUI::nfui_core
+    NativeFrameUI::nfui_theme
+    NativeFrameUI::nfui_window
+    NativeFrameUI::nfui_button
+    NativeFrameUI::nfui_checkbox
+    NativeFrameUI::nfui_text
+    NativeFrameUI::nfui_listbox
+    NativeFrameUI::nfui_frame
+)
 nfui_apply_compiler_options(NativeFrameUISettingsDemo)
 nfui_add_resources(NativeFrameUISettingsDemo)
 
 add_executable(NativeFrameUIResourceGallery WIN32
     samples/NativeFrameUIResourceGallery/NativeFrameUIResourceGallery.cpp
 )
-target_link_libraries(NativeFrameUIResourceGallery PRIVATE NativeFrameUI::NativeFrameUI)
+# CP11: ResourceGallery uses two Buttons and one StatusBar.
+# nfui_window is needed because the sample owns a custom : public nfui::Window.
+target_link_libraries(NativeFrameUIResourceGallery PRIVATE
+    NativeFrameUI::nfui_core
+    NativeFrameUI::nfui_theme
+    NativeFrameUI::nfui_window
+    NativeFrameUI::nfui_button
+    NativeFrameUI::nfui_frame
+)
 nfui_apply_compiler_options(NativeFrameUIResourceGallery)
 nfui_add_resources(NativeFrameUIResourceGallery)
 
