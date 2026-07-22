@@ -31,8 +31,84 @@ constexpr bool kLegendUseMonoFont = false;
 // per-view helpers passed `bounds` and computed this implicitly; we use
 // `plot_bounds.right` directly here.
 constexpr int kLegendGapPx = 8;
+// Blend weight used by derive_grid_color() to push border toward
+// text_secondary. 0.5 = halfway. Held here so the four views stay in sync
+// if the value ever needs to shift.
+constexpr float kGridBlend = 0.5f;
+// Blend weight used by derive_legend_frame_color(). Heavier than
+// kGridBlend so the legend column reads as a discrete container rather
+// than a subtle alignment guide — the legend's outer edge is the only
+// thing telling the reader where the series swatches end and the chart
+// background begins, so it gets to be more emphatic than the inner grid.
+constexpr float kLegendFrameBlend = 0.7f;
 
 } // namespace
+
+Color derive_grid_color(const ThemePalette& pal) noexcept {
+    // alpha_blend(src=border, dst=text_secondary, alpha=0.5) returns the
+    // midpoint of the two tones, which keeps the grid readable in both
+    // light and dark themes without becoming as dominant as the outer
+    // plot frame (which still uses raw `border`). Centralized here so
+    // every chart view reads the same line weight.
+    return alpha_blend(pal.border, pal.text_secondary, kGridBlend);
+}
+
+Color derive_legend_frame_color(const ThemePalette& pal) noexcept {
+    // The legend column's frame is the only thing separating its surface
+    // fill from the chart background in light theme (where both are
+    // near-white beige tones). Push border toward text_secondary at 0.7
+    // weight so the frame lands around WCAG 3:1 contrast in light and
+    // well above in dark / HC themes.
+    return alpha_blend(pal.border, pal.text_secondary, kLegendFrameBlend);
+}
+
+void draw_grid_hlines(HDC hdc,
+                      const RECT& plot_bounds,
+                      Color grid_color,
+                      int value_tick_count) noexcept {
+    if (hdc == nullptr) return;
+    if (value_tick_count < 2) return;
+    const int plot_h = plot_bounds.bottom - plot_bounds.top;
+    if (plot_h <= 0) return;
+    // Anchor first/last lines on the plot edges so the value axis ticks
+    // land on a real grid line (matches what the user expects from a
+    // axis-bound grid: top tick == top edge, bottom tick == bottom edge).
+    for (int i = 0; i < value_tick_count; ++i) {
+        const double t = static_cast<double>(i) /
+                         static_cast<double>(value_tick_count - 1);
+        const int py = plot_bounds.top +
+                       static_cast<int>(t * static_cast<double>(plot_h) + 0.5);
+        // Clip the endpoints to the plot's horizontal extent so a future
+        // multi-panel layout doesn't draw grid lines into the legend
+        // gutter by accident.
+        draw_line(hdc,
+                  POINT{plot_bounds.left, py},
+                  POINT{plot_bounds.right, py},
+                  grid_color,
+                  1);
+    }
+}
+
+void draw_grid_vlines(HDC hdc,
+                      const RECT& plot_bounds,
+                      Color grid_color,
+                      int value_tick_count) noexcept {
+    if (hdc == nullptr) return;
+    if (value_tick_count < 2) return;
+    const int plot_w = plot_bounds.right - plot_bounds.left;
+    if (plot_w <= 0) return;
+    for (int i = 0; i < value_tick_count; ++i) {
+        const double t = static_cast<double>(i) /
+                         static_cast<double>(value_tick_count - 1);
+        const int px = plot_bounds.left +
+                       static_cast<int>(t * static_cast<double>(plot_w) + 0.5);
+        draw_line(hdc,
+                  POINT{px, plot_bounds.top},
+                  POINT{px, plot_bounds.bottom},
+                  grid_color,
+                  1);
+    }
+}
 
 void draw_legend_column(HDC hdc,
                         const RECT& plot_bounds,
@@ -64,10 +140,15 @@ void draw_legend_column(HDC hdc,
 
     RECT col{col_left, col_top, col_right, col_bottom};
     fill_rect(hdc, col, pal.surface);
-    draw_line(hdc, POINT{col.left, col.top}, POINT{col.right, col.top}, pal.border, 1);
-    draw_line(hdc, POINT{col.left, col.bottom}, POINT{col.right, col.bottom}, pal.border, 1);
-    draw_line(hdc, POINT{col.left, col.top}, POINT{col.left, col.bottom}, pal.border, 1);
-    draw_line(hdc, POINT{col.right, col.top}, POINT{col.right, col.bottom}, pal.border, 1);
+    // Frame is derived (border blended toward text_secondary) so the
+    // legend reads as a clear container against the chart background in
+    // every theme; raw `pal.border` is too close to `pal.surface` in the
+    // light theme for the column edges to be visible.
+    const Color frame_color = derive_legend_frame_color(pal);
+    draw_line(hdc, POINT{col.left, col.top}, POINT{col.right, col.top}, frame_color, 1);
+    draw_line(hdc, POINT{col.left, col.bottom}, POINT{col.right, col.bottom}, frame_color, 1);
+    draw_line(hdc, POINT{col.left, col.top}, POINT{col.left, col.bottom}, frame_color, 1);
+    draw_line(hdc, POINT{col.right, col.top}, POINT{col.right, col.bottom}, frame_color, 1);
 
     for (std::size_t i = 0; i < series.size(); ++i) {
         const int row_y = col.top + kLegendPadY + static_cast<int>(i) * kLegendRowH;

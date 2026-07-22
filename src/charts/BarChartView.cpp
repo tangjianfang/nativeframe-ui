@@ -20,6 +20,14 @@ namespace {
 constexpr int kTickFontPt = 9;
 constexpr int kTickCount = 5;
 constexpr int kAxisLabelGutter = 18;
+// Half-width of the tick-label text rect (centered on the tick position).
+// The category-axis labels are 1..N where N can be > 12 (e.g. 12 monthly
+// bars). With a per-tick spacing of ~33px in a 400px plot, the previous
+// 16px half-width caused adjacent labels to overlap. Bumping to 24px
+// gives the ellipsized label room to breathe; if the chart is narrower
+// than the label band, DT_END_ELLIPSIS truncates without bleeding into
+// the neighbour's rect.
+constexpr int kTickLabelHalfWidthPx = 24;
 
 // (Tick labels are formatted inline via nfui::format_axis_tick so callers can
 // pick the precision per axis via ChartAxisRange::label_format.)
@@ -45,9 +53,13 @@ void draw_value_axis_ticks_v(HDC hdc,
         const double value = axis_y.min + t * (axis_y.max - axis_y.min);
         const int py = pb.top + static_cast<int>((1.0 - t) * static_cast<double>(plot_h) + 0.5);
         const std::wstring text = format_axis_tick(value, axis_y.label_format);
-        RECT label{pb.left - kAxisLabelGutter - 4, py - 8, pb.left - 4, py + 8};
+        // DT_END_ELLIPSIS keeps long formatted values (e.g. "1,234.5") from
+        // bleeding into the next tick label's rect; the half-width below is
+        // intentionally generous so the truncation only fires on truly wide
+        // formats, not normal 2-4 character ticks.
+        RECT label{pb.left - kAxisLabelGutter - 8, py - 8, pb.left - 4, py + 8};
         draw_text(hdc, label, text, font, pal.text_secondary,
-                  DT_RIGHT | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX);
+                  DT_RIGHT | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS | DT_NOPREFIX);
 
         // Faint tick mark on the plot left edge.
         draw_line(hdc, POINT{pb.left - 3, py}, POINT{pb.left, py}, pal.border, 1);
@@ -62,16 +74,28 @@ void draw_category_axis_ticks_v(HDC hdc,
     if (bar_count == 0) return;
     const RECT& pb = layout.plot_bounds;
     const int plot_w = pb.right - pb.left;
+    if (plot_w <= 0) return;
     wchar_t buf[32]{};
-    // Tick per category: 1..N labels under the bars.
-    for (std::size_t i = 0; i < bar_count; ++i) {
-        const int px = pb.left + static_cast<int>(
-            (static_cast<double>(i) + 0.5) * static_cast<double>(plot_w) /
-            static_cast<double>(bar_count));
-        std::swprintf(buf, std::size(buf), L"%zu", i + 1);
-        RECT label{px - 16, pb.bottom + 4, px + 16, pb.bottom + kAxisLabelGutter};
+    // Subsample to kTickCount labels so dense categories (12 monthly bars in
+    // a 400px plot = 33px per band) don't pile up on top of each other.
+    // Mirrors LineChartView::draw_index_axis_ticks_v's behaviour so all
+    // four chart views read with the same tick density.
+    const std::size_t n = std::min<std::size_t>(bar_count, kTickCount);
+    for (std::size_t i = 0; i < n; ++i) {
+        const double t = (n == 1) ? 0.5
+                                 : static_cast<double>(i) /
+                                   static_cast<double>(n - 1);
+        const int px = pb.left +
+                       static_cast<int>(t * static_cast<double>(plot_w) + 0.5);
+        std::swprintf(buf, std::size(buf), L"%zu",
+                      1 + i * (bar_count - 1) /
+                          std::max<std::size_t>(1, n - 1));
+        RECT label{px - kTickLabelHalfWidthPx,
+                   pb.bottom + 4,
+                   px + kTickLabelHalfWidthPx,
+                   pb.bottom + kAxisLabelGutter};
         draw_text(hdc, label, buf, font, pal.text_secondary,
-                  DT_CENTER | DT_TOP | DT_SINGLELINE | DT_NOPREFIX);
+                  DT_CENTER | DT_TOP | DT_SINGLELINE | DT_END_ELLIPSIS | DT_NOPREFIX);
     }
 }
 
@@ -104,6 +128,12 @@ void BarChartView::on_paint(HDC hdc, const RECT& bounds) {
         bar_count = std::max(bar_count, s.points.size());
     }
     if (bar_count == 0) {
+        // Even on an empty plot, draw the value-axis grid so the chrome
+        // (frame + grid) is consistent with a populated chart — the user
+        // immediately sees "this is a chart with no data" rather than a
+        // blank rectangle.
+        const Color grid_color = charts_internal::derive_grid_color(pal);
+        charts_internal::draw_grid_hlines(hdc, layout.plot_bounds, grid_color, kTickCount);
         draw_plot_frame(hdc, layout, pal);
         const int dpi = (hwnd() != nullptr) ? dpi_of(hwnd()) : 96;
         charts_internal::draw_legend_column(hdc, layout.plot_bounds,
@@ -140,6 +170,18 @@ void BarChartView::on_paint(HDC hdc, const RECT& bounds) {
             if (cs > max_col_sum) max_col_sum = cs;
         }
     }
+
+    // Inner value-axis grid sits BELOW the plot frame but ABOVE the chart
+    // background so it reads as alignment guides without competing with
+    // the outer rectangle. CP7 polish pass: prior versions drew only the
+    // 4-sided frame which forced readers to interpolate values between
+    // ticks; the grid now lands at the same positions as the value-axis
+    // tick labels (drawn further down) for one-to-one alignment. Drawn
+    // BEFORE the plot frame so the frame's heavier border colour
+    // overwrites the grid endpoints that coincide with pb.top /
+    // pb.bottom.
+    const Color grid_color = charts_internal::derive_grid_color(pal);
+    charts_internal::draw_grid_hlines(hdc, layout.plot_bounds, grid_color, kTickCount);
 
     draw_plot_frame(hdc, layout, pal);
 

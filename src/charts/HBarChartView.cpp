@@ -19,6 +19,10 @@ namespace {
 constexpr int kTickFontPt = 9;
 constexpr int kTickCount = 5;
 constexpr int kAxisLabelGutter = 18;
+// Half-width of the tick-label text rect on the value axis (centered under
+// the tick position). Mirrors BarChartView's constant — see the comment
+// there for the rationale (dense numeric ticks need elbow room).
+constexpr int kTickLabelHalfWidthPx = 24;
 
 // (Tick labels are formatted inline via nfui::format_axis_tick so callers can
 // pick the precision per axis via ChartAxisRange::label_format.)
