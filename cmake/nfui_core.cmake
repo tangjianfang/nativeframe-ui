@@ -1,5 +1,4 @@
 add_library(nfui_core STATIC
-    src/command/Command.cpp
     src/core/Application.cpp
     src/core/HoverState.cpp
     src/dpi/Dpi.cpp
