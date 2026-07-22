@@ -87,6 +87,20 @@ target_link_libraries(NativeFrameUIResourceGallery PRIVATE NativeFrameUI::Native
 nfui_apply_compiler_options(NativeFrameUIResourceGallery)
 nfui_add_resources(NativeFrameUIResourceGallery)
 
+add_executable(NativeFrameUIThemeDemo WIN32
+    samples/NativeFrameUIThemeDemo/NativeFrameUIThemeDemo.cpp
+)
+target_link_libraries(NativeFrameUIThemeDemo PRIVATE NativeFrameUI::NativeFrameUI)
+nfui_apply_compiler_options(NativeFrameUIThemeDemo)
+nfui_add_resources(NativeFrameUIThemeDemo)
+
+add_executable(NativeFrameUIComponentGallery WIN32
+    samples/NativeFrameUIComponentGallery/NativeFrameUIComponentGallery.cpp
+)
+target_link_libraries(NativeFrameUIComponentGallery PRIVATE NativeFrameUI::NativeFrameUI)
+nfui_apply_compiler_options(NativeFrameUIComponentGallery)
+nfui_add_resources(NativeFrameUIComponentGallery)
+
 add_executable(NativeFrameUIControls WIN32
     samples/NativeFrameUIControls/NativeFrameUIControls.cpp
 )
