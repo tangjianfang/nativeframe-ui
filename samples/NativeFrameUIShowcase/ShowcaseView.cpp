@@ -292,17 +292,32 @@ bool ShowcaseView::on_mouse_move(POINT point) noexcept {
 bool ShowcaseView::on_left_button_down(POINT point) noexcept {
     const ShowcaseLayout layout = build_layout(client_rect_, dpi_scale_);
     if (PtInRect(&layout.theme_toggle, point) != FALSE) {
+        // CP22: clicking the toggle also moves focus there, so a keyboard
+        // user can keep the same affordance on-screen when they switch to
+        // the keyboard. Toggle always paints differently (theme change), so
+        // always returns true.
+        focus_index_ = 0;
         toggle_theme();
         return true;
     }
 
     for (std::size_t index = 0; index < layout.navigation.size(); ++index) {
         if (PtInRect(&layout.navigation[index], point) != FALSE) {
-            if (selected_navigation_ != static_cast<int>(index)) {
+            // CP22: capture the prior focus before the assignment so we
+            // can return true when EITHER the focus OR the selected nav
+            // moved. Without this, clicking an already-selected nav row
+            // (the default state on first launch) moved focus from -1
+            // → index+1 but the function returned false, so the focus
+            // ring never redrew. (Found by the CP22 adversarial review.)
+            const int prior_focus = focus_index_;
+            const int new_focus   = static_cast<int>(index) + 1;
+            const bool focus_changed   = prior_focus != new_focus;
+            const bool selection_changed = selected_navigation_ != static_cast<int>(index);
+            focus_index_ = new_focus;
+            if (selection_changed) {
                 selected_navigation_ = static_cast<int>(index);
-                return true;
             }
-            return false;
+            return focus_changed || selection_changed;
         }
     }
 
@@ -315,6 +330,52 @@ bool ShowcaseView::clear_hover() noexcept {
     }
     hovered_card_ = -1;
     return true;
+}
+
+void ShowcaseView::set_focus_index(int index) noexcept {
+    // 0..4 are valid; -1 clears focus.
+    if (index >= -1 && index <= 4) {
+        focus_index_ = index;
+    }
+}
+
+void ShowcaseView::cycle_focus(bool reverse) noexcept {
+    constexpr int kCount = 5;  // 0 = toggle, 1..4 = nav[0..3]
+    if (focus_index_ < 0) {
+        focus_index_ = reverse ? (kCount - 1) : 0;
+        return;
+    }
+    if (reverse) {
+        focus_index_ = (focus_index_ - 1 + kCount) % kCount;
+    } else {
+        focus_index_ = (focus_index_ + 1) % kCount;
+    }
+}
+
+bool ShowcaseView::activate_focused() noexcept {
+    if (focus_index_ == 0) {
+        toggle_theme();
+        return true;
+    }
+    if (focus_index_ >= 1 && focus_index_ <= 4) {
+        const int nav_index = focus_index_ - 1;
+        if (selected_navigation_ != nav_index) {
+            selected_navigation_ = nav_index;
+        }
+        return true;
+    }
+    return false;
+}
+
+RECT ShowcaseView::focused_rect() const noexcept {
+    RECT r{};
+    const ShowcaseLayout layout = build_layout(client_rect_, dpi_scale_);
+    if (focus_index_ == 0) {
+        r = layout.theme_toggle;
+    } else if (focus_index_ >= 1 && focus_index_ <= 4) {
+        r = layout.navigation[focus_index_ - 1];
+    }
+    return r;
 }
 
 void ShowcaseView::paint(HDC hdc, nfui::FontCache& fonts) const noexcept {
@@ -373,6 +434,17 @@ void ShowcaseView::paint(HDC hdc, nfui::FontCache& fonts) const noexcept {
                         dpi(),
                         FontWeight::semibold,
                         14,
+                        // CP22: selected nav uses `text` (palette.text).
+                        // Note from the CP22 review: `accent_text` (the
+                        // theme-tuned label on the solid accent surface) is
+                        // RGB(255,255,255) in dark mode — effectively the
+                        // same near-white as `text` (RGB(237,237,235)) — so
+                        // swapping the two makes no perceptual difference
+                        // against accent_soft. `text` is the right choice:
+                        // it matches the rest of the painted labels and
+                        // holds contrast against the sidebar fill even when
+                        // the selected nav's accent_soft wash is close to
+                        // the surrounding background.
                         selected ? palette.text : palette.muted_text,
                         DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX);
     }
@@ -534,5 +606,19 @@ void ShowcaseView::paint(HDC hdc, nfui::FontCache& fonts) const noexcept {
                         11,
                         palette.text,
                         DT_LEFT | DT_WORDBREAK | DT_NOPREFIX);
+    }
+
+    // CP22: focus ring for the currently-focused affordance. Drawn LAST
+    // (after the affordance's own fill + text) using paint_focus_border —
+    // a stroke-only rounded ring at `focused` rect inset by 2 logical px
+    // on each side. Stroking only (not filling) means the affordance's
+    // surface + label stay visible underneath; the previous version called
+    // fill_rounded_rect with palette.window as the fill, which obliterated
+    // the focused control's chrome. (Found by the CP22 adversarial review.)
+    if (focus_index_ >= 0) {
+        const RECT focused = focused_rect();
+        if (focused.right > focused.left && focused.bottom > focused.top) {
+            nfui::paint_focus_border(hdc, focused, palette.accent, 2);
+        }
     }
 }

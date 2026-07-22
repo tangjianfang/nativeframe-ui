@@ -189,13 +189,16 @@ add_executable(NativeFrameUIDialogTour WIN32
     samples/NativeFrameUIDialogTour/NativeFrameUIDialogTour.cpp
 )
 # CP12: DialogTour uses nfui::Dialog (nfui_dialog) + a custom : public nfui::Window
-# + Application. No framework controls — the dialog template owns its own
-# native Edit / CheckBox / ComboBox.
+# + Application. CP22: the launch buttons and status strip now go through
+# nfui::Button + nfui::StaticText so they adopt themed chrome; the dialog
+# template still owns its own native Edit / CheckBox / ComboBox.
 target_link_libraries(NativeFrameUIDialogTour PRIVATE
     NativeFrameUI::nfui_core
     NativeFrameUI::nfui_theme
     NativeFrameUI::nfui_window
     NativeFrameUI::nfui_dialog
+    NativeFrameUI::nfui_button
+    NativeFrameUI::nfui_text
 )
 nfui_apply_compiler_options(NativeFrameUIDialogTour)
 nfui_add_resources(NativeFrameUIDialogTour)

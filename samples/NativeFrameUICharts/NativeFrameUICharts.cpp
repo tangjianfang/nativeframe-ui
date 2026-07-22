@@ -354,17 +354,24 @@ private:
         const int area_h = std::max(area_bottom - area_top, dpi.logical_to_pixels(240));
 
         const int cell_w = std::max((area_w - gap * 2) / 3, dpi.logical_to_pixels(200));
-        const int cell_h = std::max((area_h - gap) / 2, dpi.logical_to_pixels(140));
+        const int cell_h = std::max(static_cast<int>((area_h - gap) / 2), dpi.logical_to_pixels(140));
 
         // CP14: 3x2 grid. Top row: bar / hbar / line. Bottom row: spline /
-        // area / (placeholder cell kept intentionally empty so the grid
-        // reads balanced). The chart views paint their own background, so
-        // no separate card chrome is needed.
-        const RECT bar_rect    = make_rect(area_left,                                 area_top,                        cell_w, cell_h);
-        const RECT hbar_rect   = make_rect(area_left + cell_w + gap,                  area_top,                        cell_w, cell_h);
-        const RECT line_rect   = make_rect(area_left + (cell_w + gap) * 2,            area_top,                        cell_w, cell_h);
-        const RECT spline_rect = make_rect(area_left,                                 area_top + cell_h + gap,         cell_w, cell_h);
-        const RECT area_rect   = make_rect(area_left + cell_w + gap,                  area_top + cell_h + gap,         cell_w, cell_h);
+        // area. CP22: drop the empty placeholder — every cell carries a
+        // caption above its chart view, so the grid now reads as 5
+        // identified charts rather than 2 titled + 3 mystery cells. The
+        // caption reserve (`caption_reserve`) shortens each chart HWND so
+        // the caption sits in the freed band instead of being painted over
+        // by the chart. 18 logical px is the minimum height for a 9-pt
+        // semibold label with vertical-centre padding; further reductions
+        // clip the descenders of the caption glyphs.
+        const int caption_reserve = dpi.logical_to_pixels(18);
+
+        const RECT bar_rect    = make_rect(area_left,                                 area_top + caption_reserve,                  cell_w, cell_h - caption_reserve);
+        const RECT hbar_rect   = make_rect(area_left + cell_w + gap,                  area_top + caption_reserve,                  cell_w, cell_h - caption_reserve);
+        const RECT line_rect   = make_rect(area_left + (cell_w + gap) * 2,            area_top + caption_reserve,                  cell_w, cell_h - caption_reserve);
+        const RECT spline_rect = make_rect(area_left,                                 area_top + cell_h + gap + caption_reserve,   cell_w, cell_h - caption_reserve);
+        const RECT area_rect   = make_rect(area_left + cell_w + gap,                  area_top + cell_h + gap + caption_reserve,   cell_w, cell_h - caption_reserve);
 
         MoveWindow(bar_.hwnd(),    bar_rect.left,    bar_rect.top,    rect_width(bar_rect),    rect_height(bar_rect),    TRUE);
         MoveWindow(hbar_.hwnd(),   hbar_rect.left,   hbar_rect.top,   rect_width(hbar_rect),   rect_height(hbar_rect),   TRUE);
@@ -405,32 +412,49 @@ private:
         title.top += dpi.logical_to_pixels(36);
         nfui::draw_text(target,
                         title,
-                        L"Bar / HBar / Line / Spline chart kinds rendered by nfui::ChartView subclasses on top of a shared Claude Code palette + FontCache.",
+                        L"Bar / HBar / Line / Spline / Area chart kinds rendered by nfui::ChartView subclasses on top of a shared Claude Code palette + FontCache.",
                         body_font,
                         p.text_secondary,
                         DT_LEFT | DT_WORDBREAK | DT_NOPREFIX);
 
-        // Caption strip below the header — small caps label per row so the
-        // four charts identify themselves even before the user hovers them.
-        RECT caption = client;
-        caption.top = banner.bottom + dpi.logical_to_pixels(4);
-        caption.bottom = caption.top + dpi.logical_to_pixels(18);
-        caption.left = dpi.logical_to_pixels(20);
-        caption.right = caption.left + dpi.logical_to_pixels(220);
-        nfui::draw_text(target,
-                        caption,
-                        L"Vertical bar — monthly revenue",
-                        label_font,
-                        p.text_secondary,
-                        DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX);
-        caption.left = client.right - dpi.logical_to_pixels(20) - dpi.logical_to_pixels(220);
-        caption.right = client.right - dpi.logical_to_pixels(20);
-        nfui::draw_text(target,
-                        caption,
-                        L"Horizontal bar — platform mix",
-                        label_font,
-                        p.text_secondary,
-                        DT_RIGHT | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX);
+        // CP22: per-cell caption strip. The previous version captioned only
+        // bar + hbar in a header band, leaving line / spline / area as
+        // mystery cells. Each cell now carries its own small caption above
+        // the chart view so a reviewer (or screenshot reader) can identify
+        // every kind at a glance. Coordinates mirror the layout_chrome()
+        // cell rectangles so captions stay aligned across DPI swaps.
+        const int outer = dpi.logical_to_pixels(20);
+        const int gap = dpi.logical_to_pixels(16);
+        const int header_h = dpi.logical_to_pixels(80);
+        const int area_left = client.left + outer;
+        const int area_top = client.top + outer + header_h + gap;
+        const int area_right = client.right - outer;
+        const int area_w = std::max(area_right - area_left, dpi.logical_to_pixels(360));
+        const int cell_w = std::max((area_w - gap * 2) / 3, dpi.logical_to_pixels(200));
+        const int cell_h = std::max(static_cast<int>(((client.bottom - outer) - area_top - gap) / 2), dpi.logical_to_pixels(140));
+
+        struct CaptionSlot { RECT cell; const wchar_t* text; };
+        const CaptionSlot slots[] = {
+            { make_rect(area_left,                        area_top,                    cell_w, cell_h), L"Bar — monthly revenue"      },
+            { make_rect(area_left + cell_w + gap,         area_top,                    cell_w, cell_h), L"HBar — platform mix"        },
+            { make_rect(area_left + (cell_w + gap) * 2,   area_top,                    cell_w, cell_h), L"Line — revenue vs costs"    },
+            { make_rect(area_left,                        area_top + cell_h + gap,     cell_w, cell_h), L"Spline — sensor A (Hz)"     },
+            { make_rect(area_left + cell_w + gap,         area_top + cell_h + gap,     cell_w, cell_h), L"Area — monthly revenue"     },
+        };
+
+        const int caption_h = dpi.logical_to_pixels(16);
+        const int caption_pad = dpi.logical_to_pixels(2);
+        for (const auto& slot : slots) {
+            RECT caption = slot.cell;
+            caption.top += caption_pad;
+            caption.bottom = caption.top + caption_h;
+            nfui::draw_text(target,
+                            caption,
+                            slot.text,
+                            label_font,
+                            p.text_secondary,
+                            DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS | DT_NOPREFIX);
+        }
     }
 
     void apply_window_icon() noexcept {
