@@ -21,13 +21,18 @@ BEGIN
     END
 END
 
-IDD_NFUI_ABOUT DIALOGEX 0, 0, 180, 70
+IDD_NFUI_ABOUT DIALOGEX 0, 0, 320, 130
 STYLE DS_SETFONT | WS_POPUP | WS_CAPTION | WS_SYSMENU
 CAPTION "About NativeFrame UI"
 FONT 9, "Segoe UI"
 BEGIN
-    LTEXT "NativeFrame UI resource template", IDC_STATIC, 10, 10, 160, 12
-    DEFPUSHBUTTON "OK", IDOK, 65, 45, 50, 14
+    // CP23: title + body + build labels are themed by gallery_dialog_proc
+    // (palette text colour + Segoe UI semibold/regular/muted). The dialog
+    // is sized to host a 14pt title and a multi-line body without truncating.
+    LTEXT "NativeFrame UI", IDC_NFUI_ABOUT_TITLE, 14, 12, 290, 20
+    LTEXT "Pure Win32 C++20 static UI library. Native HWND-centered controls, command routing, and DPI-aware layout — no MFC, ATL/WTL, or BCG.", IDC_NFUI_ABOUT_BODY, 14, 38, 290, 50
+    LTEXT "Build: explicit .rc, palette-injected fonts, ComCtl32 v6 chrome.", IDC_NFUI_ABOUT_BUILD, 14, 92, 290, 14
+    DEFPUSHBUTTON "OK", IDOK, 256, 110, 50, 14
 END
 
 IDD_NFUI_PREFS DIALOGEX 0, 0, 240, 110

@@ -29,13 +29,91 @@ constexpr int id_status_bar = 103;
     return rect.bottom - rect.top;
 }
 
-INT_PTR CALLBACK gallery_dialog_proc(HWND hwnd, UINT message, WPARAM wparam, LPARAM) {
+INT_PTR CALLBACK gallery_dialog_proc(HWND hwnd, UINT message, WPARAM wparam, LPARAM lparam) {
     if (message == WM_INITDIALOG) {
+        // CP23: theme the dialog background to the ResourceGallery palette
+        // surface so the modal stops reading as a raw system dialog. The
+        // dialog template is the framework's IDD_NFUI_ABOUT — system fonts
+        // and COLOR_BTNFACE otherwise leave it as a 1995-era grey window
+        // next to the themed shell. Store the palette pointer in DWLP_USER
+        // so WM_CTLCOLORSTATIC can re-stamp the static-text colours without
+        // re-passing the palette through every paint.
+        auto* palette_ptr = reinterpret_cast<nfui::ThemePalette*>(lparam);
+        SetWindowLongPtrW(hwnd, DWLP_USER, reinterpret_cast<LONG_PTR>(palette_ptr));
+        if (palette_ptr != nullptr) {
+            const COLORREF surface = palette_ptr->surface.rgb;
+            HBRUSH themed_brush = CreateSolidBrush(surface);
+            SetClassLongPtrW(hwnd, GCLP_HBRBACKGROUND,
+                              reinterpret_cast<LONG_PTR>(themed_brush));
+            // Apply the framework's regular Segoe UI font to every static
+            // text and push button so the labels track the host shell.
+            const int dpi = nfui::dpi_of(hwnd);
+            static thread_local nfui::FontCache dialog_fonts;
+            HFONT body_font = dialog_fonts.regular(dpi, 9);
+            HFONT bold_font = dialog_fonts.semibold(dpi, 9);
+            const HWND ok_button = GetDlgItem(hwnd, IDOK);
+            if (ok_button != nullptr) {
+                SendMessageW(ok_button, WM_SETFONT,
+                             reinterpret_cast<WPARAM>(bold_font), TRUE);
+            }
+            // IDC_STATIC_* labels in IDD_NFUI_ABOUT — paint them with the
+            // regular face and the palette's text colour.
+            for (int id : {IDC_NFUI_ABOUT_TITLE,
+                            IDC_NFUI_ABOUT_BODY,
+                            IDC_NFUI_ABOUT_BUILD}) {
+                HWND label = GetDlgItem(hwnd, id);
+                if (label != nullptr) {
+                    SendMessageW(label, WM_SETFONT,
+                                 reinterpret_cast<WPARAM>(body_font), TRUE);
+                    const bool title = id == IDC_NFUI_ABOUT_TITLE;
+                    const COLORREF colour = title
+                                                ? palette_ptr->text.rgb
+                                                : palette_ptr->text_secondary.rgb;
+                    // CP23 use SetTextColor (the dialog text uses the
+                    // default WM_CTLCOLORSTATIC handler chain that reads
+                    // the text colour out of the DC at paint time).
+                    SetTextColor(GetDC(label), colour);
+                }
+            }
+        }
         return TRUE;
+    }
+    if (message == WM_CTLCOLORSTATIC) {
+        // Re-stamp the static-text colour on every paint. WM_SETTEXT /
+        // SetTextColor doesn't propagate to the next WM_CTLCOLORSTATIC pass
+        // because static controls reset their colour from the DC each time
+        // they paint. Returning the themed brush keeps the surface
+        // consistent across invalidations.
+        HDC dc = reinterpret_cast<HDC>(wparam);
+        HWND ctrl = reinterpret_cast<HWND>(lparam);
+        const int ctrl_id = GetDlgCtrlID(ctrl);
+        if (ctrl_id == IDC_NFUI_ABOUT_TITLE
+            || ctrl_id == IDC_NFUI_ABOUT_BODY
+            || ctrl_id == IDC_NFUI_ABOUT_BUILD) {
+            auto* palette_ptr = reinterpret_cast<nfui::ThemePalette*>(
+                GetWindowLongPtrW(hwnd, DWLP_USER));
+            if (palette_ptr != nullptr) {
+                const bool title = ctrl_id == IDC_NFUI_ABOUT_TITLE;
+                SetTextColor(dc, title ? palette_ptr->text.rgb
+                                       : palette_ptr->text_secondary.rgb);
+                SetBkMode(dc, TRANSPARENT);
+                return static_cast<INT_PTR>(static_cast<ULONG_PTR>(
+                    GetClassLongPtrW(hwnd, GCLP_HBRBACKGROUND)));
+            }
+        }
+        return FALSE;
     }
     if (message == WM_COMMAND && LOWORD(wparam) == IDOK) {
         EndDialog(hwnd, IDOK);
         return TRUE;
+    }
+    if (message == WM_DESTROY) {
+        HBRUSH brush = reinterpret_cast<HBRUSH>(
+            GetClassLongPtrW(hwnd, GCLP_HBRBACKGROUND));
+        if (brush != nullptr) {
+            SetClassLongPtrW(hwnd, GCLP_HBRBACKGROUND, 0);
+            DeleteObject(brush);
+        }
     }
     return FALSE;
 }
@@ -144,7 +222,12 @@ protected:
             return true;
         }
         if (command_id == id_open_dialog && (notification_code == BN_CLICKED || notification_code == 0)) {
-            static_cast<void>(resources_.show_modal_dialog(IDD_NFUI_ABOUT, hwnd(), gallery_dialog_proc, 0));
+            // CP23: pass the host palette as the dialog init lparam so the
+            // DlgProc can theme the surface, fonts, and static-text colours.
+            static_cast<void>(resources_.show_modal_dialog(IDD_NFUI_ABOUT,
+                                                            hwnd(),
+                                                            gallery_dialog_proc,
+                                                            reinterpret_cast<LPARAM>(&palette_)));
             update_status(L"Modal resource dialog opened successfully.");
             return true;
         }

@@ -237,11 +237,19 @@ private:
     [[nodiscard]] RECT navigation_rect(std::size_t index) const noexcept {
         const RECT content = content_rect();
         const int outer = dpi_.logical_to_pixels(20);
-        const int nav_width = dpi_.logical_to_pixels(210);
+        // CP23: navigation items must span the full rail width (rail_width)
+        // minus the symmetric outer padding on both sides. The prior
+        // expression used `nav_width - outer` which assumed a 210 logical
+        // rail and then shrank the inner content by `outer` on only one
+        // side, leaving a 30 logical px strip on the right where the rail
+        // fill showed but no nav row covered. The rail is `rail_width`
+        // logical px wide and inset by `outer` on both sides, so the nav
+        // row width is `rail_width - outer * 2`.
+        const int rail_width = dpi_.logical_to_pixels(220);
         const int nav_height = dpi_.logical_to_pixels(44);
         const int nav_gap = dpi_.logical_to_pixels(10);
         const int top = content.top + dpi_.logical_to_pixels(120) + static_cast<int>(index) * (nav_height + nav_gap);
-        return make_rect(content.left + outer, top, nav_width - outer, nav_height);
+        return make_rect(content.left + outer, top, rail_width - outer * 2, nav_height);
     }
 
     [[nodiscard]] bool select_navigation(POINT point) noexcept {

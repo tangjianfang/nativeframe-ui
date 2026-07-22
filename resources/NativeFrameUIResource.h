@@ -15,4 +15,10 @@
 #define IDC_NFUI_PREFS_REMEMBER 302
 #define IDC_NFUI_PREFS_THEME 303
 
+// CP23: About dialog labels receive themed fonts/colours via the gallery
+// dialog proc. Title is semibold, body is regular, build line is muted.
+#define IDC_NFUI_ABOUT_TITLE 311
+#define IDC_NFUI_ABOUT_BODY  312
+#define IDC_NFUI_ABOUT_BUILD 313
+
 #define IDM_NFUI_EXIT 40001
