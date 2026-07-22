@@ -5,6 +5,15 @@
 
 namespace nfui {
 
+enum class SplitterOrientation {
+    // Vertical drag-handle (the splitter is taller than it is wide). Mouse drag
+    // resizes the left/right neighbour. Cursor: IDC_SIZEWE.
+    Vertical,
+    // Horizontal drag-handle (the splitter is wider than it is tall). Mouse
+    // drag resizes the top/bottom neighbour. Cursor: IDC_SIZENS.
+    Horizontal,
+};
+
 class Splitter : public Control {
 public:
     [[nodiscard]] bool create(const ControlCreateParams& params) noexcept;
@@ -12,17 +21,29 @@ public:
     [[nodiscard]] double ratio() const noexcept;
     [[nodiscard]] bool is_dragging() const noexcept { return dragging_; }
     void set_dragging(bool dragging) noexcept { dragging_ = dragging; }
+    void set_orientation(SplitterOrientation orientation) noexcept;
+    [[nodiscard]] SplitterOrientation orientation() const noexcept { return orientation_; }
     void set_style(FrameStyle style) noexcept { style_ = style; }
     [[nodiscard]] const FrameStyle& style() const noexcept { return style_; }
 protected:
     // P1.4: Splitter paints itself in palette.border so a drag-handle chrome
     // picks up the Claude palette without subclassing the parent for
-    // WM_CTLCOLORSTATIC.
+    // WM_CTLCOLORSTATIC. CP5A: hover paints palette.surface_hover and dragging
+    // paints palette.accent so the user can tell the bar is interactive.
     void on_paint(HDC dc, const PaintState& state) noexcept override;
     [[nodiscard]] bool wants_self_paint() const noexcept override { return true; }
+    // CP5A: Splitter is not owner-draw so the base HoverState tracker stays
+    // dormant. We track hover manually so the cursor + paint colour flip on
+    // mouse enter/leave. SetCursor lives here (not in on_paint) so the cursor
+    // updates the moment the mouse crosses the control, not the next time the
+    // OS repaints.
+    void on_subclass_mouse_move(LPARAM lparam) noexcept override;
+    void on_subclass_mouse_leave() noexcept override;
 private:
     double ratio_{0.5};
     bool dragging_{false};
+    bool hovering_{false};
+    SplitterOrientation orientation_{SplitterOrientation::Vertical};
     FrameStyle style_{};
 };
 
