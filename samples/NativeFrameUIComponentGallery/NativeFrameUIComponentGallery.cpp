@@ -141,8 +141,7 @@ private:
             text,
             0, 0, 100, 28,
         };
-        control.set_palette(&palette_);
-        control.set_font_cache(&fonts_);
+        control.inject_theme(&palette_, &fonts_);
         return control.create(params);
     }
 
@@ -192,8 +191,6 @@ private:
         ComboBox_AddString(combobox_.hwnd(), L"Purple");
 
         // ListView (3 columns x 4 rows).
-        listview_.set_palette(&palette_);
-        listview_.set_font_cache(&fonts_);
         if (!init(listview_, id_listview, L"")) return false;
         ListView_SetExtendedListViewStyle(listview_.hwnd(),
                                           LVS_EX_FULLROWSELECT | LVS_EX_GRIDLINES);
@@ -206,8 +203,6 @@ private:
         insert_listview_row(listview_.hwnd(), 3, L"A4", L"B4", L"C4");
 
         // TreeView (2 levels, root expanded).
-        treeview_.set_palette(&palette_);
-        treeview_.set_font_cache(&fonts_);
         if (!init(treeview_, id_treeview, L"")) return false;
         HTREEITEM root = tree_item_insert(treeview_.hwnd(), TVI_ROOT, TVI_LAST, L"Root");
         tree_item_insert(treeview_.hwnd(), root, TVI_LAST, L"Child A");

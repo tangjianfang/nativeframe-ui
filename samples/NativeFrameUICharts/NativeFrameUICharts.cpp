@@ -197,14 +197,10 @@ private:
         // rest reuse it. Each subclass (Bar / HBar / Line / Spline) wires
         // its own on_paint override. Palette + fonts are injected before
         // create so the very first paint cycle has them.
-        bar_.set_palette(&palette_);
-        bar_.set_font_cache(&fonts_);
-        hbar_.set_palette(&palette_);
-        hbar_.set_font_cache(&fonts_);
-        line_.set_palette(&palette_);
-        line_.set_font_cache(&fonts_);
-        spline_.set_palette(&palette_);
-        spline_.set_font_cache(&fonts_);
+        bar_.inject_theme(&palette_, &fonts_);
+        hbar_.inject_theme(&palette_, &fonts_);
+        line_.inject_theme(&palette_, &fonts_);
+        spline_.inject_theme(&palette_, &fonts_);
 
         nfui::WindowCreateParams params{
             instance_,

@@ -152,8 +152,7 @@ private:
         };
         // StatusBar is native Win32; inject deps for consistency and apply
         // Segoe UI via WM_SETFONT so the chrome text matches the rest of the shell.
-        status_.set_palette(&palette_);
-        status_.set_font_cache(&fonts_);
+        status_.inject_theme(&palette_, &fonts_);
         if (!status_.create(params)) {
             return false;
         }

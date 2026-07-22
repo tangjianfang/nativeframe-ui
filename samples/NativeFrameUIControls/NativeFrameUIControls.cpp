@@ -181,8 +181,7 @@ private:
             w,
             h,
         };
-        control.set_palette(&palette_);
-        control.set_font_cache(&fonts_);
+        control.inject_theme(&palette_, &fonts_);
         if (!control.create(params)) {
             return false;
         }
@@ -301,6 +300,7 @@ private:
         icon_.set_palette(&palette_);
         panel_.set_palette(&palette_);
         splitter_.set_palette(&palette_);
+        tooltip_.set_palette(&palette_);
         // Refresh FrameStyle overrides so chrome tracks the new palette.
         nfui::FrameStyle panel_style{};
         panel_style.surface_brush = palette_.surface_hover;
@@ -309,14 +309,15 @@ private:
         nfui::FrameStyle splitter_style{};
         splitter_style.surface_brush = palette_.accent;
         splitter_.set_style(splitter_style);
-        // Tooltip chrome uses SetXxxColor APIs applied at create() — re-send
-        // them now that the palette has changed.
+        // Tooltip style stores concrete colours, so rebuild it from the new
+        // palette before updating the live ComCtl32 tooltip window.
+        nfui::FrameStyle tooltip_style{};
+        tooltip_style.chrome_text = palette_.text;
+        tooltip_style.chrome_bg   = palette_.surface;
+        tooltip_.set_style(tooltip_style);
         if (tooltip_.hwnd() != nullptr) {
-            const nfui::FrameStyle& tooltip_style = tooltip_.style();
-            const COLORREF fg = tooltip_style.chrome_text.value_or(palette_.text).rgb;
-            const COLORREF bg = tooltip_style.chrome_bg.value_or(palette_.surface).rgb;
-            SendMessageW(tooltip_.hwnd(), TTM_SETTIPTEXTCOLOR, 0, fg);
-            SendMessageW(tooltip_.hwnd(), TTM_SETTIPBKCOLOR,   0, bg);
+            SendMessageW(tooltip_.hwnd(), TTM_SETTIPTEXTCOLOR, 0, palette_.text.rgb);
+            SendMessageW(tooltip_.hwnd(), TTM_SETTIPBKCOLOR,   0, palette_.surface.rgb);
         }
         SetWindowTextW(theme_toggle_.hwnd(),
                        mode_ == nfui::ThemeMode::dark ? L"Switch to light" : L"Switch to dark");

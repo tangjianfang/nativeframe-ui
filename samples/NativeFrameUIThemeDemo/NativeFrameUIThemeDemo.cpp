@@ -222,24 +222,21 @@ private:
             0, 0, 120, 28,
         };
 
-        theme_light_.set_palette(&palette_);
-        theme_light_.set_font_cache(&fonts_);
+        theme_light_.inject_theme(&palette_, &fonts_);
         if (!theme_light_.create(params)) {
             return false;
         }
 
         params.control_id = id_theme_dark;
         params.text       = L"Dark";
-        theme_dark_.set_palette(&palette_);
-        theme_dark_.set_font_cache(&fonts_);
+        theme_dark_.inject_theme(&palette_, &fonts_);
         if (!theme_dark_.create(params)) {
             return false;
         }
 
         params.control_id = id_theme_hc;
         params.text       = L"High Contrast";
-        theme_hc_.set_palette(&palette_);
-        theme_hc_.set_font_cache(&fonts_);
+        theme_hc_.inject_theme(&palette_, &fonts_);
         if (!theme_hc_.create(params)) {
             return false;
         }
@@ -318,8 +315,6 @@ private:
 
         // ListView (3 cols x 4 rows).
         g_demo.listview = std::make_unique<nfui::ListView>();
-        g_demo.listview->set_palette(&palette_);
-        g_demo.listview->set_font_cache(&fonts_);
         if (!create_child(*g_demo.listview, id_listview, L"")) return;
         ListView_SetExtendedListViewStyle(g_demo.listview->hwnd(),
                                           LVS_EX_FULLROWSELECT | LVS_EX_GRIDLINES);
@@ -333,8 +328,6 @@ private:
 
         // TreeView — 2 levels, root expanded.
         g_demo.treeview = std::make_unique<nfui::TreeView>();
-        g_demo.treeview->set_palette(&palette_);
-        g_demo.treeview->set_font_cache(&fonts_);
         if (!create_child(*g_demo.treeview, id_treeview, L"")) return;
         HTREEITEM root = tree_item_insert(g_demo.treeview->hwnd(), TVI_ROOT, TVI_LAST, L"Project");
         tree_item_insert(g_demo.treeview->hwnd(), root, TVI_LAST, L"Source");
@@ -648,8 +641,7 @@ private:
             100,
             28,
         };
-        control.set_palette(&palette_);
-        control.set_font_cache(&fonts_);
+        control.inject_theme(&palette_, &fonts_);
         return control.create(params);
     }
 

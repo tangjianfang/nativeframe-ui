@@ -170,13 +170,12 @@ private:
             24,
         };
 
-        // Both buttons self-paint in coral via the shared Button path; inject
-        // the Claude palette + Segoe UI font so they match the rest of the
-        // shell.
-        open_dialog_.set_palette(&palette_);
-        open_dialog_.set_font_cache(&fonts_);
-        reload_assets_.set_palette(&palette_);
-        reload_assets_.set_font_cache(&fonts_);
+        // Bind every wrapper to the shared palette + Segoe UI cache before
+        // creation. The buttons self-paint and StatusBar consumes the palette
+        // for its surface while retaining native text and sizing behavior.
+        open_dialog_.inject_theme(&palette_, &fonts_);
+        reload_assets_.inject_theme(&palette_, &fonts_);
+        status_bar_.inject_theme(&palette_, &fonts_);
 
         if (!open_dialog_.create(params)) {
             return false;
@@ -285,7 +284,7 @@ private:
         GetWindowRect(status_bar_.hwnd(), &status_rect);
         const int status_height = status_rect.bottom - status_rect.top;
         const int outer = dpi_.logical_to_pixels(20);
-        const int gap = dpi_.logical_to_pixels(12);
+        const int gap = dpi_.logical_to_pixels(16);
         const int button_width = dpi_.logical_to_pixels(160);
         const int button_height = dpi_.logical_to_pixels(34);
 
