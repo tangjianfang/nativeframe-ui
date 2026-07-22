@@ -168,10 +168,17 @@ private:
         // Edit.
         if (!init(edit_, id_edit, L"editable sample")) return false;
 
-        // StaticText — three alignments.
+        // StaticText — three alignments. CP8 wired up the new TextStyle
+        // alignment fields so the labels actually match the rendered layout.
         if (!init(static_left_,   id_static_left,   L"Left aligned"))   return false;
         if (!init(static_center_, id_static_center, L"Center aligned")) return false;
         if (!init(static_right_,  id_static_right,  L"Right aligned"))  return false;
+        nfui::TextStyle center_style{};
+        center_style.align_h = nfui::StaticTextAlignH::center;
+        static_center_.set_style(center_style);
+        nfui::TextStyle right_style{};
+        right_style.align_h = nfui::StaticTextAlignH::right;
+        static_right_.set_style(right_style);
 
         // ListBox (5 items, second selected).
         if (!init(listbox_, id_listbox, L"")) return false;

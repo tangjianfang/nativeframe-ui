@@ -285,13 +285,21 @@ private:
         g_demo.edit = std::make_unique<nfui::Edit>();
         if (!create_child(*g_demo.edit, id_edit, L"editable sample")) return;
 
-        // StaticText — three alignments.
+        // StaticText — three alignments. CP8 wired up TextStyle::align_h so
+        // the labels actually match the rendered layout (pre-CP8 every cell
+        // rendered left-aligned regardless of the caption).
         g_demo.static_left   = std::make_unique<nfui::StaticText>();
         g_demo.static_center = std::make_unique<nfui::StaticText>();
         g_demo.static_right  = std::make_unique<nfui::StaticText>();
         if (!create_child(*g_demo.static_left,   id_static_left,   L"Left aligned"))   return;
         if (!create_child(*g_demo.static_center, id_static_center, L"Center aligned")) return;
         if (!create_child(*g_demo.static_right,  id_static_right,  L"Right aligned"))  return;
+        nfui::TextStyle center_style{};
+        center_style.align_h = nfui::StaticTextAlignH::center;
+        g_demo.static_center->set_style(center_style);
+        nfui::TextStyle right_style{};
+        right_style.align_h = nfui::StaticTextAlignH::right;
+        g_demo.static_right->set_style(right_style);
 
         // ListBox.
         g_demo.listbox = std::make_unique<nfui::ListBox>();
