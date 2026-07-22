@@ -39,7 +39,17 @@ protected:
     void on_reflected_draw_item(DRAWITEMSTRUCT* di) noexcept override;
     void on_subclass_mouse_move(LPARAM lparam) noexcept override;
     void on_subclass_mouse_leave() noexcept override;
+    void on_palette_changed() noexcept override;
 private:
+    // CP19: distinct accent focus ring on the non-client frame (WS_BORDER).
+    // Mirrors the Edit/ComboBox chrome hook so all bordered inputs share one
+    // focus language: 1px chrome unfocused, 2px accent focused.
+    void paint_border() noexcept;
+    static LRESULT CALLBACK visual_subclass_proc(HWND hwnd, UINT message,
+                                                 WPARAM wparam, LPARAM lparam,
+                                                 UINT_PTR subclass_id,
+                                                 DWORD_PTR ref_data) noexcept;
+
     ListStyle style_{};
     int hovered_row_{-1};
 };

@@ -33,9 +33,15 @@ void draw_polyline(HDC dc, const POINT* points, int count, Color color, int widt
 // CP18: ellipse primitives for vector glyphs (dots, rings, magnifier circle).
 // fill_ellipse fills the ellipse interior (NULL_PEN, solid brush). draw_ellipse
 // strokes the outline only (NULL_BRUSH, solid pen of `width` device px). Both
-// degenerate to a no-op on a non-positive DC or rect, like the rect helpers.
+// degenerate to a non-positive DC or rect, like the rect helpers.
 void fill_ellipse(HDC dc, const RECT& bounds, Color fill) noexcept;
 void draw_ellipse(HDC dc, const RECT& bounds, Color color, int width) noexcept;
+
+// CP19: solid focus border of `width` device px drawn inside `bounds` (stacked
+// 1px FrameRects, so no pen-centre clipping ambiguity at a window edge). Used
+// by the per-control WM_NCPAINT / post-paint focus rings. No-op on a null DC or
+// degenerate rect. Never throws.
+void paint_focus_border(HDC dc, const RECT& bounds, Color color, int width) noexcept;
 
 // draw_text passes text.data() directly to DrawTextW (no mutable copy). When
 // the caller passes DT_END_ELLIPSIS or DT_MODIFYSTRING, the input text MUST be

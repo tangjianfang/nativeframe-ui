@@ -1248,6 +1248,90 @@ int wmain() {
         ok = expect(true, L"vector icon degenerate-rect path completes without crash") && ok;
     }
 
+    {
+        // CP19: paint_focus_border. Every border width (1, 2, 3) must paint the
+        // border colour at the four edges of the rect and leave the centre
+        // untouched. Degenerate and inverted rects must be no-ops. This is the
+        // shared focus-ring helper used by Edit/ComboBox/ListBox/CheckBox/
+        // RadioButton, so all of them inherit any regression here.
+        using namespace nfui;
+        const Color edge{RGB(255, 80, 40)};
+        const Color interior_bg{RGB(12, 24, 36)};
+        HDC screen = GetDC(nullptr);
+        bool all_widths_painted = true;
+        const int widths_to_test[] = {1, 2, 3};
+        for (int w : widths_to_test) {
+            RECT rc{0, 0, 80, 60};
+            MemoryDC mem(screen, rc);
+            HDC target = mem.valid() ? mem.dc() : screen;
+            fill_rect(target, rc, interior_bg);
+            paint_focus_border(target, rc, edge, w);
+
+            // Four edge checks: rows/cols in the requested w-pixel band are
+            // border colour. Catches an under-thick border (would leave the
+            // last row/col of the band as background) and a missing border
+            // (band entirely background).
+            bool top_ok = true;
+            for (int x = 0; x < 80 && top_ok; ++x) {
+                for (int y = 0; y < w; ++y) {
+                    if (GetPixel(target, x, y) != edge.rgb) { top_ok = false; break; }
+                }
+            }
+            bool bottom_ok = true;
+            for (int x = 0; x < 80 && bottom_ok; ++x) {
+                for (int y = 60 - w; y < 60; ++y) {
+                    if (GetPixel(target, x, y) != edge.rgb) { bottom_ok = false; break; }
+                }
+            }
+            bool left_ok = true;
+            for (int y = 0; y < 60 && left_ok; ++y) {
+                for (int x = 0; x < w; ++x) {
+                    if (GetPixel(target, x, y) != edge.rgb) { left_ok = false; break; }
+                }
+            }
+            bool right_ok = true;
+            for (int y = 0; y < 60 && right_ok; ++y) {
+                for (int x = 80 - w; x < 80; ++x) {
+                    if (GetPixel(target, x, y) != edge.rgb) { right_ok = false; break; }
+                }
+            }
+
+            // Interior scan (catches over-thick border): a 4-pixel gutter
+            // inside the border must be entirely background. The four edge
+            // checks above cannot detect a regression that adds one extra
+            // FrameRect inward, because they only assert the OUTER band is
+            // border colour. Scanning the interior is what closes that hole.
+            const int inner_left   = w + 4;
+            const int inner_top    = w + 4;
+            const int inner_right  = 80 - w - 4;
+            const int inner_bottom = 60 - w - 4;
+            bool interior_ok = true;
+            for (int y = inner_top; y < inner_bottom && interior_ok; ++y) {
+                for (int x = inner_left; x < inner_right; ++x) {
+                    if (GetPixel(target, x, y) != interior_bg.rgb) {
+                        interior_ok = false;
+                        break;
+                    }
+                }
+            }
+
+            if (!(top_ok && bottom_ok && left_ok && right_ok && interior_ok)) {
+                all_widths_painted = false;
+            }
+        }
+        // Degenerate rects must not crash or paint (degenerate = zero-area).
+        bool degenerate_safe = true;
+        try {
+            paint_focus_border(screen, RECT{10, 10, 10, 10}, edge, 2);
+            paint_focus_border(screen, RECT{20, 20, 5, 5}, edge, 2);   // inverted
+        } catch (...) {
+            degenerate_safe = false;
+        }
+        ReleaseDC(nullptr, screen);
+        ok = expect(all_widths_painted, L"paint_focus_border paints exactly w px on each edge (no over-thick) and leaves interior untouched for widths 1/2/3") && ok;
+        ok = expect(degenerate_safe, L"paint_focus_border degenerate-rect path is a safe no-op") && ok;
+    }
+
     return ok ? 0 : 1;
 }
 

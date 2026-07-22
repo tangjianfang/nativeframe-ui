@@ -4,7 +4,11 @@
 
 namespace nfui {
 bool Tooltip::create(const ControlCreateParams& params) noexcept {
-    if (!create_native(TOOLTIPS_CLASSW, params, 0)) {
+    // CP19: optional balloon style. TTS_BALLOON is a window style, so it must be
+    // present at creation (set_style() after create cannot reshape the window).
+    // The chrome-text/bg colour APIs still apply on top of the balloon shape.
+    const DWORD extra = style_.balloon.value_or(false) ? TTS_BALLOON : 0;
+    if (!create_native(TOOLTIPS_CLASSW, params, extra)) {
         return false;
     }
     // P1.4: pull theme text/background through ComCtl32's documented tooltip

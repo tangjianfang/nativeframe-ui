@@ -1,9 +1,90 @@
 #include <nfui/Controls/CheckBox.hpp>
+#include <nfui/Paint.hpp>
 
 namespace nfui {
 
+namespace {
+
+const ThemePalette& effective_palette(const ThemePalette* injected) noexcept {
+    static const ThemePalette fallback = theme_palette(ThemeMode::light);
+    return injected ? *injected : fallback;
+}
+
+// Suppress the native dotted focus rectangle on a button-class control by
+// setting its UISF_HIDEFOCUS UI-state flag directly. WM_UPDATEUISTATE updates
+// the window it is sent to (and its children — a button has none), so this is
+// per-control and does not propagate to siblings, unlike WM_CHANGEUISTATE.
+void suppress_native_focus_rect(HWND hwnd) noexcept {
+    SendMessageW(hwnd, WM_UPDATEUISTATE,
+                 MAKELONG(UIS_SET, UISF_HIDEFOCUS), 0);
+}
+
+} // namespace
+
 bool CheckBox::create(const ControlCreateParams& params) noexcept {
-    return create_native(L"BUTTON", params, BS_AUTOCHECKBOX);
+    if (!create_native(L"BUTTON", params, BS_AUTOCHECKBOX)) {
+        return false;
+    }
+    if (SetWindowSubclass(hwnd(), &CheckBox::visual_subclass_proc,
+                          reinterpret_cast<UINT_PTR>(this),
+                          reinterpret_cast<DWORD_PTR>(this)) == FALSE) {
+        DestroyWindow(hwnd());
+        return false;
+    }
+    suppress_native_focus_rect(hwnd());
+    return true;
+}
+
+LRESULT CALLBACK CheckBox::visual_subclass_proc(HWND hwnd, UINT message,
+                                                WPARAM wparam, LPARAM lparam,
+                                                UINT_PTR subclass_id,
+                                                DWORD_PTR ref_data) noexcept {
+    auto* cb = reinterpret_cast<CheckBox*>(ref_data);
+    switch (message) {
+    case WM_SETFOCUS: {
+        LRESULT r = DefSubclassProc(hwnd, message, wparam, lparam);
+        // Re-assert hide-focus on every focus gain: some dialog shells reset
+        // UI state on focus events, which would otherwise restore the dotted
+        // rect on the second tab-through.
+        suppress_native_focus_rect(hwnd);
+        RedrawWindow(hwnd, nullptr, nullptr,
+                     RDW_INVALIDATE | RDW_UPDATENOW);
+        return r;
+    }
+    case WM_KILLFOCUS:
+    case WM_ENABLE: {
+        LRESULT r = DefSubclassProc(hwnd, message, wparam, lparam);
+        RedrawWindow(hwnd, nullptr, nullptr,
+                     RDW_INVALIDATE | RDW_UPDATENOW);
+        return r;
+    }
+    case WM_PAINT: {
+        // Let the native checkbox paint its box + label first, then overlay the
+        // accent focus ring on the client. DefSubclassProc runs the button's own
+        // WM_PAINT (BeginPaint/EndPaint internally); the GetDC draw afterwards
+        // persists until the next paint, which we also handle, so the ring stays.
+        LRESULT r = DefSubclassProc(hwnd, message, wparam, lparam);
+        if (cb != nullptr
+            && GetFocus() == hwnd
+            && IsWindowEnabled(hwnd) != FALSE) {
+            HDC dc = GetDC(hwnd);
+            if (dc != nullptr) {
+                RECT rc{};
+                GetClientRect(hwnd, &rc);
+                const ThemePalette& p = effective_palette(cb->palette());
+                paint_focus_border(dc, rc, p.accent, 2);
+                ReleaseDC(hwnd, dc);
+            }
+        }
+        return r;
+    }
+    case WM_NCDESTROY:
+        RemoveWindowSubclass(hwnd, &CheckBox::visual_subclass_proc, subclass_id);
+        return DefSubclassProc(hwnd, message, wparam, lparam);
+    default:
+        break;
+    }
+    return DefSubclassProc(hwnd, message, wparam, lparam);
 }
 
 } // namespace nfui

@@ -376,6 +376,26 @@ void draw_ellipse(HDC dc, const RECT& bounds, Color color, int width) noexcept {
     DeleteObject(pen);
 }
 
+// CP19: solid focus border of `width` device px drawn inside `bounds`. We
+// stack `width` 1px FrameRects (each inset by 1) rather than a single wide
+// pen + Rectangle: GDI centres a pen on the outline, so a 2px pen would
+// straddle the rect edge and the outer half would clip at a window's edge.
+// Stacked FrameRects keep the border fully inside `bounds` and pixel-crisp at
+// any width. No-op on a null DC or degenerate rect; never throws.
+void paint_focus_border(HDC dc, const RECT& bounds, Color color, int width) noexcept {
+    if (dc == nullptr) return;
+    const int w = width < 1 ? 1 : width;
+    HBRUSH brush = CreateSolidBrush(color.rgb);
+    if (brush == nullptr) return;
+    RECT r = bounds;
+    for (int i = 0; i < w; ++i) {
+        if (r.right <= r.left || r.bottom <= r.top) break;
+        FrameRect(dc, &r, brush);
+        r.left += 1; r.top += 1; r.right -= 1; r.bottom -= 1;
+    }
+    DeleteObject(brush);
+}
+
 void draw_text(HDC dc, const RECT& bounds, std::wstring_view text, HFONT font, Color text_color, UINT format) noexcept {
     // Note: this helper passes text.data() directly to DrawTextW without copying
     // into a mutable buffer. When the caller passes DT_END_ELLIPSIS or
