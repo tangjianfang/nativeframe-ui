@@ -604,7 +604,7 @@ private:
 
         // ---- Column 3: gallery strip ----
         int x3 = x2 + col_w + px(32);
-        const int gcol_w = std::max(px(300), client.right - outer - x3);
+        const int gcol_w = std::max(px(300), static_cast<int>(client.right - outer - x3));
         y = body_top + px(4);
         MoveWindow(gallery_listview_.hwnd(), x3, y, gcol_w, px(110), TRUE);
         y += px(120);

@@ -72,6 +72,10 @@ try {
     $cleanRoot = New-FixtureRoot -Name 'clean-source'
     Assert-ExitCode -Name 'clean source is accepted' -Expected 0 -Actual (Invoke-BoundaryCheck -Root $cleanRoot)
 
+    $styleRoot = New-FixtureRoot -Name 'window-style-access'
+    Set-Content -LiteralPath (Join-Path $styleRoot 'src\style.cpp') -Value 'auto style = GetWindowLongW(hwnd, GWL_STYLE);' -Encoding UTF8
+    Assert-ExitCode -Name 'GetWindowLong style access is accepted' -Expected 0 -Actual (Invoke-BoundaryCheck -Root $styleRoot)
+
     Assert-RejectedSource -Name 'BCGControlBar branding' -RelativePath 'src\bad.cpp' -Content 'const char* legacy = "BCGControlBar";'
     Assert-RejectedSource -Name 'BCGCBPro branding' -RelativePath 'src\bad.cpp' -Content 'const char* legacy = "BCGCBPro";'
     Assert-RejectedSource -Name 'angle afx include' -RelativePath 'include\bad.hpp' -Content '#include <afxwin.h>'
@@ -81,10 +85,13 @@ try {
     Assert-RejectedSource -Name 'angle BCG include' -RelativePath 'include\bad.hpp' -Content '#include <BCGPRibbonBar.h>'
     Assert-RejectedSource -Name 'quoted BCG include' -RelativePath 'include\bad.hpp' -Content '#include "BCGPVisualManager.h"'
     Assert-RejectedSource -Name 'unfinished-work marker' -RelativePath 'src\bad.cpp' -Content '// TODO: remove the placeholder'
-    Assert-RejectedSource -Name 'deprecated Win32 API' -RelativePath 'src\bad.cpp' -Content 'auto value = GetWindowLongW(hwnd, GWLP_USERDATA);'
+    Assert-RejectedSource -Name 'multiline unfinished-work marker' -RelativePath 'src\bad.cpp' -Content "/*`n  FIXME: remove the placeholder`n*/"
+    Assert-RejectedSource -Name 'deprecated Win32 API' -RelativePath 'src\bad.cpp' -Content 'GetVersionExW(&version_info);'
+    Assert-RejectedSource -Name 'pointer-sized Win32 API' -RelativePath 'src\bad.cpp' -Content 'auto value = GetWindowLongW(hwnd, GWLP_USERDATA);'
     Assert-RejectedSource -Name 'callback without noexcept' -RelativePath 'src\bad.cpp' -Content 'LRESULT CALLBACK bad_proc(HWND, UINT, WPARAM, LPARAM) { return 0; }'
     Assert-RejectedSource -Name 'HWND accessor without noexcept' -RelativePath 'include\bad.hpp' -Content 'struct Wrapper { HWND hwnd() const; };'
     Assert-RejectedSource -Name 'core source includes controls' -RelativePath 'src\core\bad.cpp' -Content '#include <nfui/Controls/Button.hpp>'
+    Assert-RejectedSource -Name 'lower layer includes theme' -RelativePath 'src\dpi\bad.cpp' -Content '#include <nfui/Theme.hpp>'
 
     $cmakeRoot = New-FixtureRoot -Name 'reversed-cmake-dependency'
     Set-Content -LiteralPath (Join-Path $cmakeRoot 'cmake\nfui_core.cmake') -Encoding UTF8 -Value @'

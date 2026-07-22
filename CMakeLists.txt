@@ -5,6 +5,7 @@ project(NativeFrameUI VERSION 0.1.0 LANGUAGES CXX RC)
 include(CTest)
 include(cmake/NativeFrameUICompilerOptions.cmake)
 include(cmake/NativeFrameUIResources.cmake)
+include(cmake/NativeFrameUIQualityChecks.cmake)
 
 include(cmake/nfui_core.cmake)
 include(cmake/nfui_command.cmake)
