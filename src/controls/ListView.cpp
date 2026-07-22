@@ -11,7 +11,7 @@ bool ListView::create(const ControlCreateParams& params) noexcept {
         return false;
     }
     if (fonts() != nullptr) {
-        if (HFONT f = fonts()->regular(dpi_of(hwnd()), 9)) {
+        if (HFONT f = fonts()->regular(dpi_of(hwnd()), font_pt::ui)) {
             SendMessageW(hwnd(), WM_SETFONT, reinterpret_cast<WPARAM>(f), FALSE);
         }
     }

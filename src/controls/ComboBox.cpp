@@ -24,7 +24,7 @@ bool ComboBox::create(const ControlCreateParams& params) noexcept {
                        CBS_DROPDOWNLIST | CBS_OWNERDRAWFIXED | CBS_HASSTRINGS | WS_VSCROLL)) {
         return false;
     }
-    const int row_height = font_pixel_height(9, dpi_of(hwnd())) + 8;
+    const int row_height = font_pixel_height(font_pt::ui, dpi_of(hwnd())) + 8;
     SendMessageW(hwnd(), CB_SETITEMHEIGHT, 0, row_height);
     if (SetWindowSubclass(hwnd(), &ComboBox::visual_subclass_proc,
                           reinterpret_cast<UINT_PTR>(this),
@@ -77,7 +77,7 @@ void ComboBox::draw_item(DRAWITEMSTRUCT* draw_info) noexcept {
     RECT text_bounds = draw_info->rcItem;
     text_bounds.left += 8;
     text_bounds.right = std::max(text_bounds.left, text_bounds.right - 8);
-    HFONT font = fonts() ? fonts()->regular(dpi_of(hwnd()), 9) : nullptr;
+    HFONT font = fonts() ? fonts()->regular(dpi_of(hwnd()), font_pt::ui) : nullptr;
     draw_text(draw_info->hDC, text_bounds, text, font, foreground,
               DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS);
 }
@@ -160,7 +160,7 @@ LRESULT CALLBACK ComboBox::visual_subclass_proc(HWND hwnd,
         auto* measure_info = reinterpret_cast<MEASUREITEMSTRUCT*>(lparam);
         if (measure_info != nullptr && measure_info->CtlType == ODT_COMBOBOX) {
             measure_info->itemHeight = static_cast<UINT>(
-                font_pixel_height(9, dpi_of(hwnd)) + 8);
+                font_pixel_height(font_pt::ui, dpi_of(hwnd)) + 8);
             return TRUE;
         }
         break;

@@ -52,7 +52,7 @@ void draw_default_placeholder(HWND hwnd,
     // Point 9 matches the C3/C4 tick font so the default placeholder reads with the
     // same weight as the real axis labels once a subclass overrides on_paint.
     const int dpi = (hwnd != nullptr) ? dpi_of(hwnd) : 96;
-    HFONT tick_font = (fonts != nullptr) ? fonts->mono(dpi, 9) : nullptr;
+    HFONT tick_font = (fonts != nullptr) ? fonts->mono(dpi, font_pt::chart_tick) : nullptr;
     wchar_t buf[32]{};
     for (int i = 0; i <= 4; ++i) {
         const int x = plot.left + (plot.right - plot.left) * i / 4;

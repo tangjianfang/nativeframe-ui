@@ -16,8 +16,9 @@ namespace {
 // Column visual constants. Kept here (not in the header) so the legend
 // shape can evolve without breaking source compatibility. They mirror the
 // values the four views used to bake in themselves; if you change a number
-// here, the four view outputs shift together.
-constexpr int kLegendFontPt = 9;
+// here, the four view outputs shift together. The point size reuses the
+// shared font_pt::chart_legend token so the legend matches the UI body
+// text everywhere else; bump that token to bump the legend.
 constexpr int kLegendSwatch = 12;
 constexpr int kLegendPadX = 8;
 constexpr int kLegendPadY = 6;
@@ -126,8 +127,8 @@ void draw_legend_column(HDC hdc,
         palette != nullptr ? *palette : theme_palette(ThemeMode::light);
     HFONT font = (fonts != nullptr)
         ? (kLegendUseMonoFont
-            ? fonts->mono(dpi, kLegendFontPt)
-            : fonts->regular(dpi, kLegendFontPt))
+            ? fonts->mono(dpi, font_pt::chart_legend)
+            : fonts->regular(dpi, font_pt::chart_legend))
         : nullptr;
 
     const int col_w = legend_width_px;

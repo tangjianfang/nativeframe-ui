@@ -15,9 +15,9 @@ namespace nfui {
 namespace {
 
 // Tick visual constants match LineChartView / BarChartView so the three
-// renders stay visually consistent when shown side-by-side. Legend-specific
+// renders stay visually consistent when shown side-by-side. Mono tick label
+// point size uses the shared font_pt token (font_pt::chart_tick). Legend
 // constants live in internal/ChartsPaint.cpp.
-constexpr int kTickFontPt = 9;
 constexpr int kTickCount = 5;
 constexpr int kAxisLabelGutter = 18;
 // Spline uses a thinner stroke than the polyline renderer — a heavy stroke
@@ -139,7 +139,7 @@ void SplineChartView::on_paint(HDC hdc, const RECT& bounds) {
     }
 
     const int dpi = (hwnd() != nullptr) ? dpi_of(hwnd()) : 96;
-    HFONT tick_font = (fonts_ != nullptr) ? fonts_->mono(dpi, kTickFontPt) : nullptr;
+    HFONT tick_font = (fonts_ != nullptr) ? fonts_->mono(dpi, font_pt::chart_tick) : nullptr;
 
     draw_value_axis_ticks_v(hdc, layout, axis_y_, tick_font, pal);
     draw_index_axis_ticks_v(hdc, layout, point_count, tick_font, pal);

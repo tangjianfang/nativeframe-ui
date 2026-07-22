@@ -13,11 +13,10 @@ namespace nfui {
 
 namespace {
 
-// Tick visual constants. Mono tick label point size mirrors the C2 default
-// paint (ChartView::draw_default_placeholder uses point 8; we bump to 9 since
-// real labels carry formatted floats and benefit from a touch more weight).
-// Legend-specific constants live in internal/ChartsPaint.cpp.
-constexpr int kTickFontPt = 9;
+// Tick visual constants. Mono tick label point size uses the shared font_pt
+// token (font_pt::chart_tick) so every chart view picks the same value as
+// the default placeholder in ChartView::draw_default_placeholder. Legend
+// constants live in internal/ChartsPaint.cpp.
 constexpr int kTickCount = 5;
 constexpr int kAxisLabelGutter = 18;
 // Half-width of the tick-label text rect (centered on the tick position).
@@ -255,7 +254,7 @@ void BarChartView::on_paint(HDC hdc, const RECT& bounds) {
     }
 
     const int dpi = (hwnd() != nullptr) ? dpi_of(hwnd()) : 96;
-    HFONT tick_font = (fonts_ != nullptr) ? fonts_->mono(dpi, kTickFontPt) : nullptr;
+    HFONT tick_font = (fonts_ != nullptr) ? fonts_->mono(dpi, font_pt::chart_tick) : nullptr;
 
     // In stacked mode the tick labels should reflect the column-sum range, not
     // the per-series axis range, so the y-axis reads [axis_y_.min, max_col_sum].
