@@ -365,6 +365,10 @@ private:
         // TabControl (3 tabs).
         g_demo.tabs = std::make_unique<nfui::TabControl>();
         if (!create_child(*g_demo.tabs, id_tabs, L"")) return;
+        // CP8A: widen horizontal padding so the three tabs read as deliberate
+        // segments rather than the native default (6, 3). DPI-scaled to the
+        // current monitor.
+        static_cast<void>(g_demo.tabs->set_padding(dpi_.logical_to_pixels(12), dpi_.logical_to_pixels(4)));
         insert_tab(g_demo.tabs->hwnd(), 0, L"General");
         insert_tab(g_demo.tabs->hwnd(), 1, L"Layout");
         insert_tab(g_demo.tabs->hwnd(), 2, L"Output");
