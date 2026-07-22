@@ -47,8 +47,21 @@ public:
     [[nodiscard]] bool valid() const noexcept;
 
     // Visual dependencies injected by the owner before paint. Read-only pointers; not owned.
-    void set_palette(const ThemePalette* palette) noexcept { palette_ = palette; }
-    void set_font_cache(FontCache* fonts) noexcept { fonts_ = fonts; }
+    // Re-injecting a palette is also the control-local palette-change notification:
+    // native/custom chrome is refreshed by the leaf hook and the HWND is invalidated.
+    void set_palette(const ThemePalette* palette) noexcept {
+        palette_ = palette;
+        if (hwnd() != nullptr) {
+            on_palette_changed();
+            InvalidateRect(hwnd(), nullptr, FALSE);
+        }
+    }
+    void set_font_cache(FontCache* fonts) noexcept {
+        fonts_ = fonts;
+        if (hwnd() != nullptr) {
+            InvalidateRect(hwnd(), nullptr, FALSE);
+        }
+    }
 
     // Bind both palette + FontCache in one call. Equivalent to:
     //   set_palette(palette);
@@ -63,6 +76,7 @@ protected:
     [[nodiscard]] const std::wstring& caption() const noexcept { return caption_; }
     [[nodiscard]] const ThemePalette* palette() const noexcept { return palette_; }
     [[nodiscard]] FontCache* fonts() const noexcept { return fonts_; }
+    virtual void on_palette_changed() noexcept {}
     virtual void on_paint(HDC dc, const PaintState& state) noexcept { (void)dc; (void)state; }
     [[nodiscard]] virtual bool wants_self_paint() const noexcept { return false; }
 

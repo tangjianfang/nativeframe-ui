@@ -16,20 +16,23 @@ bool ListView::create(const ControlCreateParams& params) noexcept {
         }
     }
     ListView_SetExtendedListViewStyle(hwnd(), LVS_EX_FULLROWSELECT);
-    // P1.4: when a palette is injected and the user has supplied chrome_bg /
-    // chrome_text, push those into the ListView control's native base colours
-    // via the documented ComCtl32 ListView_SetBkColor / ListView_SetTextColor
-    // helpers. The custom-draw handler below still wins per-item, so this
-    // just guarantees the empty-area background and the base text colour
-    // agree with the palette even when no items are present.
-    const ThemePalette* pal = palette();
-    if (pal != nullptr) {
-        const Color bg = style_.row_background.value_or(pal->surface);
-        const Color fg = style_.row_foreground.value_or(pal->text);
-        ListView_SetBkColor(hwnd(), bg.rgb);
-        ListView_SetTextColor(hwnd(), fg.rgb);
-    }
+    on_palette_changed();
     return true;
+}
+
+void ListView::on_palette_changed() noexcept {
+    if (hwnd() == nullptr) {
+        return;
+    }
+
+    const ThemePalette* pal = palette();
+    const ThemePalette& p = pal != nullptr ? *pal : theme_palette(ThemeMode::light);
+    // Keep the empty-area native background and base text in sync with the
+    // custom-draw item colors. The subclass hook redraws rows after this call.
+    const Color bg = style_.row_background.value_or(p.surface);
+    const Color fg = style_.row_foreground.value_or(p.text);
+    ListView_SetBkColor(hwnd(), bg.rgb);
+    ListView_SetTextColor(hwnd(), fg.rgb);
 }
 
 LRESULT ListView::on_custom_draw_item(NMLVCUSTOMDRAW* cd) noexcept {

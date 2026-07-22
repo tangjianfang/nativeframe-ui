@@ -40,6 +40,10 @@ void ListBox::draw_item(DRAWITEMSTRUCT* di) noexcept {
     }
     const Color fg = disabled ? p.text_secondary : (selected ? style_.selected_foreground.value_or(p.selection_text) : p.text);
     const int radius = theme_metrics().corner_radius_control;
+    // Establish the current list surface underneath the rounded selection/hover
+    // shape. Otherwise the outside corner pixels come from an old native
+    // listbox frame during a palette transition.
+    fill_rect(di->hDC, rc, p.surface);
     fill_rounded_rect(di->hDC, rc, radius, bg, bg);
     if (di->itemID != LB_ERR) {
         LRESULT len = SendMessageW(di->hwndItem, LB_GETTEXTLEN, di->itemID, 0);
