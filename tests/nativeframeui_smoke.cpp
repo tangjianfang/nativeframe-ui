@@ -657,6 +657,38 @@ int wmain() {
             ok = expect(spline.hwnd() != nullptr, L"SplineChartView paint cycle completes without crash") && ok;
         }
 
+        // CP14: AreaChartView coverage. Mirrors the LineChartView block —
+        // proves create + paint + alpha-blend + outline toggles all
+        // succeed without crashing the offscreen paint path.
+        {
+            using namespace nfui;
+            AreaChartView area;
+            WindowCreateParams p{};
+            p.instance = GetModuleHandleW(nullptr);
+            p.parent = controls_parent.hwnd();
+            p.style = WS_CHILD | WS_VISIBLE | WS_CLIPCHILDREN;
+            p.x = 0; p.y = 0; p.width = 240; p.height = 160;
+            ok = expect(area.create(p), L"AreaChartView::create") && ok;
+            ok = expect(area.hwnd() != nullptr, L"AreaChartView exposes HWND") && ok;
+            const ThemePalette palette_for_area = theme_palette(ThemeMode::light);
+            FontCache fonts_for_area;
+            area.set_palette(&palette_for_area);
+            area.set_font_cache(&fonts_for_area);
+            area.set_series({ChartSeries{L"Load", palette_for_area.accent,
+                            {{0.0, 5.0}, {1.0, 25.0}, {2.0, 12.0}, {3.0, 40.0}, {4.0, 18.0}}}});
+            area.set_outline(true);
+            area.set_fill_alpha(1.0);
+            RedrawWindow(area.hwnd(), nullptr, nullptr, RDW_INVALIDATE | RDW_UPDATENOW);
+            ok = expect(area.hwnd() != nullptr, L"AreaChartView paint cycle completes without crash") && ok;
+            // Outline off + alpha < 1.0 path: must not crash on the second
+            // paint. Validates the alpha_blend branch without checking
+            // pixel values (smoke test runs headless).
+            area.set_outline(false);
+            area.set_fill_alpha(0.5);
+            RedrawWindow(area.hwnd(), nullptr, nullptr, RDW_INVALIDATE | RDW_UPDATENOW);
+            ok = expect(area.hwnd() != nullptr, L"AreaChartView alpha-blend fill paints without crash") && ok;
+        }
+
         controls_parent.destroy();
         ok = expect(!button.valid() && button.hwnd() == nullptr,
                     L"Button wrapper invalidates HWND after parent destruction") && ok;

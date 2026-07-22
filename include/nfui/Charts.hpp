@@ -29,6 +29,7 @@ enum class ChartKind {
     bar_horizontal,
     line,
     spline,
+    area,
 };
 
 struct ChartPoint {
@@ -246,6 +247,41 @@ protected:
 
 private:
     double tension_ = 0.5;
+};
+
+// CP14: filled-area chart renderer. One filled polygon per series spanning
+// the line and the plot baseline (y == y.min). Uses the same data shape as
+// LineChartView (normalized points + axis ranges) so a caller can swap a
+// line view for an area view by changing only the subclass. The fill color
+// is derived from ChartSeries::color by blending 30% toward
+// palette.surface so stacked area charts stay distinguishable. An optional
+// outline (1-px stroke in the original series color) is drawn on top.
+class AreaChartView : public ChartView {
+public:
+    AreaChartView() = default;
+    ~AreaChartView() override = default;
+
+    AreaChartView(const AreaChartView&) = delete;
+    AreaChartView& operator=(const AreaChartView&) = delete;
+    AreaChartView(AreaChartView&&) = delete;
+    AreaChartView& operator=(AreaChartView&&) = delete;
+
+    // When true (default), a 1-px stroke in the original series color is
+    // drawn along the upper edge of the filled polygon so the boundary
+    // reads cleanly against busy backgrounds. Set false for a pure-fill
+    // area chart (useful when stacking many series).
+    void set_outline(bool enabled) noexcept;
+
+    // Fill alpha in [0, 1]; clamped. 1 is fully opaque; 0 produces an
+    // invisible fill (the outline, if enabled, still draws).
+    void set_fill_alpha(double alpha) noexcept;
+
+protected:
+    void on_paint(HDC hdc, const RECT& bounds) override;
+
+private:
+    bool outline_ = true;
+    double fill_alpha_ = 1.0;
 };
 
 } // namespace nfui

@@ -1,11 +1,12 @@
 add_library(nfui_charts STATIC
-    src/charts/Charts.cpp
-    src/charts/internal/ChartsPaint.cpp
-    src/charts/ChartView.cpp
+    src/charts/AreaChartView.cpp
     src/charts/BarChartView.cpp
+    src/charts/ChartView.cpp
+    src/charts/Charts.cpp
     src/charts/HBarChartView.cpp
     src/charts/LineChartView.cpp
     src/charts/SplineChartView.cpp
+    src/charts/internal/ChartsPaint.cpp
 )
 add_library(NativeFrameUI::nfui_charts ALIAS nfui_charts)
 
