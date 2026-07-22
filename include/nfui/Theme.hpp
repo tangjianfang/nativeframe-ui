@@ -50,4 +50,12 @@ struct ThemeMetrics {
 [[nodiscard]] ThemePalette theme_palette(ThemeMode mode) noexcept;
 [[nodiscard]] ThemeMetrics theme_metrics() noexcept;
 
+// True when the palette behaves like the WCAG high-contrast profile:
+// a near-black background paired with a near-white foreground and a
+// bright, saturated accent. Callers use this to switch control paint
+// formulas (Button pressed/disabled, etc.) into paths that satisfy the
+// 3:1 UI-component and 7:1 text thresholds that the standard light/dark
+// formulas cannot reach against extreme accents.
+[[nodiscard]] bool is_high_contrast(const ThemePalette& p) noexcept;
+
 } // namespace nfui

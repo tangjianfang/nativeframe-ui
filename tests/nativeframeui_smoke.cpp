@@ -211,6 +211,35 @@ int wmain() {
     ok = expect(high_contrast_tokens.window_text == RGB(255, 255, 255),
                 L"High contrast theme uses white text") && ok;
 
+    // CP10B: lock down the HC profile invariants so a future tweak to the
+    // palette cannot silently regress a contrast requirement. The numbers
+    // here are the *defining* choices of the WCAG AAA high-contrast palette;
+    // any change must be paired with an audit rerun. Reference:
+    // docs/KNOWLEDGE/polish/2026-07-23-cp10-high-contrast.md.
+    {
+        const nfui::ThemePalette hc = nfui::theme_palette(nfui::ThemeMode::high_contrast);
+        ok = expect(hc.background.rgb == RGB(0, 0, 0),
+                    L"HC background is pure black") && ok;
+        ok = expect(hc.text.rgb == RGB(255, 255, 255),
+                    L"HC text is pure white") && ok;
+        ok = expect(hc.surface.rgb != hc.background.rgb,
+                    L"HC surface is distinct from background (cards are visible)") && ok;
+        ok = expect(hc.surface_hover.rgb != hc.background.rgb,
+                    L"HC surface_hover is distinct from background") && ok;
+        ok = expect(hc.accent.rgb != hc.accent_hover.rgb,
+                    L"HC accent and accent_hover are distinct (hover state must read)") && ok;
+        ok = expect(hc.selection.rgb != hc.accent.rgb,
+                    L"HC selection is distinct from accent (selected rows do not collide with button hover)") && ok;
+        ok = expect(hc.warning.rgb != hc.accent.rgb,
+                    L"HC warning is distinct from accent (no semantic collision)") && ok;
+        ok = expect(nfui::is_high_contrast(hc),
+                    L"is_high_contrast() recognises the HC palette") && ok;
+        ok = expect(!nfui::is_high_contrast(nfui::theme_palette(nfui::ThemeMode::light)),
+                    L"is_high_contrast() rejects the light palette") && ok;
+        ok = expect(!nfui::is_high_contrast(nfui::theme_palette(nfui::ThemeMode::dark)),
+                    L"is_high_contrast() rejects the dark palette") && ok;
+    }
+
     nfui::WorkbenchState state{};
     state.main_x = 10;
     state.main_y = 20;
