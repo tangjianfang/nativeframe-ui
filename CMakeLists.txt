@@ -136,6 +136,13 @@ target_link_libraries(NativeFrameUIMinimal PRIVATE
 nfui_apply_compiler_options(NativeFrameUIMinimal)
 nfui_add_resources(NativeFrameUIMinimal)
 
+add_executable(NativeFrameUIControlsPlayground WIN32
+    samples/NativeFrameUIControlsPlayground/NativeFrameUIControlsPlayground.cpp
+)
+target_link_libraries(NativeFrameUIControlsPlayground PRIVATE NativeFrameUI::NativeFrameUI)
+nfui_apply_compiler_options(NativeFrameUIControlsPlayground)
+nfui_add_resources(NativeFrameUIControlsPlayground)
+
 if(BUILD_TESTING)
     add_executable(NativeFrameUISmokeTest
         tests/nativeframeui_smoke.cpp
