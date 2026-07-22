@@ -1,6 +1,8 @@
 #include <nfui/Controls/Splitter.hpp>
 #include <nfui/Paint.hpp>
 
+#include <cmath>
+
 namespace nfui {
 bool Splitter::create(const ControlCreateParams& params) noexcept {
     ControlCreateParams splitter_params = params;
@@ -41,6 +43,32 @@ void Splitter::set_dragging(bool dragging) noexcept {
     // and the bar returns to its hover/idle appearance.
     if (hwnd() != nullptr) {
         InvalidateRect(hwnd(), nullptr, FALSE);
+    }
+    // CP17: breathe the drag hit-line while dragging. The pulse is suppressed
+    // in HC and when the system disables client-area animation; in those cases
+    // the hit-line stays a steady accent_hover (the CP7 look).
+    const ThemePalette* pal = palette();
+    const ThemePalette& p = pal ? *pal : theme_palette(ThemeMode::light);
+    const bool can_pulse = dragging_ && !is_high_contrast(p) && system_animations_enabled();
+    if (can_pulse) {
+        pulse_phase_ = 0.0f;
+        start_anim_timer(33);   // ~30 fps is enough for a slow breathing pulse
+    } else {
+        stop_anim_timer();
+    }
+}
+
+void Splitter::on_animation_tick([[maybe_unused]] unsigned long long now_ms) noexcept {
+    if (!dragging_) {
+        stop_anim_timer();
+        return;
+    }
+    // Advance the breathing phase. 0.12 rad/tick at ~30 fps ≈ one full breath
+    // every ~1.7 s — slow enough to read as "alive", not strobing.
+    pulse_phase_ += 0.12f;
+    if (pulse_phase_ > 6.2831853f) pulse_phase_ -= 6.2831853f;
+    if (hwnd() != nullptr) {
+        InvalidateRect(hwnd(), nullptr, FALSE);   // async; never UpdateWindow
     }
 }
 
@@ -96,16 +124,27 @@ void Splitter::on_paint(HDC dc, const PaintState& state) noexcept {
         // vertical) we draw a vertical line. Width = 2 px in
         // `p.accent_hover` so it contrasts the accent fill without forcing
         // a palette lookup that might be unset on legacy themes.
+        //
+        // CP17: the line breathes (brightness lerp between accent_hover and a
+        // 35% lift of it) while the drag pulse timer runs. Suppressed in HC /
+        // when system animations are off — then it falls back to the steady
+        // CP7 colour. Brightness lerp (not alpha) keeps this a cheap fill_rect
+        // and avoids a per-paint DIB for a 2 px line.
+        const bool can_pulse = !is_high_contrast(p) && system_animations_enabled() && anim_timer_running();
+        const Color line_color = can_pulse
+            ? lerp_color(p.accent_hover, lighten(p.accent_hover, 0.35f),
+                         0.5f + 0.5f * std::sin(pulse_phase_))
+            : p.accent_hover;
         const int w = paint_bounds.right - paint_bounds.left;
         const int h = paint_bounds.bottom - paint_bounds.top;
         if (orientation_ == SplitterOrientation::Vertical) {
             const int cy = paint_bounds.top + h / 2;
             RECT line{ paint_bounds.left, cy - 1, paint_bounds.right, cy + 1 };
-            fill_rect(target, line, p.accent_hover);
+            fill_rect(target, line, line_color);
         } else {
             const int cx = paint_bounds.left + w / 2;
             RECT line{ cx - 1, paint_bounds.top, cx + 1, paint_bounds.bottom };
-            fill_rect(target, line, p.accent_hover);
+            fill_rect(target, line, line_color);
         }
     }
 }

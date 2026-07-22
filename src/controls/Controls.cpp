@@ -1,6 +1,7 @@
 #include <nfui/Controls.hpp>
 #include <nfui/Dpi.hpp>
 #include <nfui/Paint.hpp>
+#include <nfui/Clock.hpp>
 
 #include <commctrl.h>
 #include <string>
@@ -9,6 +10,10 @@ namespace nfui {
 
 namespace {
 constexpr UINT ocm_base = WM_USER + 0x1c00;
+
+// CP17: the per-HWND animation timer id. Distinctive so it cannot collide with
+// any leaf/sample timer id. WM_TIMER's wParam carries this id.
+constexpr UINT_PTR anim_timer_event = 0xA017u;
 
 bool control_is_owner_draw(HWND hwnd) noexcept {
     // ListBox owner-draw now supports per-row hover via ListBox::set_hovered_row.
@@ -62,8 +67,53 @@ bool Control::create_native(std::wstring_view class_name, const ControlCreatePar
 
 void Control::detach_destroyed_hwnd(HWND hwnd) noexcept {
     if (hwnd_.hwnd() == hwnd) {
+        // CP17: kill any animation timer before releasing the HWND. The HWND is
+        // still valid at WM_NCDESTROY so KillTimer is safe; after release the
+        // timer could fire into a dead window.
+        if (anim_timer_ != 0) {
+            KillTimer(hwnd, anim_timer_event);
+            anim_timer_ = 0;
+        }
         static_cast<void>(hwnd_.release());
     }
+}
+
+// CP17: default clock is a stateless function-local Win32Clock — a utility,
+// not a mutable singleton (cf. theme_palette / dpi_of). Injected via set_clock
+// for tests.
+unsigned long long Control::clock_now_ms() const noexcept {
+    if (clock_ != nullptr) {
+        return clock_->now_ms();
+    }
+    static Win32Clock default_clock{};
+    return default_clock.now_ms();
+}
+
+void Control::start_anim_timer(unsigned int period_ms) noexcept {
+    if (hwnd() == nullptr) return;
+    if (period_ms == 0) period_ms = 16;
+    if (anim_timer_ == 0) {
+        // SetTimer returns the id; we pass our fixed id so WM_TIMER's wParam
+        // matches anim_timer_event. Re-arm with the same id if already running.
+        anim_timer_ = SetTimer(hwnd(), anim_timer_event, period_ms, nullptr);
+    } else {
+        SetTimer(hwnd(), anim_timer_event, period_ms, nullptr);
+    }
+}
+
+void Control::stop_anim_timer() noexcept {
+    if (anim_timer_ != 0 && hwnd() != nullptr) {
+        KillTimer(hwnd(), anim_timer_event);
+    }
+    anim_timer_ = 0;
+}
+
+bool Control::system_animations_enabled() noexcept {
+    BOOL enabled = TRUE;
+    if (SystemParametersInfoW(SPI_GETCLIENTAREAANIMATION, 0, &enabled, 0)) {
+        return enabled != FALSE;
+    }
+    return true; // fall back to "animate" if the query fails
 }
 
 LRESULT CALLBACK Control::subclass_proc(HWND hwnd,
@@ -137,6 +187,18 @@ LRESULT CALLBACK Control::subclass_proc(HWND hwnd,
     case WM_LBUTTONUP: {
         if (control != nullptr) {
             control->hover_state_.on_lbutton_up();
+        }
+        break;
+    }
+    case WM_TIMER: {
+        // CP17: per-HWND animation tick. Only our own timer event is dispatched
+        // to the leaf; any other timer id (leaf/sample-owned) falls through to
+        // DefSubclassProc. The leaf advances its animation state and requests
+        // an async repaint (InvalidateRect, NOT UpdateWindow) so on_paint is
+        // never re-entered synchronously inside this tick.
+        if (control != nullptr && wparam == anim_timer_event) {
+            control->on_animation_tick(control->clock_now_ms());
+            return 0;
         }
         break;
     }

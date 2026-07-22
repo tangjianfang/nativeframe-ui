@@ -1,5 +1,8 @@
 #include <nfui/NativeFrameUI.hpp>
 #include <nfui/HoverState.hpp>
+#include <nfui/Easing.hpp>
+#include <nfui/Clock.hpp>
+#include <nfui/Animation.hpp>
 
 #include "NativeFrameUIResource.h"
 
@@ -13,6 +16,7 @@
 #include <iostream>
 #include <string_view>
 #include <vector>
+#include <cstdlib>
 
 namespace {
 
@@ -1100,6 +1104,96 @@ int wmain() {
             }
             DestroyWindow(msg_hwnd);
         }
+    }
+
+    {
+        using namespace nfui;
+        // CP17: pure animation primitives. No HWND, no message loop — the
+        // ColorAnimation state machine is driven by a fake clock so the
+        // synchronous test harness covers the same logic the WM_TIMER arm
+        // drives in production.
+
+        // Easing curves: endpoints exact, monotonic in between.
+        ok = expect(ease_linear(0.0f) == 0.0f && ease_linear(1.0f) == 1.0f,
+                    L"ease_linear endpoints exact") && ok;
+        ok = expect(ease_out_cubic(0.0f) == 0.0f && ease_out_cubic(1.0f) == 1.0f,
+                    L"ease_out_cubic endpoints exact") && ok;
+        ok = expect(ease_in_out_cubic(0.0f) == 0.0f && ease_in_out_cubic(1.0f) == 1.0f,
+                    L"ease_in_out_cubic endpoints exact") && ok;
+        ok = expect(ease_out_quint(0.0f) == 0.0f && ease_out_quint(1.0f) == 1.0f,
+                    L"ease_out_quint endpoints exact") && ok;
+        // Clamping: out-of-range t snaps to the [0,1] endpoints.
+        ok = expect(ease_out_cubic(-1.0f) == 0.0f && ease_out_cubic(2.0f) == 1.0f,
+                    L"ease curves clamp out-of-range t") && ok;
+        // ease_out_cubic is monotonic non-decreasing on a 5-step sample.
+        bool mono = true;
+        float prev = ease_out_cubic(0.0f);
+        for (int i = 1; i <= 5; ++i) {
+            const float v = ease_out_cubic(static_cast<float>(i) / 5.0f);
+            if (v < prev) mono = false;
+            prev = v;
+        }
+        ok = expect(mono, L"ease_out_cubic is monotonic") && ok;
+
+        // lerp_color: endpoints exact, midpoint ~RGB(127,127,127).
+        const Color black{RGB(0, 0, 0)};
+        const Color white{RGB(255, 255, 255)};
+        ok = expect(lerp_color(black, white, 0.0f).rgb == black.rgb,
+                    L"lerp_color t=0 returns a") && ok;
+        ok = expect(lerp_color(black, white, 1.0f).rgb == white.rgb,
+                    L"lerp_color t=1 returns b") && ok;
+        const Color mid = lerp_color(black, white, 0.5f);
+        ok = expect(GetRValue(mid.rgb) >= 126 && GetRValue(mid.rgb) <= 129 &&
+                    GetGValue(mid.rgb) >= 126 && GetGValue(mid.rgb) <= 129 &&
+                    GetBValue(mid.rgb) >= 126 && GetBValue(mid.rgb) <= 129,
+                    L"lerp_color t=0.5 is the channel midpoint") && ok;
+
+        // lerp_palette: every field is the midpoint between dark and light.
+        const ThemePalette pd = theme_palette(ThemeMode::dark);
+        const ThemePalette pl = theme_palette(ThemeMode::light);
+        const ThemePalette pm = lerp_palette(pd, pl, 0.5f);
+        auto near_mid = [](COLORREF a, COLORREF b, COLORREF m) {
+            const int ra = GetRValue(a), rb = GetRValue(b), rm = GetRValue(m);
+            const int ga = GetGValue(a), gb = GetGValue(b), gm = GetGValue(m);
+            const int ba = GetBValue(a), bb = GetBValue(b), bm = GetBValue(m);
+            return std::abs(rm - (ra + rb) / 2) <= 1 &&
+                   std::abs(gm - (ga + gb) / 2) <= 1 &&
+                   std::abs(bm - (ba + bb) / 2) <= 1;
+        };
+        ok = expect(near_mid(pd.background.rgb, pl.background.rgb, pm.background.rgb),
+                    L"lerp_palette background is midpoint") && ok;
+        ok = expect(near_mid(pd.accent.rgb, pl.accent.rgb, pm.accent.rgb),
+                    L"lerp_palette accent is midpoint") && ok;
+        ok = expect(near_mid(pd.text.rgb, pl.text.rgb, pm.text.rgb),
+                    L"lerp_palette text is midpoint") && ok;
+        ok = expect(lerp_palette(pd, pl, 0.0f).background.rgb == pd.background.rgb,
+                    L"lerp_palette t=0 returns a") && ok;
+        ok = expect(lerp_palette(pd, pl, 1.0f).background.rgb == pl.background.rgb,
+                    L"lerp_palette t=1 returns b") && ok;
+
+        // Win32Clock: non-decreasing across two reads.
+        Win32Clock clock;
+        const unsigned long long t0 = clock.now_ms();
+        const unsigned long long t1 = clock.now_ms();
+        ok = expect(t1 >= t0, L"Win32Clock now_ms is non-decreasing") && ok;
+
+        // ColorAnimation: begin / sample / deactivation / cancel.
+        ColorAnimation anim;
+        ok = expect(!anim.is_active(), L"ColorAnimation starts inactive") && ok;
+        anim.begin(black, white, 1000, 120);
+        ok = expect(anim.is_active(), L"ColorAnimation active after begin") && ok;
+        ok = expect(anim.sample(1000, ease_out_cubic).rgb == black.rgb,
+                    L"ColorAnimation sample at start returns from") && ok;
+        ok = expect(anim.is_active(), L"ColorAnimation still active at t=0") && ok;
+        const Color half = anim.sample(1060, ease_out_cubic);  // t=0.5
+        ok = expect(GetRValue(half.rgb) > 0 && GetRValue(half.rgb) < 255,
+                    L"ColorAnimation mid-sample is interpolated") && ok;
+        ok = expect(anim.sample(1121, ease_out_cubic).rgb == white.rgb,
+                    L"ColorAnimation sample past duration snaps to to") && ok;
+        ok = expect(!anim.is_active(), L"ColorAnimation deactivates after duration") && ok;
+        anim.begin(black, white, 2000, 100);
+        anim.cancel();
+        ok = expect(!anim.is_active(), L"ColorAnimation cancel deactivates") && ok;
     }
 
     return ok ? 0 : 1;

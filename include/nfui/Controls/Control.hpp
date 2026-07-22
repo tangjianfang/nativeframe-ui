@@ -4,6 +4,7 @@
 #include <nfui/Theme.hpp>
 #include <nfui/Font.hpp>
 #include <nfui/HoverState.hpp>
+#include <nfui/Clock.hpp>
 
 #include <string>
 #include <string_view>
@@ -46,6 +47,14 @@ public:
 
     [[nodiscard]] HWND hwnd() const noexcept;
     [[nodiscard]] bool valid() const noexcept;
+
+    // CP17: honor the system "client-area animation" setting. Returns false
+    // when the user has disabled UI animations (Performance / Visual Effects
+    // → "Animate controls and elements inside windows"); callers should
+    // resolve transitions instantly in that case. Public so Window subclasses
+    // (samples) can query it too, not just Control subclasses. Stateless,
+    // cheap, UI-thread only.
+    [[nodiscard]] static bool system_animations_enabled() noexcept;
 
     // Visual dependencies injected by the owner before paint. Read-only pointers; not owned.
     // Re-injecting a palette is also the control-local palette-change notification:
@@ -92,6 +101,24 @@ protected:
     virtual void on_subclass_mouse_move([[maybe_unused]] LPARAM lparam) noexcept {}
     virtual void on_subclass_mouse_leave() noexcept {}
 
+    // CP17: micro-animation driver. The base owns a per-HWND Win32 timer
+    // (SetTimer/KillTimer) dispatched through a WM_TIMER arm in subclass_proc.
+    // This sidesteps the scheduler-ownership problem (no singleton, no
+    // ApplicationContext): each animating control owns its own OS timer, killed
+    // in detach_destroyed_hwnd (WM_NCDESTROY). Leaves override on_animation_tick
+    // to advance their animation state and InvalidateRect (async — never
+    // UpdateWindow, to avoid re-entering on_paint inside the tick).
+    //
+    // `now_ms` is read through the injectable Clock so the pure animation
+    // logic is testable without a message loop. Tests inject a fake clock;
+    // production leaves the default (a stateless Win32Clock).
+    void set_clock(const Clock* clock) noexcept { clock_ = clock; }
+    [[nodiscard]] unsigned long long clock_now_ms() const noexcept;
+    void start_anim_timer(unsigned int period_ms) noexcept;
+    void stop_anim_timer() noexcept;
+    [[nodiscard]] bool anim_timer_running() const noexcept { return anim_timer_ != 0; }
+    virtual void on_animation_tick([[maybe_unused]] unsigned long long now_ms) noexcept {}
+
 private:
     void detach_destroyed_hwnd(HWND hwnd) noexcept;
     static LRESULT CALLBACK subclass_proc(HWND hwnd, UINT message, WPARAM wparam, LPARAM lparam, UINT_PTR subclass_id, DWORD_PTR ref_data) noexcept;
@@ -101,6 +128,8 @@ private:
     HoverState hover_state_;
     std::wstring caption_;
     OwnedHwnd hwnd_{};
+    const Clock* clock_{nullptr};
+    UINT_PTR anim_timer_{0};
 };
 
 } // namespace nfui

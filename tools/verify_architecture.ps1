@@ -53,11 +53,14 @@ function Get-ModuleName {
         'Application.hpp'     { return 'core' }
         'HoverState.hpp'      { return 'core' }
         'Dialog.hpp'          { return 'core' }
+        'Clock.hpp'           { return 'core' }
+        'Easing.hpp'          { return 'core' }
         'Dpi.hpp'             { return 'dpi' }
         'Theme.hpp'           { return 'theme' }
         'Font.hpp'            { return 'font' }
         'Icon.hpp'            { return 'icon' }
         'Paint.hpp'           { return 'paint' }
+        'Animation.hpp'      { return 'paint' }
         'ResourceContext.hpp' { return 'resource' }
         'Command.hpp'         { return 'command' }
         'Layout.hpp'          { return 'layout' }
