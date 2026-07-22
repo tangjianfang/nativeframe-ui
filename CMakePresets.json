@@ -7,6 +7,15 @@
   },
   "configurePresets": [
     {
+      "name": "base",
+      "displayName": "Shared settings",
+      "hidden": true,
+      "cacheVariables": {
+        "CMAKE_CXX_STANDARD": "20",
+        "CMAKE_CXX_STANDARD_REQUIRED": "ON"
+      }
+    },
+    {
       "name": "x64-debug",
       "displayName": "x64 Debug",
       "generator": "Visual Studio 17 2022",
@@ -18,17 +27,68 @@
       "cacheVariables": {
         "CMAKE_INSTALL_PREFIX": "${sourceDir}/out/install/${presetName}",
         "BUILD_TESTING": "ON"
-      }
+      },
+      "inherits": ["base"]
     },
     {
       "name": "x64-release",
       "displayName": "x64 Release",
-      "inherits": "x64-debug",
+      "generator": "Visual Studio 17 2022",
       "binaryDir": "${sourceDir}/out/build/${presetName}",
+      "architecture": {
+        "value": "x64",
+        "strategy": "external"
+      },
       "cacheVariables": {
         "CMAKE_INSTALL_PREFIX": "${sourceDir}/out/install/${presetName}",
         "BUILD_TESTING": "ON"
-      }
+      },
+      "inherits": ["base"]
+    },
+    {
+      "name": "arm64-debug",
+      "displayName": "ARM64 Debug",
+      "generator": "Visual Studio 17 2022",
+      "toolset": "v143",
+      "binaryDir": "${sourceDir}/out/build/${presetName}",
+      "architecture": {
+        "value": "ARM64",
+        "strategy": "external"
+      },
+      "cacheVariables": {
+        "CMAKE_INSTALL_PREFIX": "${sourceDir}/out/install/${presetName}",
+        "CMAKE_BUILD_TYPE": "Debug",
+        "BUILD_TESTING": "ON"
+      },
+      "inherits": ["base"]
+    },
+    {
+      "name": "clangcl-debug",
+      "displayName": "clang-cl Debug",
+      "generator": "Visual Studio 17 2022",
+      "toolset": "ClangCL",
+      "binaryDir": "${sourceDir}/out/build/${presetName}",
+      "cacheVariables": {
+        "CMAKE_INSTALL_PREFIX": "${sourceDir}/out/install/${presetName}",
+        "CMAKE_BUILD_TYPE": "Debug",
+        "BUILD_TESTING": "ON",
+        "CMAKE_CXX_COMPILER": "clang-cl.exe"
+      },
+      "inherits": ["base"]
+    },
+    {
+      "name": "clangcl-release",
+      "displayName": "clang-cl Release",
+      "generator": "Visual Studio 17 2022",
+      "toolset": "ClangCL",
+      "binaryDir": "${sourceDir}/out/build/${presetName}",
+      "cacheVariables": {
+        "CMAKE_INSTALL_PREFIX": "${sourceDir}/out/install/${presetName}",
+        "CMAKE_BUILD_TYPE": "Release",
+        "BUILD_TESTING": "ON",
+        "CMAKE_CXX_COMPILER": "clang-cl.exe"
+      },
+      "inherits": ["base"]
     }
   ],
   "buildPresets": [
@@ -40,6 +100,21 @@
     {
       "name": "x64-release",
       "configurePreset": "x64-release",
+      "configuration": "Release"
+    },
+    {
+      "name": "arm64-debug",
+      "configurePreset": "arm64-debug",
+      "configuration": "Debug"
+    },
+    {
+      "name": "clangcl-debug",
+      "configurePreset": "clangcl-debug",
+      "configuration": "Debug"
+    },
+    {
+      "name": "clangcl-release",
+      "configurePreset": "clangcl-release",
       "configuration": "Release"
     }
   ],
@@ -55,6 +130,30 @@
     {
       "name": "x64-release",
       "configurePreset": "x64-release",
+      "configuration": "Release",
+      "output": {
+        "outputOnFailure": true
+      }
+    },
+    {
+      "name": "arm64-debug",
+      "configurePreset": "arm64-debug",
+      "configuration": "Debug",
+      "output": {
+        "outputOnFailure": true
+      }
+    },
+    {
+      "name": "clangcl-debug",
+      "configurePreset": "clangcl-debug",
+      "configuration": "Debug",
+      "output": {
+        "outputOnFailure": true
+      }
+    },
+    {
+      "name": "clangcl-release",
+      "configurePreset": "clangcl-release",
       "configuration": "Release",
       "output": {
         "outputOnFailure": true

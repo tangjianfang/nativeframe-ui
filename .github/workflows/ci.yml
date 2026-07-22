@@ -9,11 +9,25 @@ permissions:
 
 jobs:
   build:
-    runs-on: windows-latest
     strategy:
       fail-fast: false
       matrix:
-        preset: [x64-debug, x64-release]
+        include:
+          - preset: x64-debug
+            os: windows-latest
+            experimental: false
+          - preset: x64-release
+            os: windows-latest
+            experimental: false
+          - preset: arm64-debug
+            os: windows-11-arm
+            experimental: true
+          - preset: clangcl-debug
+            os: windows-latest
+            cc: clangcl
+            experimental: false
+    runs-on: ${{ matrix.os }}
+    continue-on-error: ${{ matrix.experimental }}
     steps:
       - name: Check out source
         uses: actions/checkout@v4
