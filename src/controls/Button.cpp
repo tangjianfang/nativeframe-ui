@@ -73,6 +73,30 @@ void Button::on_paint(HDC dc, const PaintState& state) noexcept {
     // frame from the previous palette in the rounded boundary.
     fill_rect(target, paint_bounds, p.background);
     fill_rounded_rect(target, paint_bounds, radius, face, border);
+    // CP9 accessibility: keyboard focus previously reused `accent_hover` for the
+    // border, which is the same colour as mouse-hover — so a tab-focused button
+    // was visually indistinguishable from a hovered one (fails WCAG 2.4.7 Focus
+    // Visible / 2.4.11). Draw a distinct inset ring in `accent_text` (guaranteed
+    // to contrast the accent face per theme design, including the HC palette)
+    // whenever ODS_FOCUS is reflected. The inset rounded rect re-fills the
+    // interior with `face` (no visual change) and its border becomes the ring;
+    // text is drawn afterwards so it stays on top. See
+    // docs/KNOWLEDGE/polish/2026-07-23-cp9-accessibility.md.
+    if (state.focused && state.enabled) {
+        const DpiScale scale(dpi_of(hwnd()));
+        const int inset = scale.logical_to_pixels(3);
+        const RECT ring{
+            paint_bounds.left + inset,
+            paint_bounds.top + inset,
+            paint_bounds.right - inset,
+            paint_bounds.bottom - inset,
+        };
+        if (ring.right > ring.left && ring.bottom > ring.top) {
+            const int ring_radius = radius > inset ? radius - inset : 0;
+            const Color ring_color = style_.focus_ring_color.value_or(p.accent_text);
+            fill_rounded_rect(target, ring, ring_radius, face, ring_color);
+        }
+    }
     FontCache* cache = fonts();
     HFONT font = nullptr;
     if (cache != nullptr) {
