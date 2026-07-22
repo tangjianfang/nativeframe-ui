@@ -14,7 +14,8 @@ void ProgressBar::on_paint(HDC dc, const PaintState& state) noexcept {
     const ThemePalette* pal = palette();
     const ThemePalette& p = pal ? *pal : theme_palette(ThemeMode::light);
     const Color track = style_.surface_brush.value_or(p.surface);
-    const Color fill  = style_.bar_color.value_or(p.accent);
+    const Color fill  = state.enabled ? style_.bar_color.value_or(p.accent)
+                                      : alpha_blend(p.text_secondary, p.surface, 0.55f);
     const RECT& b = state.bounds;
     PBRANGE range{};
     // PBM_GETRANGE fills the low word of wParam via return; lParam is the PPBRANGE.

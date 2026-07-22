@@ -15,7 +15,12 @@ bool ListView::create(const ControlCreateParams& params) noexcept {
             SendMessageW(hwnd(), WM_SETFONT, reinterpret_cast<WPARAM>(f), FALSE);
         }
     }
-    ListView_SetExtendedListViewStyle(hwnd(), LVS_EX_FULLROWSELECT);
+// CP2: chain on_palette_changed so the native empty-area background and
+    // base text colour agree with the palette at create time, not just on
+    // subsequent palette swaps. CP3: enable LVS_EX_TRACKSELECT so the OS
+    // delivers CDIS_HOT for hover rows; our custom-draw item handler reads
+    // that bit to paint the hover background.
+    ListView_SetExtendedListViewStyle(hwnd(), LVS_EX_FULLROWSELECT | LVS_EX_TRACKSELECT);
     on_palette_changed();
     return true;
 }
@@ -40,12 +45,13 @@ LRESULT ListView::on_custom_draw_item(NMLVCUSTOMDRAW* cd) noexcept {
     const ThemePalette* pal = palette();
     const ThemePalette& p = pal ? *pal : theme_palette(ThemeMode::light);
     const bool selected = (cd->nmcd.uItemState & CDIS_SELECTED) != 0;
+    const bool hot = (cd->nmcd.uItemState & CDIS_HOT) != 0;
     cd->clrText = selected
         ? style_.selected_foreground.value_or(p.selection_text).rgb
         : style_.row_foreground.value_or(p.text).rgb;
     cd->clrTextBk = selected
         ? style_.selected_background.value_or(p.selection).rgb
-        : style_.row_background.value_or(p.surface).rgb;
+        : (hot ? p.surface_hover : style_.row_background.value_or(p.surface)).rgb;
     return CDRF_DODEFAULT;
 }
 

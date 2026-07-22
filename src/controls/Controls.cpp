@@ -185,6 +185,10 @@ LRESULT CALLBACK Control::subclass_proc(HWND hwnd,
                 return CDRF_NOTIFYITEMDRAW;
             }
             if (cd->nmcd.dwDrawStage == CDDS_ITEMPREPAINT) {
+                const LRESULT custom = control ? control->on_custom_draw_item(cd) : CDRF_DODEFAULT;
+                if (custom != CDRF_DODEFAULT) {
+                    return custom;
+                }
                 const ThemePalette* pal = control ? control->palette() : nullptr;
                 const ThemePalette& p = pal ? *pal : theme_palette(ThemeMode::light);
                 const bool selected = (cd->nmcd.uItemState & CDIS_SELECTED) != 0;

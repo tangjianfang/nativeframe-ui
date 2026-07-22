@@ -15,7 +15,9 @@ void Button::on_paint(HDC dc, const PaintState& state) noexcept {
     const ThemePalette& p = palette_ptr ? *palette_ptr : theme_palette(ThemeMode::light);
     const int theme_radius = theme_metrics().corner_radius_control;
     const int radius = style_.corner_radius.value_or(theme_radius);
-    const Color border = style_.border_color.value_or(p.border);
+    const Color border = state.focused
+        ? style_.border_color.value_or(p.accent_hover)
+        : style_.border_color.value_or(p.border);
     Color face = p.accent;
     Color text_color = p.accent_text;
     if (!state.enabled) {
@@ -24,7 +26,10 @@ void Button::on_paint(HDC dc, const PaintState& state) noexcept {
         // docs/KNOWLEDGE/polish/2026-07-22-button-disabled-state-color.md.
         face = alpha_blend(p.border, p.surface, 0.12f);
         text_color = p.text_secondary;
-    } else if (state.pressed || state.hover) {
+    } else if (state.pressed) {
+        // Keep pressed visually distinct from hover without adding a palette token.
+        face = alpha_blend(p.accent, p.background, 0.82f);
+    } else if (state.hover) {
         face = p.accent_hover;
     }
     const RECT& b = state.bounds;
