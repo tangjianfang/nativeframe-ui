@@ -3,6 +3,7 @@
 #include <nfui/Easing.hpp>
 #include <nfui/Clock.hpp>
 #include <nfui/Animation.hpp>
+#include <nfui/VectorIcon.hpp>
 
 #include "NativeFrameUIResource.h"
 
@@ -1194,6 +1195,57 @@ int wmain() {
         anim.begin(black, white, 2000, 100);
         anim.cancel();
         ok = expect(!anim.is_active(), L"ColorAnimation cancel deactivates") && ok;
+    }
+
+    {
+        // CP18: vector icon system. Every glyph must render into a MemoryDC
+        // without crashing and leave at least one non-background pixel inside
+        // its cell (the sentinel-pixel idiom from the MemoryDC round-trip
+        // test above). IconKind::none and a degenerate rect must be no-ops.
+        using namespace nfui;
+        const Color bg{RGB(0, 0, 0)};
+        const Color fg{RGB(255, 255, 255)};
+        const IconKind kinds[] = {
+            IconKind::chevron_down, IconKind::chevron_up,
+            IconKind::chevron_left, IconKind::chevron_right,
+            IconKind::check, IconKind::close, IconKind::plus, IconKind::minus,
+            IconKind::search, IconKind::gear, IconKind::info,
+            IconKind::warning, IconKind::dot, IconKind::hamburger,
+        };
+        HDC screen = GetDC(nullptr);
+        bool all_rendered = true;
+        bool none_was_noop = false;
+        for (IconKind k : kinds) {
+            RECT rc{0, 0, 48, 48};
+            MemoryDC mem(screen, rc);
+            HDC target = mem.valid() ? mem.dc() : screen;
+            RECT cell{0, 0, 48, 48};
+            fill_rect(target, cell, bg);
+            draw_vector_icon(target, k, cell, fg, 2);
+            // Scan the cell for at least one foreground pixel.
+            bool found = false;
+            for (int y = 0; y < 48 && !found; ++y) {
+                for (int x = 0; x < 48 && !found; ++x) {
+                    if (GetPixel(target, x, y) == fg.rgb) found = true;
+                }
+            }
+            if (!found) all_rendered = false;
+        }
+        // IconKind::none must leave the cell untouched (all background).
+        {
+            RECT rc{0, 0, 48, 48};
+            MemoryDC mem(screen, rc);
+            HDC target = mem.valid() ? mem.dc() : screen;
+            fill_rect(target, RECT{0, 0, 48, 48}, bg);
+            draw_vector_icon(target, IconKind::none, RECT{0, 0, 48, 48}, fg, 2);
+            none_was_noop = (GetPixel(target, 24, 24) == bg.rgb);
+        }
+        // Degenerate rect must be a no-op (no crash, no paint).
+        draw_vector_icon(screen, IconKind::check, RECT{5, 5, 5, 5}, fg, 2);
+        ReleaseDC(nullptr, screen);
+        ok = expect(all_rendered, L"every vector glyph paints at least one foreground pixel") && ok;
+        ok = expect(none_was_noop, L"IconKind::none paints nothing") && ok;
+        ok = expect(true, L"vector icon degenerate-rect path completes without crash") && ok;
     }
 
     return ok ? 0 : 1;

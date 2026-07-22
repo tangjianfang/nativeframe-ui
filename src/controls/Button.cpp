@@ -166,7 +166,54 @@ void Button::on_paint(HDC dc, const PaintState& state) noexcept {
             ? cache->semibold(dpi, font_pt::ui)
             : cache->regular(dpi, font_pt::ui);
     }
-    draw_text(target, paint_bounds, caption(), font, text_color,
+    // CP18: optional leading vector glyph. The icon + gap + caption are
+    // centred as a single unit inside the button (measuring the caption width
+    // first) so a short label like "Add" does not sit right-of-centre. When
+    // the group is wider than the button, the icon anchors at the left pad
+    // and the caption ellipsises in the remaining space (no clipping). The
+    // glyph colour defaults to the caption colour so it tracks disabled /
+    // HC-pressed the same way the text does.
+    RECT text_bounds = paint_bounds;
+    const IconKind icon_kind = style_.icon.value_or(IconKind::none);
+    if (icon_kind != IconKind::none) {
+        const DpiScale scale(dpi_of(hwnd()));
+        const int cell = scale.logical_to_pixels(16);
+        const int pad = scale.logical_to_pixels(6);
+        const int gap = scale.logical_to_pixels(4);
+        const int cell_y = paint_bounds.top + (paint_bounds.bottom - paint_bounds.top - cell) / 2;
+        // Measure the caption with the selected font so the icon+text pair
+        // can be centred as a unit.
+        int text_w = 0;
+        if (font != nullptr) {
+            const HGDIOBJ old = SelectObject(target, font);
+            SIZE sz{};
+            const std::size_t len = caption().size();
+            const int n = (len <= static_cast<std::size_t>(0x7fffffff))
+                ? static_cast<int>(len) : 0x7fffffff;
+            if (GetTextExtentPoint32W(target, caption().data(), n, &sz)) {
+                text_w = static_cast<int>(sz.cx);
+            }
+            if (old && old != HGDI_ERROR) SelectObject(target, old);
+        }
+        const int btn_w = paint_bounds.right - paint_bounds.left;
+        const int group_w = cell + gap + text_w;
+        const bool group_fits = (group_w + 2 * pad) <= btn_w;
+        const int icon_x = group_fits
+            ? paint_bounds.left + (btn_w - group_w) / 2   // centre the group
+            : paint_bounds.left + pad;                    // too wide: anchor left
+        const RECT glyph{ icon_x, cell_y, icon_x + cell, cell_y + cell };
+        const Color icon_col = style_.icon_color.value_or(text_color);
+        draw_vector_icon(target, icon_kind, glyph, icon_col,
+                         scale.logical_to_pixels(2));
+        text_bounds.left = glyph.right + gap;
+        if (group_fits) {
+            // Tight rect right after the glyph so the caption sits flush with
+            // it and the pair reads as one centred unit.
+            text_bounds.right = text_bounds.left + text_w;
+        }
+        if (text_bounds.left > text_bounds.right) text_bounds.left = text_bounds.right;
+    }
+    draw_text(target, text_bounds, caption(), font, text_color,
               DT_CENTER | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS);
 }
 

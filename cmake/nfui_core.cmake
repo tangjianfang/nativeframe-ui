@@ -5,6 +5,7 @@ add_library(nfui_core STATIC
     src/font/Font.cpp
     src/icon/Icon.cpp
     src/paint/Paint.cpp
+    src/paint/VectorIcon.cpp
     src/persistence/Persistence.cpp
     src/resource/ResourceContext.cpp
 )

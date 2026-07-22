@@ -1,6 +1,7 @@
 #include <nfui/Controls/IconView.hpp>
 #include <nfui/Dpi.hpp>
 #include <nfui/Paint.hpp>
+#include <nfui/VectorIcon.hpp>
 
 namespace nfui {
 
@@ -17,6 +18,14 @@ bool IconView::create(const ControlCreateParams& params) noexcept {
 
 void IconView::set_icon(HICON icon) noexcept {
     icon_ = icon;
+    if (hwnd() != nullptr) {
+        InvalidateRect(hwnd(), nullptr, FALSE);
+    }
+}
+
+void IconView::set_glyph(IconKind kind, Color color) noexcept {
+    glyph_ = kind;
+    glyph_color_ = color;
     if (hwnd() != nullptr) {
         InvalidateRect(hwnd(), nullptr, FALSE);
     }
@@ -44,7 +53,7 @@ void IconView::on_paint(HDC dc, const PaintState& state) noexcept {
     const Color bg = style_.background.value_or(p.background);
     fill_rect(target, paint_bounds, bg);
 
-    if (icon_ == nullptr) return;
+    if (glyph_ == IconKind::none && icon_ == nullptr) return;
 
     // Determine the draw size. With no style set we preserve the historical
     // stretch-to-fill behaviour. The opt-in style fields switch to fixed-size
@@ -73,6 +82,23 @@ void IconView::on_paint(HDC dc, const PaintState& state) noexcept {
 
     const int ox = base_x + pad + (inner_w - draw_w) / 2;
     const int oy = base_y + pad + (inner_h - draw_h) / 2;
+
+    // CP18: vector glyph mode takes priority over the raster HICON when set.
+    // The glyph is drawn into the same centred square the raster path uses,
+    // so the two modes are interchangeable without a layout shift. Disabled
+    // glyphs are dimmed via the established alpha_blend → background pattern
+    // (cf. ComboBox arrow) since GDI primitives have no DST_ICON|DSS_DISABLED
+    // equivalent.
+    if (glyph_ != IconKind::none) {
+        const bool enabled = state.enabled && (IsWindowEnabled(hwnd()) != FALSE);
+        const Color glyph_color = enabled
+            ? glyph_color_
+            : alpha_blend(glyph_color_, bg, 0.55f);
+        const RECT cell{ ox, oy, ox + draw_w, oy + draw_h };
+        draw_vector_icon(target, glyph_, cell, glyph_color,
+                         scale.logical_to_pixels(2));
+        return;
+    }
 
     // SS_OWNERDRAW statics do not reliably report ODS_DISABLED, so consult the
     // authoritative window state as well as the reflected PaintState.

@@ -2,6 +2,7 @@
 
 #include <nfui/Dpi.hpp>
 #include <nfui/Paint.hpp>
+#include <nfui/VectorIcon.hpp>
 
 #include <algorithm>
 
@@ -123,15 +124,21 @@ void ComboBox::paint_chrome() noexcept {
 
         const int center_x = (button.left + button.right) / 2;
         const int center_y = (button.top + button.bottom) / 2;
-        const int size = std::max(2, dpi_of(hwnd()) / 32);
-        const POINT arrow[] = {
-            {center_x - size, center_y - 1},
-            {center_x + size, center_y - 1},
-            {center_x, center_y + size},
+        // CP18: draw the dropdown chevron through the vector icon system
+        // instead of a hand-rolled triangle. A 16-logical-px cell matches the
+        // icon size used by Button, so the chevron reads consistent across
+        // the whole chrome and at any DPI.
+        const DpiScale scale(dpi_of(hwnd()));
+        const int cell = scale.logical_to_pixels(16);
+        const RECT glyph{
+            center_x - cell / 2,
+            center_y - cell / 2,
+            center_x - cell / 2 + cell,
+            center_y - cell / 2 + cell,
         };
         const Color arrow_color = enabled ? p.text_secondary :
             alpha_blend(p.text_secondary, p.background, 0.55f);
-        fill_polygon(dc, arrow, 3, arrow_color, arrow_color);
+        draw_vector_icon(dc, IconKind::chevron_down, glyph, arrow_color, 1);
     }
     ReleaseDC(hwnd(), dc);
 }
