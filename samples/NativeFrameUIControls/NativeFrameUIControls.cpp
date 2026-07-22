@@ -316,8 +316,12 @@ private:
         tooltip_style.chrome_bg   = palette_.surface;
         tooltip_.set_style(tooltip_style);
         if (tooltip_.hwnd() != nullptr) {
-            SendMessageW(tooltip_.hwnd(), TTM_SETTIPTEXTCOLOR, 0, palette_.text.rgb);
-            SendMessageW(tooltip_.hwnd(), TTM_SETTIPBKCOLOR,   0, palette_.surface.rgb);
+            // CP6: Win32 expects COLORREF in **wParam** (lParam reserved,
+            // must be zero). The historical bug here used lParam and was a
+            // no-op against ComCtl32; fix is mirrored from src/controls/
+            // Tooltip.cpp so live runtime verification matches the lib path.
+            SendMessageW(tooltip_.hwnd(), TTM_SETTIPTEXTCOLOR, palette_.text.rgb,    0);
+            SendMessageW(tooltip_.hwnd(), TTM_SETTIPBKCOLOR,   palette_.surface.rgb, 0);
         }
         SetWindowTextW(theme_toggle_.hwnd(),
                        mode_ == nfui::ThemeMode::dark ? L"Switch to light" : L"Switch to dark");
