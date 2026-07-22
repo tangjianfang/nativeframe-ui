@@ -6,6 +6,8 @@ namespace nfui {
 
 namespace {
 Color to_color(COLORREF c) noexcept { return Color{c}; }
+
+int clamp_byte(int v) noexcept { return v < 0 ? 0 : (v > 255 ? 255 : v); }
 }
 
 ThemePalette theme_palette(ThemeMode mode) noexcept {
@@ -106,6 +108,41 @@ bool is_high_contrast(const ThemePalette& p) noexcept {
     const double fg_lum = lum(p.text.rgb);
     const double acc_lum = lum(p.accent.rgb);
     return bg_lum <= 0.05 && fg_lum >= 0.30 && acc_lum >= 0.50;
+}
+
+// CP17: straight per-channel lerp. t is clamped to [0,1] so callers can pass a
+// raw eased value. Lives in the theme layer (with Color) so lerp_palette below
+// does not pull in paint. Paint's alpha_blend composites src over dst; this
+// does not.
+Color lerp_color(Color a, Color b, float t) noexcept {
+    if (!(t > 0.0f)) return a;
+    if (t >= 1.0f) return b;
+    auto ch = [t](int va, int vb) { return clamp_byte(static_cast<int>(va + (vb - va) * t)); };
+    return Color{RGB(ch(GetRValue(a.rgb), GetRValue(b.rgb)),
+                  ch(GetGValue(a.rgb), GetGValue(b.rgb)),
+                  ch(GetBValue(a.rgb), GetBValue(b.rgb)))};
+}
+
+// CP17: per-field palette cross-fade. Every Color field is lerped straight
+// (no alpha compositing). t is clamped by lerp_color so a raw eased t is fine.
+ThemePalette lerp_palette(const ThemePalette& a, const ThemePalette& b, float t) noexcept {
+    ThemePalette out;
+    out.background     = lerp_color(a.background,     b.background,     t);
+    out.surface        = lerp_color(a.surface,        b.surface,        t);
+    out.surface_hover  = lerp_color(a.surface_hover,  b.surface_hover,  t);
+    out.border         = lerp_color(a.border,         b.border,         t);
+    out.text           = lerp_color(a.text,           b.text,           t);
+    out.text_secondary = lerp_color(a.text_secondary, b.text_secondary, t);
+    out.accent         = lerp_color(a.accent,         b.accent,         t);
+    out.accent_hover   = lerp_color(a.accent_hover,   b.accent_hover,   t);
+    out.accent_text    = lerp_color(a.accent_text,    b.accent_text,    t);
+    out.selection      = lerp_color(a.selection,      b.selection,      t);
+    out.selection_text = lerp_color(a.selection_text, b.selection_text, t);
+    out.danger         = lerp_color(a.danger,         b.danger,         t);
+    out.success        = lerp_color(a.success,        b.success,        t);
+    out.warning        = lerp_color(a.warning,        b.warning,        t);
+    out.shadow         = lerp_color(a.shadow,         b.shadow,         t);
+    return out;
 }
 
 } // namespace nfui

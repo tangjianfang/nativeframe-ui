@@ -1,6 +1,7 @@
 #include <nfui/Controls/Button.hpp>
 #include <nfui/Dpi.hpp>
 #include <nfui/Paint.hpp>
+#include <nfui/Easing.hpp>
 
 namespace nfui {
 
@@ -16,12 +17,69 @@ bool Button::create(const ControlCreateParams& params) noexcept {
     return create_native(L"BUTTON", owner_params, BS_OWNERDRAW);
 }
 
+// CP17: discrete face for a state. Used both to seed the cross-fade endpoints
+// (from = face_for(previous hover), to = face_for(current hover)) and as the
+// fallback when animation is suppressed. Mirrors the per-state face logic the
+// paint path used before CP17, factored out so the transition detector and the
+// paint path cannot diverge.
+Color Button::face_for(const PaintState& state, const ThemePalette& p, bool hc) const noexcept {
+    if (!state.enabled) {
+        // CP10B: HC disabled lifts to surface_hover; standard disabled is a
+        // 12% border→surface tint (WCAG AA vs text_secondary).
+        return hc ? p.surface_hover : alpha_blend(p.border, p.surface, 0.12f);
+    }
+    if (state.pressed) {
+        // CP10B: HC pressed inverts to accent_text; standard pressed is an 82%
+        // accent→background tint.
+        return hc ? p.accent_text : alpha_blend(p.accent, p.background, 0.82f);
+    }
+    if (state.hover) {
+        return p.accent_hover;
+    }
+    return p.accent;
+}
+
 void Button::on_paint(HDC dc, const PaintState& state) noexcept {
     const ThemePalette* palette_ptr = palette();
     const ThemePalette& p = palette_ptr ? *palette_ptr : theme_palette(ThemeMode::light);
     const int theme_radius = theme_metrics().corner_radius_control;
     const int radius = style_.corner_radius.value_or(theme_radius);
     const bool hc = is_high_contrast(p);
+    // CP17: the hover cross-fade only runs on the enabled, non-pressed face
+    // (rest ↔ hover). Pressed / disabled are anchor states that must read
+    // at-a-glance (CP3), so they snap. HC and the system "animate controls"
+    // setting also suppress the transition.
+    const bool can_anim = !hc && state.enabled && !state.pressed && system_animations_enabled();
+    const Color target_face = face_for(state, p, hc);
+
+    // Seed a cross-fade on a hover transition. The first paint after the flip
+    // samples at t≈0 → the old face, so there is no flash; the animation timer
+    // then repaints the interpolation to the new face. If a fade is already
+    // running (rapid enter/leave), seed `from` from the currently-displayed
+    // color so the reversal is seamless instead of jumping to the previous
+    // endpoint.
+    if (state.hover != last_hover_) {
+        if (can_anim) {
+            PaintState prev = state;
+            prev.hover = last_hover_;
+            const Color from_face = hover_anim_.is_active()
+                ? hover_anim_.sample(clock_now_ms(), ease_out_cubic)
+                : face_for(prev, p, hc);
+            hover_anim_.begin(from_face, target_face, clock_now_ms(), 120);
+            start_anim_timer(16);
+        } else {
+            hover_anim_.cancel();
+        }
+        last_hover_ = state.hover;
+    }
+
+    Color face = target_face;
+    if (can_anim && hover_anim_.is_active()) {
+        face = hover_anim_.sample(clock_now_ms(), ease_out_cubic);
+    } else if (!can_anim) {
+        hover_anim_.cancel();
+    }
+
     // CP10B (HC accessibility): in the high-contrast profile the bright accent
     // face swallows a 1px white border (yellow on white = 1.22:1). Use the
     // accent_text (black) as the border when the face is one of the bright
@@ -33,40 +91,13 @@ void Button::on_paint(HDC dc, const PaintState& state) noexcept {
     const Color border = state.focused
         ? style_.border_color.value_or(accent_border)
         : style_.border_color.value_or(p.border);
-    Color face = p.accent;
+    // text_color is constant across rest/hover (accent_text); only the anchor
+    // states (disabled, HC-pressed) change it, and those do not animate.
     Color text_color = p.accent_text;
     if (!state.enabled) {
-        if (hc) {
-            // CP10B (HC accessibility): the standard "tint border 12% toward
-            // surface" disabled face only yields ~RGB(48,48,48) on the HC
-            // palette, which fails 3:1 against the pure-black window. Lift
-            // to surface_hover instead so the button still reads as a
-            // separate element. Reference: docs/KNOWLEDGE/polish/
-            // 2026-07-23-cp10-high-contrast.md.
-            face = p.surface_hover;
-            text_color = p.text_secondary;
-        } else {
-            // WCAG AA: lighten border 12% toward surface for disabled face so
-            // text_secondary clears the 4.5:1 contrast threshold. Reference:
-            // docs/KNOWLEDGE/polish/2026-07-22-button-disabled-state-color.md.
-            face = alpha_blend(p.border, p.surface, 0.12f);
-            text_color = p.text_secondary;
-        }
-    } else if (state.pressed) {
-        if (hc) {
-            // CP10B (HC accessibility): the standard "82% tint accent toward
-            // background" formula collapses to a muddy ~RGB(46,42,11) on HC,
-            // which fails 3:1. Invert the rest face (accent_text + accent
-            // text_color) so the pressed state reads as a deliberate
-            // "sunken" cue distinct from both rest (yellow) and hover (cyan).
-            face = p.accent_text;
-            text_color = p.accent;
-        } else {
-            // Keep pressed visually distinct from hover without adding a palette token.
-            face = alpha_blend(p.accent, p.background, 0.82f);
-        }
-    } else if (state.hover) {
-        face = p.accent_hover;
+        text_color = p.text_secondary;
+    } else if (state.pressed && hc) {
+        text_color = p.accent;
     }
     const RECT& b = state.bounds;
     MemoryDC mem(dc, b);
@@ -81,7 +112,8 @@ void Button::on_paint(HDC dc, const PaintState& state) noexcept {
     // CP16: rest and hover faces get a gentle vertical gradient so the
     // button reads as a 3D card with light from above. Pressed / disabled
     // stay flat (CP3 decision record: muted/anchor states need a single
-    // tone so they read clearly at small sizes). HC stays flat too.
+    // tone so they read clearly at small sizes). HC stays flat too. The
+    // CP17 interpolated face flows straight into the gradient endpoints.
     const bool use_gradient = !hc && (state.enabled) && !state.pressed;
     if (use_gradient) {
         const Color top    = lighten(face, 0.08f);
@@ -136,6 +168,36 @@ void Button::on_paint(HDC dc, const PaintState& state) noexcept {
     }
     draw_text(target, paint_bounds, caption(), font, text_color,
               DT_CENTER | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS);
+}
+
+void Button::on_palette_changed() noexcept {
+    // CP17: ColorAnimation stamped its from/to endpoints from the palette that
+    // was live when the hover transition began. A set_palette() mid-fade (theme
+    // cross-fade, WM_THEMECHANGED) replaces the palette, but the in-flight
+    // animation would keep interpolating the OLD endpoints and then snap to
+    // the new face at completion. Cancel it: the next paint recomputes face
+    // from the live palette, so during a theme cross-fade the hovered button
+    // tracks the interpolated palette smoothly. The animation tick self-stops
+    // on its next fire (it sees !is_active).
+    hover_anim_.cancel();
+}
+
+void Button::on_animation_tick(unsigned long long now_ms) noexcept {
+    if (!hover_anim_.is_active()) {
+        stop_anim_timer();
+        return;
+    }
+    // Advance the machine; sample() clears `active` once the duration elapses.
+    // The visual color is sampled again in on_paint — here we only need to know
+    // whether more frames are required. Async InvalidateRect (never UpdateWindow)
+    // so on_paint is not re-entered synchronously inside this tick.
+    static_cast<void>(hover_anim_.sample(now_ms, ease_out_cubic));
+    if (hwnd() != nullptr) {
+        InvalidateRect(hwnd(), nullptr, FALSE);
+    }
+    if (!hover_anim_.is_active()) {
+        stop_anim_timer();
+    }
 }
 
 } // namespace nfui

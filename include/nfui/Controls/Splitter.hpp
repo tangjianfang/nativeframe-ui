@@ -45,12 +45,16 @@ protected:
     // OS repaints.
     void on_subclass_mouse_move(LPARAM lparam) noexcept override;
     void on_subclass_mouse_leave() noexcept override;
+    // CP17: advance the drag-hit-line pulse phase and request an async repaint
+    // while dragging; stop the timer once drag ends.
+    void on_animation_tick(unsigned long long now_ms) noexcept override;
 private:
     double ratio_{0.5};
     bool dragging_{false};
     bool hovering_{false};
     SplitterOrientation orientation_{SplitterOrientation::Vertical};
     FrameStyle style_{};
+    float pulse_phase_{0.0f};   // CP17: drag hit-line breathing phase
 };
 
 } // namespace nfui

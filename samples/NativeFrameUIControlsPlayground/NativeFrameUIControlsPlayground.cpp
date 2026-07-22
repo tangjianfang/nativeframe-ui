@@ -33,6 +33,7 @@
 // it doubles as a link-coverage smoke exe for the umbrella target.
 
 #include <nfui/NativeFrameUI.hpp>
+#include <nfui/Easing.hpp>
 
 #include "NativeFrameUIResource.h"
 
@@ -77,6 +78,8 @@ constexpr int id_status           = 138;
 constexpr int id_dyn_base = 900;      // dynamic checkbox ids grow from here
 
 constexpr UINT_PTR id_anim_timer = 1;
+constexpr UINT_PTR id_theme_fade_timer = 2;   // CP17: theme cross-fade driver
+constexpr unsigned int kThemeFadeMs = 200;     // CP17: cross-fade duration
 
 constexpr int kNavTileCount   = 5;
 constexpr int kDisabledTile   = 3;    // this tile stays WS_DISABLED to show the disabled state
@@ -218,6 +221,10 @@ protected:
         case WM_TIMER:
             if (wparam == id_anim_timer) {
                 animate();
+                return 0;
+            }
+            if (wparam == id_theme_fade_timer) {
+                step_theme_fade();   // CP17: theme cross-fade tick
                 return 0;
             }
             break;
@@ -467,14 +474,61 @@ private:
     }
 
     // ---- Theme switch ------------------------------------------------------
+    // CP17: cross-fade the palette over kThemeFadeMs instead of an instant
+    // flip. Each tick builds an interpolated palette (lerp_palette) and
+    // re-injects it into every control + the custom-painted window background.
+    // Snaps instantly when either end is the high-contrast profile (HC is an
+    // accessibility chrome — it must not soften) or when the system disables
+    // client-area animation.
     void switch_mode(nfui::ThemeMode mode) noexcept {
         if (mode == mode_) {
             return;
         }
+        const nfui::ThemePalette target = nfui::theme_palette(mode);
+        const bool snap = is_high_contrast(palette_) || is_high_contrast(target)
+                          || !nfui::Control::system_animations_enabled();
         mode_ = mode;
-        palette_ = nfui::theme_palette(mode_);
+        if (snap) {
+            fading_ = false;
+            if (hwnd() != nullptr) KillTimer(hwnd(), id_theme_fade_timer);
+            palette_ = target;
+            apply_palette_to_all();
+            refresh_status();
+            InvalidateRect(hwnd(), nullptr, FALSE);
+            return;
+        }
+        // Begin / restart the fade from the currently-shown palette.
+        palette_from_ = palette_;
+        palette_to_ = target;
+        fade_start_ = GetTickCount64();
+        fading_ = true;
+        if (hwnd() != nullptr) {
+            SetTimer(hwnd(), id_theme_fade_timer, 16, nullptr);
+        }
+        refresh_status();
+    }
 
-        // Re-inject the palette into every live wrapper. No recreate.
+    // One step of the theme cross-fade. Returns true while the fade is still
+    // running (caller keeps the timer armed); false when it has settled.
+    bool step_theme_fade() noexcept {
+        if (!fading_) return false;
+        const unsigned long long elapsed = GetTickCount64() - fade_start_;
+        if (elapsed >= kThemeFadeMs) {
+            palette_ = palette_to_;
+            fading_ = false;
+            apply_palette_to_all();
+            if (hwnd() != nullptr) KillTimer(hwnd(), id_theme_fade_timer);
+            InvalidateRect(hwnd(), nullptr, FALSE);
+            return false;
+        }
+        const float t = static_cast<float>(elapsed) / static_cast<float>(kThemeFadeMs);
+        palette_ = nfui::lerp_palette(palette_from_, palette_to_, nfui::ease_in_out_cubic(t));
+        apply_palette_to_all();
+        InvalidateRect(hwnd(), nullptr, FALSE);
+        return true;
+    }
+
+    void apply_palette_to_all() noexcept {
         for (nfui::Control* c : all_controls()) {
             c->set_palette(&palette_);
         }
@@ -484,16 +538,21 @@ private:
         for (auto& tile : tiles_) {
             InvalidateRect(tile.hwnd, nullptr, FALSE);
         }
-        refresh_status();
-        InvalidateRect(hwnd(), nullptr, FALSE);
     }
 
-    std::array<nfui::Control*, 22> all_controls() noexcept {
+    std::array<nfui::Control*, 24> all_controls() noexcept {
+        // CP17: status_bar_ and gallery_splitter_ are self-paint controls whose
+        // HWNDs are clipped from the parent's update region (WS_CLIPCHILDREN),
+        // so the parent InvalidateRect in step_theme_fade does not reach them.
+        // They must be in this list so apply_palette_to_all() calls set_palette
+        // (which invalidates their own HWND) each fade tick — otherwise they
+        // stay frozen on the pre-fade palette for the whole cross-fade.
         return {&theme_light_, &theme_dark_, &theme_hc_, &add_button_, &remove_button_,
                 &clear_button_, &count_label_, &log_list_, &nav_hint_, &toggle_enabled_button_,
                 &sample_button_, &sample_check_, &sample_radio_a_, &sample_radio_b_, &sample_edit_,
                 &sample_combo_, &gallery_listview_, &gallery_treeview_, &gallery_iconview_,
-                &gallery_tabs_, &gallery_panel_, &gallery_progress_};
+                &gallery_tabs_, &gallery_panel_, &gallery_progress_,
+                &status_bar_, &gallery_splitter_};
     }
 
     // ---- Animation ---------------------------------------------------------
@@ -857,6 +916,7 @@ private:
     void cleanup() noexcept {
         if (hwnd() != nullptr) {
             KillTimer(hwnd(), id_anim_timer);
+            KillTimer(hwnd(), id_theme_fade_timer);   // CP17
         }
         dynamic_.clear();
         if (app_icon_ != nullptr) {
@@ -870,6 +930,11 @@ private:
     nfui::ResourceContext resources_;
     nfui::ThemeMode mode_{nfui::ThemeMode::light};
     nfui::ThemePalette palette_;
+    // CP17: theme cross-fade state.
+    nfui::ThemePalette palette_from_{};
+    nfui::ThemePalette palette_to_{};
+    unsigned long long fade_start_{0};
+    bool fading_{false};
     nfui::FontCache fonts_;
     nfui::DpiScale dpi_{96};
     HICON app_icon_{};

@@ -15,6 +15,13 @@ struct Color {
     COLORREF rgb{};
 };
 
+// CP17: straight per-channel lerp between two colors (a at t=0, b at t=1).
+// Lives with Color (theme layer) rather than in Paint so the theme layer can
+// cross-fade palettes without depending upward on paint. t is clamped to
+// [0,1] so callers can pass a raw eased value. Distinct from paint's
+// alpha_blend, which composites src over dst.
+[[nodiscard]] Color lerp_color(Color a, Color b, float t) noexcept;
+
 struct ThemeTokens {           // back-compat, lighter view
     COLORREF window_background{};
     COLORREF window_text{};
@@ -58,5 +65,11 @@ struct ThemeMetrics {
 // 3:1 UI-component and 7:1 text thresholds that the standard light/dark
 // formulas cannot reach against extreme accents.
 [[nodiscard]] bool is_high_contrast(const ThemePalette& p) noexcept;
+
+// CP17: per-field lerp between two palettes (a at t=0, b at t=1). Used by
+// samples to cross-fade a theme switch over ~200 ms: each tick builds an
+// interpolated palette and hands it to Control::set_palette. Radius/spacing
+// (ThemeMetrics) do not change across themes, so only colors interpolate.
+[[nodiscard]] ThemePalette lerp_palette(const ThemePalette& a, const ThemePalette& b, float t) noexcept;
 
 } // namespace nfui
