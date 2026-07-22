@@ -5,6 +5,7 @@ project(NativeFrameUI VERSION 0.1.0 LANGUAGES CXX RC)
 include(CTest)
 include(cmake/NativeFrameUICompilerOptions.cmake)
 include(cmake/NativeFrameUIResources.cmake)
+include(cmake/NativeFrameUIQualityChecks.cmake)
 
 include(cmake/nfui_core.cmake)
 include(cmake/nfui_command.cmake)
@@ -144,9 +145,5 @@ if(BUILD_TESTING)
     nfui_apply_compiler_options(NativeFrameUISmokeTest)
     nfui_add_resources(NativeFrameUISmokeTest)
     add_test(NAME NativeFrameUISmokeTest COMMAND NativeFrameUISmokeTest)
-    add_test(NAME NativeFrameUIBoundaryCheck
-        COMMAND powershell -NoProfile -ExecutionPolicy Bypass -File
-                ${CMAKE_CURRENT_SOURCE_DIR}/tools/verify_boundaries.ps1
-                -Root ${CMAKE_CURRENT_SOURCE_DIR}
-    )
+    nfui_add_quality_checks()
 endif()

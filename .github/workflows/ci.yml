@@ -8,7 +8,21 @@ permissions:
   contents: read
 
 jobs:
+  boundary:
+    name: Boundary and source-quality checks
+    runs-on: windows-latest
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v4
+      - name: Run boundary checker
+        shell: pwsh
+        run: .\tools\verify_boundaries.ps1 -Root $PWD
+      - name: Run boundary regression tests
+        shell: pwsh
+        run: .\tests\verify_boundaries_tests.ps1 -ScriptPath .\tools\verify_boundaries.ps1
+
   build:
+    needs: boundary
     strategy:
       fail-fast: false
       matrix:
