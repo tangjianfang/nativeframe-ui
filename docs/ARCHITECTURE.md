@@ -45,6 +45,7 @@ nfui_iconview   -> core, theme, nfui_control_base
 nfui_frame      -> core, theme, nfui_control_base   (StatusBar + TabControl + Tooltip +
                                                      ProgressBar + Panel + Splitter)
 command     -> core
+menu        -> core, theme                   (HMENU + MENUINFO chrome)
 persistence -> core, file system, JSON parsing
 sample      -> public modules (typically NativeFrameUI umbrella)
 ```
@@ -68,6 +69,7 @@ core        -> controls
 core        -> command
 layout      -> concrete control implementations
 command     -> Menu / Toolbar / TreeView
+menu        -> controls / command / layout / persistence
 persistence -> HWND / Window objects
 theme       -> business modules
 resource    -> business modules

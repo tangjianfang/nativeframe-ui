@@ -26,7 +26,8 @@ public:
     explicit WorkbenchWindow(HINSTANCE instance)
         : instance_(instance),
           resources_(instance),
-          palette_(nfui::theme_palette(nfui::ThemeMode::light)) {
+          palette_(nfui::theme_palette(nfui::ThemeMode::light)),
+          menu_(palette_) {
         commands_.set_handler(nfui::CommandId{IDM_NFUI_EXIT}, [this](nfui::CommandId) {
             destroy();
             return true;
@@ -83,23 +84,18 @@ public:
             return false;
         }
 
-        HMENU menu = CreateMenu();
-        HMENU file_menu = CreatePopupMenu();
-        AppendMenuW(file_menu, MF_STRING, IDM_NFUI_EXIT, L"E&xit");
-        AppendMenuW(menu, MF_POPUP, reinterpret_cast<UINT_PTR>(file_menu), L"&File");
-        HMENU help_menu = CreatePopupMenu();
-        AppendMenuW(help_menu, MF_STRING, command_about, L"&About");
-        AppendMenuW(menu, MF_POPUP, reinterpret_cast<UINT_PTR>(help_menu), L"&Help");
-        // CP22: the menu / context menu here are intentionally raw native
-        // chrome. The workbench's stated purpose is to exercise the
-        // resource dialog and the framework controls (ListView / TreeView /
-        // TabControl / Edit / StatusBar); driving the menu through a
-        // framework wrapper would be a separate round of work. The chosen
-        // path also keeps the menu surface identical to ResourceGallery's
-        // demo of LoadMenuW so reviewers can compare. To distinguish the
-        // raw menu from themed chrome, every other surface in this window
-        // adopts the shared palette / font cache.
-        SetMenu(hwnd(), menu);
+        // CP24-A: build the menu bar through nfui::Menu so the surface
+        // chrome inherits palette.surface via MENUINFO instead of the
+        // default COLOR_MENU. The fluent builder keeps the construction
+        // readable and frees us from the raw CreateMenu / AppendMenuW
+        // chain. Each popup() returns a builder that targets the new
+        // submenu, so chained .item() calls populate that submenu.
+        menu_.apply_to_bar();
+        (void)menu_.builder(menu_.bar()).popup(L"&File")
+            .item(L"E&xit", IDM_NFUI_EXIT);
+        (void)menu_.builder(menu_.bar()).popup(L"&Help")
+            .item(L"&About", command_about);
+        SetMenu(hwnd(), menu_.bar().get());
 
         // create_children() -> apply_native_fonts() needs a valid DPI before
         // the HFONT cache lookup. Seed it from the live HWND so the initial
@@ -345,10 +341,13 @@ private:
     }
 
     void show_context_menu(int x, int y) {
-        HMENU menu = CreatePopupMenu();
-        AppendMenuW(menu, MF_STRING, context_refresh, L"&Refresh");
-        TrackPopupMenu(menu, TPM_RIGHTBUTTON, x, y, 0, hwnd(), nullptr);
-        DestroyMenu(menu);
+        // CP24-A: build a themed context popup through nfui::Menu so the
+        // menu surface carries the host palette. The popup is local — the
+        // OS dismisses it on click or escape and we destroy it after
+        // TrackPopupMenu returns.
+        nfui::OwnedMenu popup = menu_.make_popup();
+        (void)menu_.builder(popup).item(L"&Refresh", context_refresh);
+        TrackPopupMenu(popup.get(), TPM_RIGHTBUTTON, x, y, 0, hwnd(), nullptr);
     }
 
     void set_status(const wchar_t* text) {
@@ -363,6 +362,7 @@ private:
     nfui::Dialog about_{};
     nfui::ThemePalette palette_;
     nfui::FontCache fonts_;
+    nfui::Menu menu_;
     nfui::Edit search_;
     nfui::TreeView tree_;
     nfui::TabControl tabs_;

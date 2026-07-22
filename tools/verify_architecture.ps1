@@ -65,6 +65,7 @@ function Get-ModuleName {
         'ResourceContext.hpp' { return 'resource' }
         'Command.hpp'         { return 'command' }
         'Layout.hpp'          { return 'layout' }
+        'Menu.hpp'            { return 'menu' }
         'Persistence.hpp'     { return 'persistence' }
         'Charts.hpp'          { return 'charts' }
         'NativeFrameUI.hpp'   { return 'umbrella' }
@@ -88,9 +89,10 @@ $allowed = @{
     'command'     = @('core')
     'layout'      = @('core', 'dpi')
     'persistence' = @('core', 'theme')
+    'menu'        = @('core', 'theme')
     'controls'    = @('core', 'dpi', 'theme', 'font', 'icon', 'paint')
     'charts'      = @('core', 'dpi', 'theme', 'font', 'icon', 'paint', 'controls')
-    'umbrella'    = @('core', 'dpi', 'font', 'icon', 'theme', 'paint', 'resource', 'command', 'layout', 'persistence', 'controls', 'charts')
+    'umbrella'    = @('core', 'dpi', 'font', 'icon', 'theme', 'paint', 'resource', 'command', 'layout', 'menu', 'persistence', 'controls', 'charts')
 }
 
 # Named-forbidden include patterns (matched against the target header relative
@@ -106,6 +108,8 @@ $forbiddenHeaders = @{
     'resource'    = @('Controls/', 'Charts.hpp', 'Command.hpp', 'Layout.hpp', 'Persistence.hpp', 'Theme.hpp')
     # "layout -> concrete control implementations"
     'layout'      = @('Controls/', 'Charts.hpp')
+    # "menu -> business modules (controls / command / persistence)"
+    'menu'        = @('Controls/', 'Charts.hpp', 'Command.hpp', 'Layout.hpp', 'Persistence.hpp')
     # "core -> controls / command" (and the rest of the upper layers)
     'core'        = @('Controls/', 'Charts.hpp', 'Command.hpp', 'Layout.hpp', 'Persistence.hpp')
 }

@@ -64,25 +64,44 @@ LRESULT TreeView::handle_custom_draw(NMTVCUSTOMDRAW* cd) noexcept {
     if (cd == nullptr) return CDRF_DODEFAULT;
     switch (cd->nmcd.dwDrawStage) {
     case CDDS_PREPAINT:
-        return CDRF_NOTIFYITEMDRAW;
+        // CP24-C: also ask for POSTPAINT so the focused row gets a focus
+        // ring drawn AFTER the system paints text (so the ring sits on top
+        // of the selection background, not under it). The ring is a 1-px
+        // stroke-only rectangle inset from the row rect; we use
+        // paint_focus_border to match the focus ring used by other chrome
+        // (Button / Showcase / etc.) so the visual contract is uniform.
+        return CDRF_NOTIFYITEMDRAW | CDRF_NOTIFYPOSTPAINT;
     case CDDS_ITEMPREPAINT: {
         const ThemePalette& p = effective_palette(palette());
         const bool selected = (cd->nmcd.uItemState & CDIS_SELECTED) != 0;
         const bool hot = (cd->nmcd.uItemState & CDIS_HOT) != 0;
         // CP20: row chrome is fully driven by clrText / clrTextBk at PREPAINT.
-        // We deliberately do NOT add CDRF_NOTIFYPOSTPAINT here: a post-paint
-        // fill_rect over the row rectangle would erase the indent guides,
-        // +/- glyph, and item text the system just rendered with those colours.
-        // Normal rows use CLR_NONE so the system honours TVM_SETBKCOLOR
-        // (the empty-area palette colour); selected / hover rows get the
-        // explicit selection / surface_hover colour. (Found and fixed by the
-        // CP20 adversarial review — see docs/KNOWLEDGE/polish/2026-07-23-cp20-listview-treeview-tab-chrome.md.)
+        // We do NOT fill_rect at ITEMPOSTPAINT — that would erase the indent
+        // guides, +/- glyph, and item text the system just rendered. The
+        // CP24-C focus ring is stroke-only via paint_focus_border, so it
+        // draws on top of the system-rendered chrome without overwriting
+        // it. (Found and fixed by the CP20 adversarial review — see
+        // docs/KNOWLEDGE/polish/2026-07-23-cp20-listview-treeview-tab-chrome.md.)
         cd->clrText = selected
             ? style_.selected_foreground.value_or(p.selection_text).rgb
             : style_.row_foreground.value_or(p.text).rgb;
         cd->clrTextBk = selected
             ? style_.selected_background.value_or(p.selection).rgb
             : (hot ? p.surface_hover.rgb : CLR_NONE);
+        return CDRF_DODEFAULT;
+    }
+    case CDDS_ITEMPOSTPAINT: {
+        // CP24-C: draw a stroke-only focus ring around the focused row. We
+        // honour CDIS_FOCUS (the TreeView's "focused item" state, distinct
+        // from CDIS_SELECTED) so a keyboard user can see which row arrow-
+        // keys will activate, even when the control itself is not the
+        // foreground window. Stroke-only via paint_focus_border means the
+        // selection fill + text stay visible underneath.
+        const ThemePalette& p = effective_palette(palette());
+        const bool focused = (cd->nmcd.uItemState & CDIS_FOCUS) != 0;
+        if (focused) {
+            paint_focus_border(cd->nmcd.hdc, cd->nmcd.rc, p.accent, 1);
+        }
         return CDRF_DODEFAULT;
     }
     default:
