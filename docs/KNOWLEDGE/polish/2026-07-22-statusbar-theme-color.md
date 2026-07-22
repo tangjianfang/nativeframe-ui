@@ -4,7 +4,9 @@ date: 2026-07-22
 tags: [statusbar, chrome, theme]
 severity: minor
 effort: small
-status: open
+status: resolved
+related:
+  - 2026-07-23-cp1-statusbar-samples-audit.md
 ---
 
 `SB_SETBKCOLOR` is unsupported in modern ComCtl32 v6 (confirmed via

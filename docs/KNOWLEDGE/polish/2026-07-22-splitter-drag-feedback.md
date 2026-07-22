@@ -4,7 +4,9 @@ date: 2026-07-22
 tags: [splitter, drag, ux]
 severity: minor
 effort: small
-status: open
+status: resolved
+related:
+  - 2026-07-23-cp7-splitter-frame.md
 ---
 
 `nfui::Splitter` currently renders as a static 4px-wide rectangle in

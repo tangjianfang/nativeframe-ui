@@ -4,7 +4,7 @@ date: 2026-07-22
 tags: [combobox, dropdown, ux]
 severity: major
 effort: medium
-status: open
+status: deferred
 ---
 
 CBS_DROPDOWNLIST renders via the OS listbox internally; the V1 ListBox

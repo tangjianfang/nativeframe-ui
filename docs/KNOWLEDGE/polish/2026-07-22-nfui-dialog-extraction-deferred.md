@@ -4,8 +4,10 @@ date: 2026-07-22
 tags: [architecture, build, dialog, deferral]
 severity: minor
 effort: small
-status: open
-related: [P2.6-window-dialog-extraction]
+status: resolved
+related:
+  - 2026-07-23-cp12-dialog-tour-sample.md
+  - P2.6-window-dialog-extraction
 ---
 
 ## Context
@@ -57,3 +59,29 @@ mirroring `Window`):
 - **Do** land this entry so the next person introducing `Dialog` knows
   the target shape and the umbrella slot is reserved.
 - Reopen when `Dialog.hpp` is added (planned V1.5 / modal support).
+
+## Resolution (CP12)
+
+The `Dialog` class landed alongside the rest of the per-component split:
+
+- `include/nfui/Dialog.hpp` (~50 LOC) — `nfui::Dialog` wrapper class with
+  `show_modal` / `show_modeless` / `end_modeless` / `modal_result` /
+  `hwnd` / `valid` accessors.
+- `src/core/Dialog.cpp` (~50 LOC) — `DialogBoxParamW` / `CreateDialogParamW`
+  forwarders plus `OwnedHwnd` RAII for the modeless lifetime.
+- `cmake/nfui_dialog.cmake` — separate static lib depending only on
+  `NativeFrameUI::nfui_core` (mirrors `cmake/nfui_window.cmake`).
+- `CMakeLists.txt:148-159` — added `NativeFrameUI::nfui_dialog` to the
+  umbrella re-export and to the NativeFrameUICharts / DialogTour link
+  surfaces.
+
+The original P2.6 recommendation to mirror `nfui_window.cmake` was followed
+exactly: same per-component shape, same `PUBLIC nfui_core` link, same
+`comctl32`+`user32` consumer dependency (transitively via `nfui_core`).
+The `Dialog` source lives at `src/core/Dialog.cpp` (not a new directory)
+because the foundation layer `nfui_core` already owns application-process
+primitives — `Dialog` is in the same conceptual tier as `Window`.
+
+The first consumer is `samples/NativeFrameUIDialogTour/` (CP12), which
+exercises both modal and modeless paths. CP13 stale-doc cleanup flips
+this entry from `open` to `resolved`.
