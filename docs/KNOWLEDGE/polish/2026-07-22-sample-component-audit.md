@@ -4,7 +4,9 @@ date: 2026-07-22
 tags: [samples, linking, layered-architecture, build-size]
 severity: cosmetic
 effort: small
-status: open
+status: resolved
+related:
+  - 2026-07-23-cp11-sample-per-component-link.md
 ---
 
 This entry audits the four product-growth samples — `NativeFrameUIShowcase`,

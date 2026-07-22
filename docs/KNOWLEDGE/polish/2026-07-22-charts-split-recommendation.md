@@ -4,7 +4,9 @@ date: 2026-07-22
 tags: [charts, architecture, review]
 severity: cosmetic
 effort: large
-status: open
+status: resolved
+related:
+  - 2026-07-23-cp10-architecture-check.md
 ---
 
 ## Current state
