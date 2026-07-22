@@ -3,6 +3,7 @@
 #include <nfui/Application.hpp>
 #include <nfui/Command.hpp>
 #include <nfui/Controls.hpp>
+#include <nfui/Dialog.hpp>
 #include <nfui/Diagnostics.hpp>
 #include <nfui/Dpi.hpp>
 #include <nfui/Font.hpp>

@@ -701,6 +701,50 @@ int wmain() {
     ok = expect(missing_resources.create_dialog(IDD_NFUI_ABOUT, nullptr, test_dialog_proc, 0) == nullptr,
                 L"null module does not create dialogs") && ok;
 
+    {
+        using namespace nfui;
+        // Modeless round-trip via the Dialog wrapper. No modal pump, safe in CI.
+        Dialog about;
+        HWND modeless = about.show_modeless(GetModuleHandleW(nullptr),
+                                            MAKEINTRESOURCEW(IDD_NFUI_ABOUT),
+                                            nullptr,
+                                            test_dialog_proc);
+        ok = expect(modeless != nullptr, L"Dialog::show_modeless returns a non-null HWND") && ok;
+        ok = expect(about.valid() && about.hwnd() == modeless,
+                    L"Dialog exposes the modeless HWND via hwnd()/valid()") && ok;
+        about.end_modeless(IDOK);
+        ok = expect(!about.valid(),
+                    L"Dialog::end_modeless releases the modeless HWND") && ok;
+
+        // Modal round-trip is skip-guarded. DialogBoxParamW blocks on its
+        // own message pump and a human has to dismiss the dialog; in
+        // CI/headless this would hang. Set NONFUI_SKIP_DIALOG=1 to skip.
+        wchar_t skip_buffer[8]{};
+        DWORD skip_length = GetEnvironmentVariableW(L"NONFUI_SKIP_DIALOG",
+                                                     skip_buffer,
+                                                     static_cast<DWORD>(std::size(skip_buffer)));
+        const bool skip_modal = skip_length > 0 && skip_buffer[0] != L'0';
+        if (skip_modal) {
+            ok = expect(true, L"Dialog::show_modal round-trip is skipped via NONFUI_SKIP_DIALOG") && ok;
+        } else {
+            Dialog modal_about;
+            int rc = modal_about.show_modal(GetModuleHandleW(nullptr),
+                                            MAKEINTRESOURCEW(IDD_NFUI_ABOUT),
+                                            nullptr,
+                                            [](HWND hwnd, UINT msg, WPARAM w, LPARAM) -> INT_PTR {
+                if (msg == WM_COMMAND && LOWORD(w) == IDOK) {
+                    EndDialog(hwnd, IDOK);
+                    return TRUE;
+                }
+                if (msg == WM_INITDIALOG) return TRUE;
+                return FALSE;
+            });
+            ok = expect(rc == IDOK, L"Dialog::show_modal returns IDOK when OK clicked") && ok;
+            ok = expect(modal_about.modal_result() == IDOK,
+                        L"Dialog::modal_result exposes the IDOK result") && ok;
+        }
+    }
+
     GuiResourceCounts before = capture_gui_resource_counts();
     HWND window = CreateWindowExW(0, L"STATIC", L"NativeFrame UI smoke test", WS_OVERLAPPEDWINDOW,
                                   CW_USEDEFAULT, CW_USEDEFAULT, 320, 200,
