@@ -8,7 +8,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
-- (placeholder; will list items added between v1.0.0 and v1.1.0)
+- `nfui::TabControl::set_padding(int cx, int cy)` — additive forward of
+  `TCM_SETPADDING` so consumers can tune horizontal / vertical padding
+  around each tab. Three existing samples (Workbench, ThemeDemo,
+  ComponentGallery) now use a DPI-scaled `(12, 4)` rhythm.
+  (polish/CP8-tab-control)
 
 ## [1.0.0] - 2026-07-22
 

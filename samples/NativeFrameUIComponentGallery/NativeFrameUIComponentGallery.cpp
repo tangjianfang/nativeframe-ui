@@ -228,6 +228,8 @@ private:
 
         // TabControl (3 tabs).
         if (!init(tabs_, id_tabs, L"")) return false;
+        // CP8A: widen horizontal padding to match the 12-DIP gallery rhythm.
+        static_cast<void>(tabs_.set_padding(dpi_.logical_to_pixels(12), dpi_.logical_to_pixels(4)));
         insert_tab(tabs_.hwnd(), 0, L"Tab 1");
         insert_tab(tabs_.hwnd(), 1, L"Tab 2");
         insert_tab(tabs_.hwnd(), 2, L"Tab 3");

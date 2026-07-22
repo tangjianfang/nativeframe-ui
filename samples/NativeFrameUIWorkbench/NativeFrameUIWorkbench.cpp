@@ -185,6 +185,10 @@ private:
 
         params.control_id = id_tabs;
         static_cast<void>(tabs_.create(params));
+        // CP8A: explicitly widen the horizontal padding so the tabs read as
+        // deliberate segments (matches the 12-DIP gallery rhythm). Native v6
+        // default would be (6, 3); we use ~ (12, 4) post-DPI scaling.
+        static_cast<void>(tabs_.set_padding(dpi_.logical_to_pixels(12), dpi_.logical_to_pixels(4)));
         insert_tab(0, L"Workspace");
         insert_tab(1, L"Output");
 
