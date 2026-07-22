@@ -39,15 +39,10 @@ void StaticText::on_paint(HDC dc, const PaintState& state) noexcept {
     HFONT font = nullptr;
     if (cache != nullptr) {
         const int dpi = dpi_of(hwnd());
-        const int pt = style_.font_size_pt.value_or(9);
+        const int pt = style_.font_size_pt.value_or(font_pt::ui);
         font = style_.use_semibold.value_or(false)
-<<<<<<< HEAD
             ? cache->semibold(dpi, pt)
             : cache->regular(dpi, pt);
-=======
-            ? cache->semibold(dpi, font_pt::ui)
-            : cache->regular(dpi, font_pt::ui);
->>>>>>> polish/CP8-font-cache
     }
 
     // Honour the explicit horizontal/vertical padding fields. They are declared
