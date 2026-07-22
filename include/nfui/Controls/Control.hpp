@@ -8,6 +8,7 @@
 #include <string>
 #include <string_view>
 #include <windows.h>
+#include <commctrl.h>
 
 namespace nfui {
 
@@ -73,6 +74,7 @@ protected:
     // message arguments and lets the leaf perform any class-name-gated
     // work internally.
     virtual void on_reflected_draw_item(DRAWITEMSTRUCT*) noexcept {}
+    virtual LRESULT on_custom_draw_item(NMLVCUSTOMDRAW*) noexcept { return 0; }
     virtual void on_subclass_mouse_move([[maybe_unused]] LPARAM lparam) noexcept {}
     virtual void on_subclass_mouse_leave() noexcept {}
 

@@ -15,7 +15,7 @@ bool ListView::create(const ControlCreateParams& params) noexcept {
             SendMessageW(hwnd(), WM_SETFONT, reinterpret_cast<WPARAM>(f), FALSE);
         }
     }
-    ListView_SetExtendedListViewStyle(hwnd(), LVS_EX_FULLROWSELECT);
+    ListView_SetExtendedListViewStyle(hwnd(), LVS_EX_FULLROWSELECT | LVS_EX_TRACKSELECT);
     // P1.4: when a palette is injected and the user has supplied chrome_bg /
     // chrome_text, push those into the ListView control's native base colours
     // via the documented ComCtl32 ListView_SetBkColor / ListView_SetTextColor
@@ -37,12 +37,13 @@ LRESULT ListView::on_custom_draw_item(NMLVCUSTOMDRAW* cd) noexcept {
     const ThemePalette* pal = palette();
     const ThemePalette& p = pal ? *pal : theme_palette(ThemeMode::light);
     const bool selected = (cd->nmcd.uItemState & CDIS_SELECTED) != 0;
+    const bool hot = (cd->nmcd.uItemState & CDIS_HOT) != 0;
     cd->clrText = selected
         ? style_.selected_foreground.value_or(p.selection_text).rgb
         : style_.row_foreground.value_or(p.text).rgb;
     cd->clrTextBk = selected
         ? style_.selected_background.value_or(p.selection).rgb
-        : style_.row_background.value_or(p.surface).rgb;
+        : (hot ? p.surface_hover : style_.row_background.value_or(p.surface)).rgb;
     return CDRF_DODEFAULT;
 }
 

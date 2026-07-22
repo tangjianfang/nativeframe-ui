@@ -14,7 +14,7 @@ void StaticText::on_paint(HDC dc, const PaintState& state) noexcept {
     const ThemePalette* pal = palette();
     const ThemePalette& p = pal ? *pal : theme_palette(ThemeMode::light);
     const Color bg = style_.background.value_or(p.background);
-    const Color fg = style_.foreground.value_or(p.text);
+    const Color fg = state.enabled ? style_.foreground.value_or(p.text) : p.text_secondary;
     const RECT& b = state.bounds;
     MemoryDC mem(dc, b);
     HDC target = mem.valid() ? mem.dc() : dc;

@@ -24,7 +24,7 @@ public:
     [[nodiscard]] const ListViewStyle& style() const noexcept { return style_; }
 protected:
     // Consumes NMLVCUSTOMDRAW during CDDS_ITEMPREPAINT; returns CDRF_NEWFONT or CDRF_DODEFAULT.
-    LRESULT on_custom_draw_item(NMLVCUSTOMDRAW* cd) noexcept;
+    LRESULT on_custom_draw_item(NMLVCUSTOMDRAW* cd) noexcept override;
 private:
     friend class Control;
     ListViewStyle style_{};
