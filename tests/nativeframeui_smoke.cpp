@@ -406,8 +406,12 @@ int wmain() {
         nfui::StaticText static_text;
         ok = expect(static_text.create(control_params), L"StaticText control creates HWND") && ok;
         ok = expect(static_text.hwnd() != nullptr, L"StaticText exposes HWND") && ok;
-        ok = expect((GetWindowLongPtrW(static_text.hwnd(), GWL_STYLE) & SS_TYPEMASK) == SS_LEFT,
-                    L"StaticText uses SS_LEFT style") && ok;
+        // CP15: StaticText now creates with SS_OWNERDRAW so WM_DRAWITEM routes
+        // to on_paint. SS_LEFT is implicit in owner-draw statics; verify
+        // SS_OWNERDRAW is set instead.
+        const LONG_PTR cp15_style = GetWindowLongPtrW(static_text.hwnd(), GWL_STYLE);
+        ok = expect((cp15_style & SS_OWNERDRAW) != 0,
+                    L"StaticText uses SS_OWNERDRAW so on_paint fires") && ok;
 
         nfui::ComboBox combo_box;
         ok = expect(combo_box.create(control_params), L"ComboBox control creates HWND") && ok;
@@ -485,8 +489,8 @@ int wmain() {
             p.height = 20;
             ok = expect(lbl.create(p), L"StaticText::create") && ok;
             ok = expect(lbl.valid(), L"StaticText::valid") && ok;
-            LONG_PTR style = GetWindowLongPtrW(lbl.hwnd(), GWL_STYLE);
-            ok = expect((style & SS_TYPEMASK) == SS_LEFT, L"StaticText is SS_LEFT") && ok;
+            const LONG_PTR style = GetWindowLongPtrW(lbl.hwnd(), GWL_STYLE);
+            ok = expect((style & SS_OWNERDRAW) != 0, L"StaticText is SS_OWNERDRAW") && ok;
 
             ThemePalette label_palette = theme_palette(ThemeMode::light);
             FontCache label_fonts;
@@ -1176,7 +1180,10 @@ int per_component_smoke() {
         tp.text = L"Hello";
         tp.width = 120; tp.height = 20;
         if (!t.create(tp) || !t.valid()) { DestroyWindow(hidden_st); return 151; }
-        if ((GetWindowLongPtrW(t.hwnd(), GWL_STYLE) & SS_TYPEMASK) != SS_LEFT) { DestroyWindow(hidden_st); return 152; }
+        // CP15: StaticText now creates with SS_OWNERDRAW so on_paint fires
+        // via WM_DRAWITEM. SS_LEFT is no longer the type mask — verify the
+        // owner-draw bit instead.
+        if ((GetWindowLongPtrW(t.hwnd(), GWL_STYLE) & SS_OWNERDRAW) == 0) { DestroyWindow(hidden_st); return 152; }
         nfui::Edit e;
         nfui::ControlCreateParams ep{};
         ep.instance = GetModuleHandleW(nullptr);

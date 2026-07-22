@@ -7,7 +7,13 @@ namespace nfui {
 bool StaticText::create(const ControlCreateParams& params) noexcept {
     ControlCreateParams static_params = params;
     static_params.style &= ~WS_TABSTOP;
-    return create_native(L"STATIC", static_params, SS_LEFT);
+    // CP15: SS_OWNERDRAW routes Control::subclass_proc's DRAWITEM dispatch
+    // to on_paint. Without it the system default paints via
+    // WM_CTLCOLORSTATIC (COLOR_BTNFACE brush, light grey in light mode and
+    // dark grey in dark mode), which gives the static a hard gray box that
+    // doesn't track the framework palette. SS_NOTIFY preserves the
+    // pre-existing click forwarding contract.
+    return create_native(L"STATIC", static_params, SS_OWNERDRAW | SS_NOTIFY);
 }
 
 void StaticText::set_caption(const std::wstring& text) noexcept {

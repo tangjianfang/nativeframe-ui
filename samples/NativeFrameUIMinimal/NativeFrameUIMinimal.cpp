@@ -10,6 +10,7 @@
 #include <nfui/Application.hpp>
 #include <nfui/Controls/Button.hpp>
 #include <nfui/Controls/Control.hpp>
+#include <nfui/Controls/StaticText.hpp>
 #include <nfui/Dpi.hpp>
 #include <nfui/Font.hpp>
 #include <nfui/Theme.hpp>
@@ -19,10 +20,18 @@
 namespace {
 
 constexpr int ID_BUTTON_OK = 1001;
+constexpr int ID_LABEL_STATUS = 1002;
 
 LRESULT CALLBACK wnd_proc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam) {
     if (msg == WM_COMMAND && LOWORD(wparam) == ID_BUTTON_OK) {
-        MessageBoxW(hwnd, L"Button clicked!", L"Minimal", MB_OK);
+        // CP15: drive an in-window status label instead of MessageBoxW.
+        // The native MessageBox chrome bypasses every visual contract in
+        // the framework, so a minimal sample should showcase the
+        // framework instead of reaching past it.
+        HWND status = GetDlgItem(hwnd, ID_LABEL_STATUS);
+        if (status != nullptr) {
+            SetWindowTextW(status, L"Button clicked! NativeFrame UI is working.");
+        }
         return 0;
     }
     if (msg == WM_DESTROY) {
@@ -70,6 +79,24 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, LPWSTR, int) {
     bp.width = 120; bp.height = 32;
     ok.inject_theme(&palette, &fonts);
     if (!ok.create(bp)) return 4;
+
+    // CP15: add a status label so the click handler has somewhere to write
+    // its feedback. StaticText is owner-drawn (CP15), so the label tracks
+    // the palette and never shows the system gray box.
+    nfui::StaticText status;
+    nfui::TextStyle status_style{};
+    status_style.foreground = palette.accent;
+    status_style.font_size_pt = 9;
+    status_style.align_h = nfui::StaticTextAlignH::center;
+    nfui::ControlCreateParams sp{};
+    sp.instance = instance;
+    sp.parent = hwnd;
+    sp.control_id = ID_LABEL_STATUS;
+    sp.x = 20; sp.y = 84;
+    sp.width = 280; sp.height = 22;
+    status.set_style(status_style);
+    status.inject_theme(&palette, &fonts);
+    if (!status.create(sp)) return 5;
 
     MSG msg{};
     while (GetMessageW(&msg, nullptr, 0, 0) > 0) {
