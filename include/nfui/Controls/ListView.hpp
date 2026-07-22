@@ -27,11 +27,14 @@ protected:
     LRESULT on_custom_draw_item(NMLVCUSTOMDRAW* cd) noexcept override;
     void on_palette_changed() noexcept override;
 private:
-    // CP20: header HWND obtained from ListView_GetHeader; themed via a small
-    // chrome subclass that handles WM_ERASEBKGND to paint the header band
-    // (the SDK does not define HDM_SETBKCOLOR). The header is a separate
-    // common-control window, so the chrome proc lives on its own HWND.
+    // CP20/CP21: header HWND obtained from ListView_GetHeader; themed via a
+    // chrome subclass that handles WM_ERASEBKGND (band background; the SDK
+    // does not define HDM_SETBKCOLOR) and CP21 NM_CUSTOMDRAW (column captions,
+    // hot state, sort glyphs). The header is a separate common-control window,
+    // so the chrome proc lives on its own HWND.
     void theme_header(HWND header) noexcept;
+    void paint_header_item(HWND header, NMCUSTOMDRAW* cd) noexcept;
+    LRESULT handle_header_custom_draw(HWND header, NMCUSTOMDRAW* cd) noexcept;
     static LRESULT CALLBACK visual_subclass_proc(HWND hwnd, UINT message,
                                                  WPARAM wparam, LPARAM lparam,
                                                  UINT_PTR subclass_id,

@@ -102,12 +102,34 @@ void TabControl::paint_tab(NMCUSTOMDRAW* cd) noexcept {
         return;
     }
     RECT text_rc = cd->rc;
-    const int pad = 6;
+    // CP21: padding is in logical pixels, scaled by DPI so 125/150/200%
+    // monitors produce the same visual margin. At 96 dpi this is still 6 px.
+    const DpiScale dpi{dpi_of(hwnd())};
+    const int pad = dpi.logical_to_pixels(6);
     text_rc.left += pad;
     text_rc.right -= pad;
-    HFONT font = fonts() ? fonts()->regular(dpi_of(hwnd()), font_pt::ui) : nullptr;
+    HFONT font = fonts() ? fonts()->regular(dpi.dpi(), font_pt::ui) : nullptr;
     draw_text(cd->hdc, text_rc, text, font, tab_text_color(style_, p, selected),
               DT_CENTER | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS);
+
+    // CP21: selected-tab accent edge along the page-facing (bottom) side,
+    // matching the CP19 chrome focus-ring language. Kept to one edge so the
+    // accent reads as a tab indicator rather than a full outline. The accent
+    // is inset horizontally by `radius` so it stays inside the rounded
+    // bottom corners of the selected tab — without this inset the accent
+    // would paint 2 px accent-coloured "tabs" sticking out of the round,
+    // found by the CP21 adversarial review.
+    if (selected) {
+        const int accent_h = dpi.logical_to_pixels(2);
+        RECT accent = cd->rc;
+        accent.top = accent.bottom - accent_h;
+        accent.bottom = cd->rc.bottom;
+        accent.left += radius;
+        accent.right -= radius;
+        if (accent.right > accent.left) {
+            fill_rect(cd->hdc, accent, p.accent);
+        }
+    }
 }
 
 LRESULT TabControl::handle_custom_draw(NMCUSTOMDRAW* cd) noexcept {

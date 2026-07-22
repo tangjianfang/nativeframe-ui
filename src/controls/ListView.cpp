@@ -74,7 +74,7 @@ void ListView::theme_header(HWND header) noexcept {
     // The Windows SDK does not define HDM_SETBKCOLOR for the Header control,
     // so the only reliable palette-driven background is to paint the band's
     // client area before the system draws the column rectangles. Header text
-    // colour inherits the system default (no public HDM_SETTEXTCOLOR either).
+    // colour is self-painted in CP21 via NM_CUSTOMDRAW (no public HDM API).
     if (HFONT f = fonts() ? fonts()->semibold(dpi_of(hwnd()), font_pt::ui) : nullptr) {
         SendMessageW(header, WM_SETFONT, reinterpret_cast<WPARAM>(f), FALSE);
     }
@@ -85,6 +85,116 @@ void ListView::theme_header(HWND header) noexcept {
     SetWindowSubclass(header, &ListView::header_subclass_proc,
                       reinterpret_cast<UINT_PTR>(this),
                       reinterpret_cast<DWORD_PTR>(this));
+}
+
+void ListView::paint_header_item(HWND header, NMCUSTOMDRAW* cd) noexcept {
+    if (header == nullptr || cd == nullptr || cd->hdc == nullptr) return;
+    const ThemePalette* pal = palette();
+    const ThemePalette& p = pal ? *pal : theme_palette(ThemeMode::light);
+    const bool hot = (cd->uItemState & CDIS_HOT) != 0;
+    const bool disabled = (cd->uItemState & CDIS_DISABLED) != 0;
+
+    // CP21: fill the column rect (CDRF_SKIPDEFAULT suppressed native paint),
+    // draw a 1px right-edge divider, then the caption. Background uses the
+    // palette surface so dark mode is readable; hot items use surface_hover.
+    const Color fill = hot
+        ? p.surface_hover
+        : style_.row_background.value_or(p.surface);
+    fill_rect(cd->hdc, cd->rc, fill);
+    RECT divider = cd->rc;
+    divider.left = divider.right - 1;
+    fill_rect(cd->hdc, divider, p.border);
+
+    // Item metadata: caption text + format flags + sort indicator.
+    wchar_t text[256]{};
+    HDITEMW item{};
+    item.mask = HDI_TEXT | HDI_FORMAT;
+    item.pszText = text;
+    item.cchTextMax = static_cast<int>(std::size(text));
+    const int index = static_cast<int>(cd->dwItemSpec);
+    if (SendMessageW(header, HDM_GETITEMW, index,
+                     reinterpret_cast<LPARAM>(&item)) == FALSE) {
+        return;
+    }
+
+    // CP21: reserve a DPI-scaled right-edge box for the sort glyph so the
+    // caption never overlaps it.
+    const DpiScale dpi{dpi_of(header)};
+    const int sort_gap = dpi.logical_to_pixels(6);
+    const int sort_size = dpi.logical_to_pixels(8);
+    const bool has_sort = (item.fmt & (HDF_SORTUP | HDF_SORTDOWN)) != 0;
+    const bool sort_down = (item.fmt & HDF_SORTDOWN) != 0;
+
+    RECT text_rc = cd->rc;
+    const int pad = dpi.logical_to_pixels(6);
+    text_rc.left += pad;
+    text_rc.right -= pad;
+    if (has_sort) {
+        text_rc.right -= (sort_gap + sort_size);
+    }
+
+    UINT dt = DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS;
+    switch (item.fmt & HDF_JUSTIFYMASK) {
+    case HDF_CENTER: dt |= DT_CENTER; break;
+    case HDF_RIGHT:  dt |= DT_RIGHT;  break;
+    default:         dt |= DT_LEFT;   break;
+    }
+    if (item.fmt & HDF_RTLREADING) {
+        dt |= DT_RTLREADING;
+    }
+
+    HFONT font = reinterpret_cast<HFONT>(SendMessageW(header, WM_GETFONT, 0, 0));
+    const Color fg = disabled
+        ? p.text_secondary
+        : style_.row_foreground.value_or(p.text);
+    draw_text(cd->hdc, text_rc, text, font, fg, dt);
+
+    // Sort triangle on the trailing edge — replaces the native HDF_SORT* glyph
+    // that CDRF_SKIPDEFAULT suppresses. Triangle points down for SORTDOWN and
+    // up for SORTUP, filled with the same colour as the caption.
+    if (has_sort) {
+        POINT tri[3]{};
+        // CP21: anchor the sort glyph inside the trailing box
+        // [rc.right - sort_gap - sort_size, rc.right - sort_gap]. The previous
+        // version placed cx at rc.right - sort_gap + sort_size/2, which pushed
+        // the triangle's right vertex past the column's right edge (and onto
+        // the divider / next column) — found by the CP21 adversarial review.
+        const int right = cd->rc.right - sort_gap;
+        const int cx = right - sort_size / 2;
+        const int cy = cd->rc.top + (cd->rc.bottom - cd->rc.top) / 2;
+        if (sort_down) {
+            tri[0] = {cx - sort_size / 2, cy - sort_size / 4};
+            tri[1] = {cx + sort_size / 2, cy - sort_size / 4};
+            tri[2] = {cx,                  cy + sort_size / 4};
+        } else {
+            tri[0] = {cx - sort_size / 2, cy + sort_size / 4};
+            tri[1] = {cx + sort_size / 2, cy + sort_size / 4};
+            tri[2] = {cx,                  cy - sort_size / 4};
+        }
+        fill_polygon(cd->hdc, tri, 3, fg, fg);
+    }
+}
+
+LRESULT ListView::handle_header_custom_draw(HWND header, NMCUSTOMDRAW* cd) noexcept {
+    if (header == nullptr || cd == nullptr) return CDRF_DODEFAULT;
+    switch (cd->dwDrawStage) {
+    case CDDS_PREPAINT:
+        // Request per-item notifications so we can paint each column with
+        // its own palette state and format (alignment, sort glyph).
+        return CDRF_NOTIFYITEMDRAW;
+    case CDDS_ITEMPREPAINT:
+        // Suppress the default header paint so we can paint the whole column
+        // (background + divider + caption + sort glyph) in CDDS_ITEMPOSTPAINT.
+        // The header's NM_CUSTOMDRAW payload is the universal NMCUSTOMDRAW
+        // (no clrText/clrTextBk), so a pure PREPAINT colour override is not
+        // available — full self-paint is the only palette-driven path.
+        return CDRF_SKIPDEFAULT | CDRF_NOTIFYPOSTPAINT;
+    case CDDS_ITEMPOSTPAINT:
+        paint_header_item(header, cd);
+        return CDRF_DODEFAULT;
+    default:
+        return CDRF_DODEFAULT;
+    }
 }
 
 LRESULT ListView::on_custom_draw_item(NMLVCUSTOMDRAW* cd) noexcept {
@@ -160,15 +270,23 @@ LRESULT CALLBACK ListView::header_subclass_proc(HWND hwnd, UINT message,
                                                   UINT_PTR subclass_id,
                                                   DWORD_PTR ref_data) noexcept {
     auto* lv = reinterpret_cast<ListView*>(ref_data);
-    // CP20: theme the header band via WM_ERASEBKGND. The header is a
+    // CP20: theme the header band via WM_ERASEBKGND. CP21: also intercept
+    // reflected NM_CUSTOMDRAW (ocm_base + WM_NOTIFY) so column captions,
+    // hot state, and sort glyphs are palette-driven. The header is a
     // WC_HEADERW (a separate window from the ListView body) so this subclass
-    // lives on its own HWND. The Windows SDK does not expose HDM_SETBKCOLOR,
-    // and the header's NM_CUSTOMDRAW payload is the universal NMCUSTOMDRAW
-    // (no clrText/clrTextBk), so painting the band background here before
-    // the system draws the column rectangles is the only palette-driven path.
-    // Header text colour inherits the system default — a future CP can
-    // self-draw the caption pass via item-post-paint if the default reads
-    // wrong against the palette surface.
+    // lives on its own HWND. The Windows SDK does not expose HDM_SETBKCOLOR
+    // or HDM_SETTEXTCOLOR, and the header's NM_CUSTOMDRAW payload is the
+    // universal NMCUSTOMDRAW (no clrText/clrTextBk), so WM_ERASEBKGND +
+    // full item self-paint in CDDS_ITEMPOSTPAINT are the only palette paths.
+    if (lv != nullptr && message == ocm_base + WM_NOTIFY) {
+        auto* nmh = reinterpret_cast<NMHDR*>(lparam);
+        if (nmh != nullptr &&
+            nmh->hwndFrom == hwnd &&
+            nmh->code == NM_CUSTOMDRAW) {
+            return lv->handle_header_custom_draw(
+                hwnd, reinterpret_cast<NMCUSTOMDRAW*>(lparam));
+        }
+    }
     if (lv != nullptr && message == WM_ERASEBKGND) {
         const ThemePalette* pal = lv->palette();
         const ThemePalette& p = pal ? *pal : theme_palette(ThemeMode::light);
