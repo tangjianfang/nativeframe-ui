@@ -18,9 +18,11 @@ void Splitter::set_ratio(double ratio) noexcept {
 double Splitter::ratio() const noexcept { return ratio_; }
 
 void Splitter::on_paint(HDC dc, const PaintState& state) noexcept {
+    // Dragging takes precedence over hover for visual feedback; both derive from palette
+    // so theme transitions are smooth (no hardcoded RGB corners). See P6.1 chrome audit.
     const ThemePalette* pal = palette();
     const ThemePalette& p = pal ? *pal : theme_palette(ThemeMode::light);
-    const Color fill = style_.surface_brush.value_or(p.border);
+    const Color fill = dragging_ ? p.accent : style_.surface_brush.value_or(p.border);
     const RECT& b = state.bounds;
     MemoryDC mem(dc, b);
     HDC target = mem.valid() ? mem.dc() : dc;
@@ -28,5 +30,9 @@ void Splitter::on_paint(HDC dc, const PaintState& state) noexcept {
         ? RECT{0, 0, b.right - b.left, b.bottom - b.top}
         : b;
     fill_rect(target, paint_bounds, fill);
+    if (state.hover && hwnd() != nullptr) {
+        // Cursor change so users notice the splitter is interactive.
+        SetCursor(LoadCursorW(nullptr, IDC_SIZEWE));
+    }
 }
 } // namespace nfui

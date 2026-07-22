@@ -10,6 +10,8 @@ public:
     [[nodiscard]] bool create(const ControlCreateParams& params) noexcept;
     void set_ratio(double ratio) noexcept;
     [[nodiscard]] double ratio() const noexcept;
+    [[nodiscard]] bool is_dragging() const noexcept { return dragging_; }
+    void set_dragging(bool dragging) noexcept { dragging_ = dragging; }
     void set_style(FrameStyle style) noexcept { style_ = style; }
     [[nodiscard]] const FrameStyle& style() const noexcept { return style_; }
 protected:
@@ -20,6 +22,7 @@ protected:
     [[nodiscard]] bool wants_self_paint() const noexcept override { return true; }
 private:
     double ratio_{0.5};
+    bool dragging_{false};
     FrameStyle style_{};
 };
 
