@@ -21,6 +21,7 @@ namespace {
 // the series is attached to. Keep these as static-storage string literals so
 // each set_series() call can hand the renderer a stable pointer.
 constexpr std::wstring_view kBarName         = L"Monthly revenue (USDk)";
+constexpr std::wstring_view kAreaName        = L"Active users (k)";
 constexpr std::wstring_view kHbarSeries2022  = L"FY 2022";
 constexpr std::wstring_view kHbarSeries2023  = L"FY 2023";
 constexpr std::wstring_view kHbarSeries2024  = L"FY 2024";
@@ -111,7 +112,7 @@ public:
             0,
             CW_USEDEFAULT,
             CW_USEDEFAULT,
-            1000,
+            1200,
             720,
         };
 
@@ -157,6 +158,7 @@ protected:
             hbar_.set_font_cache(&fonts_);
             line_.set_font_cache(&fonts_);
             spline_.set_font_cache(&fonts_);
+            area_.set_font_cache(&fonts_);
             layout_charts();
             InvalidateRect(hwnd(), nullptr, FALSE);
             return 0;
@@ -192,15 +194,16 @@ protected:
 
 private:
     [[nodiscard]] bool create_charts() noexcept {
-        // All four chart views share the same chart-view window class
+        // All five chart views share the same chart-view window class
         // (NativeFrameUIChartView) — the first create() registers it, the
-        // rest reuse it. Each subclass (Bar / HBar / Line / Spline) wires
-        // its own on_paint override. Palette + fonts are injected before
-        // create so the very first paint cycle has them.
+        // rest reuse it. Each subclass (Bar / HBar / Line / Spline / Area)
+        // wires its own on_paint override. Palette + fonts are injected
+        // before create so the very first paint cycle has them.
         bar_.inject_theme(&palette_, &fonts_);
         hbar_.inject_theme(&palette_, &fonts_);
         line_.inject_theme(&palette_, &fonts_);
         spline_.inject_theme(&palette_, &fonts_);
+        area_.inject_theme(&palette_, &fonts_);
 
         nfui::WindowCreateParams params{
             instance_,
@@ -216,6 +219,7 @@ private:
         if (!hbar_.create(params))   return false;
         if (!line_.create(params))   return false;
         if (!spline_.create(params)) return false;
+        if (!area_.create(params))   return false;
         return true;
     }
 
@@ -236,6 +240,27 @@ private:
             bar_.set_series({nfui::ChartSeries{kBarName, palette_.accent, std::move(points)}});
             bar_.set_axis_x(nfui::ChartAxisRange{1.0, 12.0, L"{:.0f}"});
             bar_.set_axis_y(nfui::ChartAxisRange{0.0, 100.0, L"{:.0f}"});
+        }
+
+        // CP14: filled-area chart. Reuses the same monthly revenue values
+        // as the bar chart so the two views read as siblings when shown
+        // side-by-side. Outline on for a clean upper-edge stroke;
+        // fill_alpha defaults to 1.0 (opaque).
+        {
+            std::vector<nfui::ChartPoint> points;
+            points.reserve(kBarMonths.size());
+            for (std::size_t i = 0; i < kBarMonths.size(); ++i) {
+                points.push_back(nfui::ChartPoint{
+                    static_cast<double>(i + 1),
+                    kBarMonths[i],
+                });
+            }
+            area_.set_kind(nfui::ChartKind::area);
+            area_.set_series({nfui::ChartSeries{kAreaName, palette_.accent, std::move(points)}});
+            area_.set_axis_x(nfui::ChartAxisRange{1.0, 12.0, L"{:.0f}"});
+            area_.set_axis_y(nfui::ChartAxisRange{0.0, 100.0, L"{:.0f}"});
+            area_.set_outline(true);
+            area_.set_fill_alpha(1.0);
         }
 
         // Horizontal bar: three series, five categories. axis_y carries the
@@ -328,21 +353,24 @@ private:
         const int area_w = std::max(area_right - area_left, dpi.logical_to_pixels(360));
         const int area_h = std::max(area_bottom - area_top, dpi.logical_to_pixels(240));
 
-        const int cell_w = std::max((area_w - gap) / 2, dpi.logical_to_pixels(200));
+        const int cell_w = std::max((area_w - gap * 2) / 3, dpi.logical_to_pixels(200));
         const int cell_h = std::max((area_h - gap) / 2, dpi.logical_to_pixels(140));
 
-        // 2x2 grid: bar (top-left), hbar (top-right), line (bottom-left),
-        // spline (bottom-right). The chart views paint their own background,
-        // so no separate card chrome is needed.
-        const RECT bar_rect    = make_rect(area_left,                       area_top,                          cell_w, cell_h);
-        const RECT hbar_rect   = make_rect(area_left + cell_w + gap,        area_top,                          cell_w, cell_h);
-        const RECT line_rect   = make_rect(area_left,                       area_top + cell_h + gap,           cell_w, cell_h);
-        const RECT spline_rect = make_rect(area_left + cell_w + gap,        area_top + cell_h + gap,           cell_w, cell_h);
+        // CP14: 3x2 grid. Top row: bar / hbar / line. Bottom row: spline /
+        // area / (placeholder cell kept intentionally empty so the grid
+        // reads balanced). The chart views paint their own background, so
+        // no separate card chrome is needed.
+        const RECT bar_rect    = make_rect(area_left,                                 area_top,                        cell_w, cell_h);
+        const RECT hbar_rect   = make_rect(area_left + cell_w + gap,                  area_top,                        cell_w, cell_h);
+        const RECT line_rect   = make_rect(area_left + (cell_w + gap) * 2,            area_top,                        cell_w, cell_h);
+        const RECT spline_rect = make_rect(area_left,                                 area_top + cell_h + gap,         cell_w, cell_h);
+        const RECT area_rect   = make_rect(area_left + cell_w + gap,                  area_top + cell_h + gap,         cell_w, cell_h);
 
         MoveWindow(bar_.hwnd(),    bar_rect.left,    bar_rect.top,    rect_width(bar_rect),    rect_height(bar_rect),    TRUE);
         MoveWindow(hbar_.hwnd(),   hbar_rect.left,   hbar_rect.top,   rect_width(hbar_rect),   rect_height(hbar_rect),   TRUE);
         MoveWindow(line_.hwnd(),   line_rect.left,   line_rect.top,   rect_width(line_rect),   rect_height(line_rect),   TRUE);
         MoveWindow(spline_.hwnd(), spline_rect.left, spline_rect.top, rect_width(spline_rect), rect_height(spline_rect), TRUE);
+        MoveWindow(area_.hwnd(),   area_rect.left,   area_rect.top,   rect_width(area_rect),   rect_height(area_rect),   TRUE);
     }
 
     void paint_chrome(HDC target, const RECT& client) noexcept {
@@ -449,6 +477,7 @@ private:
     nfui::HBarChartView hbar_;
     nfui::LineChartView line_;
     nfui::SplineChartView spline_;
+    nfui::AreaChartView area_;
     HICON large_icon_{};
     HICON small_icon_{};
 };
