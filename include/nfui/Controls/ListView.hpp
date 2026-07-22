@@ -27,6 +27,21 @@ protected:
     LRESULT on_custom_draw_item(NMLVCUSTOMDRAW* cd) noexcept override;
     void on_palette_changed() noexcept override;
 private:
+    // CP20: header HWND obtained from ListView_GetHeader; themed via a small
+    // chrome subclass that handles WM_ERASEBKGND to paint the header band
+    // (the SDK does not define HDM_SETBKCOLOR). The header is a separate
+    // common-control window, so the chrome proc lives on its own HWND.
+    void theme_header(HWND header) noexcept;
+    static LRESULT CALLBACK visual_subclass_proc(HWND hwnd, UINT message,
+                                                 WPARAM wparam, LPARAM lparam,
+                                                 UINT_PTR subclass_id,
+                                                 DWORD_PTR ref_data) noexcept;
+    static LRESULT CALLBACK header_subclass_proc(HWND hwnd, UINT message,
+                                                  WPARAM wparam, LPARAM lparam,
+                                                  UINT_PTR subclass_id,
+                                                  DWORD_PTR ref_data) noexcept;
+    LRESULT handle_custom_draw(NMLVCUSTOMDRAW* cd) noexcept;
+
     friend class Control;
     ListViewStyle style_{};
 };
