@@ -24,8 +24,16 @@ void HoverState::on_mouse_move(HWND hwnd) noexcept {
         tme.cbSize = static_cast<DWORD>(sizeof(tme));
         tme.dwFlags = TME_LEAVE;
         tme.hwndTrack = hwnd;
-        TrackMouseEvent(&tme);
-        tracking_ = true;
+        if (TrackMouseEvent(&tme) == FALSE) {
+            // P6.1: TrackMouseEvent failed (window mid-destroy, etc.). Fall
+            // back to a posted WM_MOUSELEAVE so the leave state resets on the
+            // next message-loop tick. See
+            // docs/KNOWLEDGE/polish/2026-07-22-hoverstate-track-mouse-fallback.md.
+            PostMessageW(hwnd, WM_MOUSELEAVE, 0, 0);
+            // Don't mark tracking_ true — we never registered.
+        } else {
+            tracking_ = true;
+        }
     }
     if (hwnd != nullptr) {
         InvalidateRect(hwnd, nullptr, FALSE);

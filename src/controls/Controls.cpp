@@ -140,6 +140,20 @@ LRESULT CALLBACK Control::subclass_proc(HWND hwnd,
         }
         break;
     }
+    case WM_SETFONT: {
+        // P6.1: forward WM_SETFONT to defaults and invalidate the control so
+        // the new font is applied immediately (covers DPI-change rebroadcast
+        // where the OS hands each control a freshly-scaled HFONT).
+        // See docs/KNOWLEDGE/polish/2026-07-22-dpi-wm-setfont.md.
+        {
+            LRESULT r = DefSubclassProc(hwnd, message, wparam, lparam);
+            InvalidateRect(hwnd, nullptr, FALSE);
+#ifdef _DEBUG
+            OutputDebugStringW(L"NFUI: WM_SETFONT received\n");
+#endif
+            return r;
+        }
+    }
     case WM_SETTEXT: {
         if (control != nullptr && lparam != 0) {
             try {

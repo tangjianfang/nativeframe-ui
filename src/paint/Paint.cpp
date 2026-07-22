@@ -1,5 +1,6 @@
 #include <nfui/Paint.hpp>
 
+#include <cassert>
 #include <string>
 
 namespace nfui {
@@ -130,9 +131,30 @@ MemoryDC::MemoryDC(HDC target, const RECT& bounds) noexcept
       w_(bounds.right - bounds.left), h_(bounds.bottom - bounds.top) {
     if (target_ == nullptr || w_ <= 0 || h_ <= 0) return;
     mem_dc_ = CreateCompatibleDC(target_);
-    if (mem_dc_ == nullptr) return;
+    if (mem_dc_ == nullptr) {
+#ifdef _DEBUG
+        assert(false && "MemoryDC: CreateCompatibleDC failed");
+#else
+        OutputDebugStringW(L"NFUI: MemoryDC fallback to direct DC (CreateCompatibleDC failed)\n");
+#endif
+        // Fallback: callers will draw directly into the target HDC because
+        // mem_dc_ stays null. Paint helpers honor `valid()` checks.
+        return;
+    }
     bmp_ = CreateCompatibleBitmap(target_, w_, h_);
-    if (bmp_ == nullptr) { DeleteDC(mem_dc_); mem_dc_ = nullptr; return; }
+    if (bmp_ == nullptr) {
+        // P6.1: low-memory or GDI-handle-exhausted. Tear down the memory DC
+        // and fall back to painting directly into the target. See
+        // docs/KNOWLEDGE/polish/2026-07-22-memorydc-createbitmap-fallback.md.
+#ifdef _DEBUG
+        assert(false && "MemoryDC: CreateCompatibleBitmap failed");
+#else
+        OutputDebugStringW(L"NFUI: MemoryDC fallback to direct DC (CreateCompatibleBitmap failed)\n");
+#endif
+        DeleteDC(mem_dc_);
+        mem_dc_ = nullptr;
+        return;
+    }
     old_bmp_ = SelectObject(mem_dc_, bmp_);
     BitBlt(mem_dc_, 0, 0, w_, h_, target_, x_, y_, SRCCOPY);
 }
