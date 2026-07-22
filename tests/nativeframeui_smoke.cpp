@@ -886,6 +886,30 @@ int wmain() {
 
     {
         using namespace nfui;
+        // Graceful degradation: MemoryDC must never allocate or leak when it
+        // cannot build an offscreen buffer. valid()==false is the documented
+        // signal for the direct-DC fallback (P6.1 / CreateCompatibleBitmap doc).
+        {
+            MemoryDC null_target(nullptr, RECT{0, 0, 40, 30});
+            ok = expect(!null_target.valid(), L"MemoryDC(null target) is not valid") && ok;
+            ok = expect(null_target.dc() == nullptr, L"MemoryDC(null target) exposes no DC") && ok;
+        } // ~MemoryDC on the degraded object must be a no-op (no crash, no leak).
+
+        HDC screen = GetDC(nullptr);
+        {
+            MemoryDC empty(screen, RECT{5, 5, 5, 5});           // zero width & height
+            ok = expect(!empty.valid(), L"MemoryDC(empty rect) is not valid") && ok;
+        }
+        {
+            MemoryDC inverted(screen, RECT{40, 30, 0, 0});      // right<left, bottom<top
+            ok = expect(!inverted.valid(), L"MemoryDC(inverted rect) is not valid") && ok;
+        }
+        ReleaseDC(nullptr, screen);
+        ok = expect(true, L"MemoryDC degradation paths complete without crash") && ok;
+    }
+
+    {
+        using namespace nfui;
         const RECT content{0, 0, 400, 300};
         ChartLayout layout = compute_chart_layout(content, ChartKind::bar_vertical, 2);
         ok = expect((layout.plot_bounds.right - layout.plot_bounds.left) > 0 &&
@@ -961,6 +985,34 @@ int wmain() {
         h.on_mouse_leave();
         ok = expect(!h.hover(),
                     L"HoverState mouse_leave clears hover") && ok;
+
+        // attach()/detach() must reset all transient state to idle so a wrapper
+        // that re-binds to a new HWND never inherits stale hover/pressed bits.
+        h.on_mouse_move(nullptr);
+        h.on_lbutton_down();
+        h.attach(nullptr);
+        ok = expect(!h.hover() && !h.pressed(),
+                    L"HoverState attach() resets to idle") && ok;
+        h.on_mouse_move(nullptr);
+        h.on_lbutton_down();
+        h.detach();
+        ok = expect(!h.hover() && !h.pressed(),
+                    L"HoverState detach() resets to idle") && ok;
+
+        // Real-HWND path: on_mouse_move must register TrackMouseEvent (or take
+        // the posted-WM_MOUSELEAVE fallback) and set hover without crashing.
+        HWND hover_hwnd = CreateWindowExW(0, L"STATIC", L"", WS_OVERLAPPED,
+                                          CW_USEDEFAULT, CW_USEDEFAULT, 60, 40,
+                                          HWND_MESSAGE, nullptr,
+                                          GetModuleHandleW(nullptr), nullptr);
+        if (hover_hwnd != nullptr) {
+            h.attach(hover_hwnd);
+            h.on_mouse_move(hover_hwnd);
+            ok = expect(h.hover(), L"HoverState on_mouse_move(real hwnd) sets hover") && ok;
+            h.on_mouse_leave();
+            ok = expect(!h.hover(), L"HoverState on_mouse_leave(real hwnd) clears hover") && ok;
+            DestroyWindow(hover_hwnd);
+        }
     }
 
     {

@@ -4,8 +4,16 @@ date: 2026-07-22
 tags: [hoverstate, trackmouse, fallback]
 severity: minor
 effort: trivial
-status: open
+status: resolved
+resolved: 2026-07-23
 ---
+
+> **Resolved (2026-07-23, CP9C):** implemented in `src/core/HoverState.cpp`
+> `HoverState::on_mouse_move`. The `TrackMouseEvent` return value is now
+> checked; on `FALSE` we `PostMessageW(hwnd, WM_MOUSELEAVE, 0, 0)` and leave
+> `tracking_` false (never registered), so the leave state self-heals on the
+> next message-loop tick. Smoke test now drives the real-HWND path plus
+> `attach()`/`detach()` idle-reset (`HoverState on_mouse_move(real hwnd)…`).
 
 `nfui::HoverState::on_mouse_move` calls `TrackMouseEvent` to receive
 `WM_MOUSELEAVE`. If `TrackMouseEvent` returns FALSE (e.g., the
