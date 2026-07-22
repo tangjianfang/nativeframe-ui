@@ -23,6 +23,7 @@ struct ShowcasePalette {
     nfui::Color muted_text;
     nfui::Color success;
     nfui::Color warning;
+    nfui::Color shadow;        // CP16: drop-shadow tint for the card stack
 };
 
 struct ShowcaseLayout {
@@ -134,6 +135,7 @@ constexpr std::array<std::wstring_view, 3> inspector_values{
     palette.muted_text = p.text_secondary;
     palette.success = p.success;
     palette.warning = p.warning;
+    palette.shadow  = p.shadow;
     return palette;
 }
 
@@ -416,6 +418,13 @@ void ShowcaseView::paint(HDC hdc, nfui::FontCache& fonts) const noexcept {
                                      ? nfui::alpha_blend(palette.accent, palette.surface, 0.22f)
                                      : palette.surface;
         const nfui::Color border = hovered ? palette.accent : palette.border;
+        // CP16: cards in the showcase carry a soft elevation drop shadow so
+        // the sample visually demonstrates the shadow primitive in a
+        // multi-card layout. The first card is raised to elevation=2 (a
+        // card with a stat); the others sit at elevation=1.
+        const int card_elevation = (index == 0) ? 2 : 1;
+        nfui::paint_drop_shadow(hdc, layout.cards[index], radius,
+                                card_elevation, palette.shadow);
         nfui::fill_rounded_rect(hdc, layout.cards[index], radius, fill, border);
 
         RECT card_text = inset_rect(layout.cards[index], gap);

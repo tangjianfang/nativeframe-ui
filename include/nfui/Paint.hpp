@@ -12,6 +12,18 @@ namespace nfui {
 [[nodiscard]] Color darken(Color c, float amount) noexcept;   // amount 0..1
 [[nodiscard]] Color alpha_blend(Color src, Color dst, float alpha) noexcept; // alpha 0..1 (src over dst)
 
+// CP16: vertical linear gradient fill. radius == 0 → square rect; >0 →
+// rounded rect (RoundRect is then filled with the gradient bitmap).
+// Falls back to a flat fill when the requested rect is degenerate.
+void paint_linear_gradient(HDC dc, const RECT& bounds, int radius,
+                           Color top, Color bottom) noexcept;
+
+// CP16: Office Fluent / Material style drop shadow. elevation ∈ {1,2,3}
+// maps to {2, 6, 12} pixel soft falloff; shadow_color.rgb supplies the
+// tint (alpha is overridden by the helper using a fixed e1/e2/e3 ramp).
+void paint_drop_shadow(HDC dc, const RECT& bounds, int radius,
+                       int elevation, Color shadow_color) noexcept;
+
 void fill_rounded_rect(HDC dc, const RECT& bounds, int radius, Color fill, Color border) noexcept;
 void fill_rect(HDC dc, const RECT& bounds, Color fill) noexcept;
 void draw_line(HDC dc, POINT a, POINT b, Color color, int width) noexcept;

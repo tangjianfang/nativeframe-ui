@@ -78,7 +78,30 @@ void Button::on_paint(HDC dc, const PaintState& state) noexcept {
     // pixels from the current palette first so a theme swap cannot preserve a
     // frame from the previous palette in the rounded boundary.
     fill_rect(target, paint_bounds, p.background);
-    fill_rounded_rect(target, paint_bounds, radius, face, border);
+    // CP16: rest and hover faces get a gentle vertical gradient so the
+    // button reads as a 3D card with light from above. Pressed / disabled
+    // stay flat (CP3 decision record: muted/anchor states need a single
+    // tone so they read clearly at small sizes). HC stays flat too.
+    const bool use_gradient = !hc && (state.enabled) && !state.pressed;
+    if (use_gradient) {
+        const Color top    = lighten(face, 0.08f);
+        const Color bottom = darken(face, 0.10f);
+        paint_linear_gradient(target, paint_bounds, radius, top, bottom);
+        // 1px hairline border so the gradient edge stays crisp against
+        // the surrounding palette.background.
+        const HPEN pen = CreatePen(PS_SOLID, 1, border.rgb);
+        if (pen != nullptr) {
+            const HGDIOBJ old_pen = SelectObject(target, pen);
+            const HGDIOBJ old_brush = SelectObject(target, GetStockObject(NULL_BRUSH));
+            RoundRect(target, paint_bounds.left, paint_bounds.top,
+                      paint_bounds.right, paint_bounds.bottom, radius * 2, radius * 2);
+            SelectObject(target, old_brush);
+            SelectObject(target, old_pen);
+            DeleteObject(pen);
+        }
+    } else {
+        fill_rounded_rect(target, paint_bounds, radius, face, border);
+    }
     // CP9 accessibility: keyboard focus previously reused `accent_hover` for the
     // border, which is the same colour as mouse-hover — so a tab-focused button
     // was visually indistinguishable from a hovered one (fails WCAG 2.4.7 Focus

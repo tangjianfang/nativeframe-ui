@@ -36,6 +36,7 @@ struct ThemePalette {
     Color danger;
     Color success;
     Color warning;
+    Color shadow;              // CP16: tint used by paint_drop_shadow; alpha is overridden by the helper
 };
 
 struct ThemeMetrics {

@@ -29,6 +29,7 @@ struct FrameStyle {
     std::optional<Color> chrome_text;   // reserved: ListView / Tooltip / Tab text
     std::optional<Color> chrome_bg;     // reserved: ListView / Tooltip / Tab bg
     std::optional<Color> bar_color;     // ProgressBar fill (default: palette.accent)
+    std::optional<int>   elevation;     // CP16: 0 (flat, default) / 1 / 2 / 3 — Panel-only; ignored elsewhere
 };
 
 } // namespace nfui
