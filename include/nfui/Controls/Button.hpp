@@ -10,6 +10,7 @@ namespace nfui {
 struct ButtonStyle {
     std::optional<int>   corner_radius;
     std::optional<Color> border_color;
+    std::optional<Color> focus_ring_color;  // CP9 a11y: inset keyboard-focus ring; defaults to accent_text
     std::optional<int>   horizontal_padding;
     std::optional<int>   vertical_padding;
     std::optional<bool>  use_semibold;
