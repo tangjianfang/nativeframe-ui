@@ -78,6 +78,7 @@ public:
             return false;
         }
 
+        dpi_ = nfui::DpiScale(nfui::dpi_of(hwnd()));
         apply_window_icon();
         if (!create_children()) {
             return false;
@@ -116,6 +117,7 @@ protected:
                              suggested->bottom - suggested->top,
                              SWP_NOACTIVATE | SWP_NOZORDER);
             }
+            apply_native_fonts();
             refresh_layout();
             InvalidateRect(hwnd(), nullptr, FALSE);
             return 0;
@@ -156,11 +158,18 @@ private:
         if (!status_.create(params)) {
             return false;
         }
+        apply_native_fonts();
+        return true;
+    }
+
+    void apply_native_fonts() noexcept {
+        if (status_.hwnd() == nullptr) {
+            return;
+        }
         SendMessageW(status_.hwnd(),
                      WM_SETFONT,
                      reinterpret_cast<WPARAM>(fonts_.regular(dpi_.dpi(), 9)),
                      TRUE);
-        return true;
     }
 
     void apply_window_icon() noexcept {

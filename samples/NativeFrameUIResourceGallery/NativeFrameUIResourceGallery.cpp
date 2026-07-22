@@ -69,6 +69,7 @@ public:
             return false;
         }
 
+        dpi_ = nfui::DpiScale(nfui::dpi_of(hwnd()));
         if (!create_children()) {
             return false;
         }
