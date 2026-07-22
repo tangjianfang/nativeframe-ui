@@ -4,8 +4,18 @@ date: 2026-07-22
 tags: [memorydc, fallback, paint]
 severity: minor
 effort: trivial
-status: open
+status: resolved
+resolved: 2026-07-23
 ---
+
+> **Resolved (2026-07-23, CP9C):** implemented in `src/paint/Paint.cpp`
+> `MemoryDC::MemoryDC`. Both `CreateCompatibleDC` and `CreateCompatibleBitmap`
+> failures now tear down any partially-built state, clear `mem_dc_` (so
+> `valid()==false`), assert in `_DEBUG`, and `OutputDebugStringW` a
+> fallback notice in release. Callers already gate on `valid()` (see
+> `OwnerDrawDC`, which picks `mem_->valid() ? mem_->dc() : dc`). Smoke test
+> now exercises the null-target / empty-rect / inverted-rect degradation
+> paths (`MemoryDC(null target)…`, `MemoryDC degradation paths…`).
 
 `nfui::MemoryDC` constructor calls `CreateCompatibleBitmap` which
 can return NULL under low-memory or GDI-handle-exhausted conditions
