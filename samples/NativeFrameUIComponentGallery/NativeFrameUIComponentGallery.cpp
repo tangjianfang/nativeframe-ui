@@ -248,6 +248,13 @@ private:
 
         // Panel + Splitter.
         if (!init(panel_,    id_panel,    L"")) return false;
+        // CP16: raise the demo Panel to elevation=2 so the gallery visually
+        // demonstrates the shadow + surface gradient path. Splitter stays
+        // at elevation=0 (its on_paint does not consume the elevation token
+        // today and the splitter chrome should read flat).
+        nfui::FrameStyle panel_style{};
+        panel_style.elevation = 2;
+        panel_.set_style(panel_style);
         if (!init(splitter_, id_splitter, L"")) return false;
 
         return true;

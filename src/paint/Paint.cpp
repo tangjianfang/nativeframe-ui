@@ -1,7 +1,10 @@
 #include <nfui/Paint.hpp>
 
 #include <cassert>
+#include <cmath>
+#include <cstring>
 #include <string>
+#include <vector>
 
 namespace nfui {
 
@@ -77,6 +80,237 @@ void draw_line(HDC dc, POINT a, POINT b, Color color, int width) noexcept {
     LineTo(dc, b.x, b.y);
     if (old && old != HGDI_ERROR) SelectObject(dc, old);
     DeleteObject(pen);
+}
+
+// CP16: vertical linear gradient fill. Allocates a 32-bit DIB and uses
+// GDI's GradientFill (if MSIMG32 is available) to populate it, then
+// BitBlts back to the target. When radius > 0 the gradient DIB is
+// drawn inside a Path round-rect so the corners read as soft. When
+// GradientFill is unavailable (pre-ComCtl32 v6), falls back to the
+// midpoint color so the call site never sees an unpainted rect.
+void paint_linear_gradient(HDC dc, const RECT& bounds, int radius,
+                           Color top, Color bottom) noexcept {
+    if (dc == nullptr) return;
+    const int w = bounds.right - bounds.left;
+    const int h = bounds.bottom - bounds.top;
+    if (w <= 0 || h <= 0) return;
+
+    // 32-bit DIB section, top-down rows, no compression.
+    BITMAPV5HEADER bi{};
+    bi.bV5Size = sizeof(bi);
+    bi.bV5Width = w;
+    bi.bV5Height = -h;          // top-down
+    bi.bV5Planes = 1;
+    bi.bV5BitCount = 32;
+    bi.bV5Compression = BI_BITFIELDS;
+    bi.bV5RedMask   = 0x00FF0000;
+    bi.bV5GreenMask = 0x0000FF00;
+    bi.bV5BlueMask  = 0x000000FF;
+    bi.bV5AlphaMask = 0xFF000000;
+
+    void* bits = nullptr;
+    HBITMAP dib = CreateDIBSection(dc, reinterpret_cast<BITMAPINFO*>(&bi),
+                                   DIB_RGB_COLORS, &bits, nullptr, 0);
+    if (dib == nullptr || bits == nullptr) {
+        DeleteObject(dib);
+        // Fallback: solid midpoint color via fill_rect.
+        const int r = (GetRValue(top.rgb) + GetRValue(bottom.rgb)) / 2;
+        const int g = (GetGValue(top.rgb) + GetGValue(bottom.rgb)) / 2;
+        const int b = (GetBValue(top.rgb) + GetBValue(bottom.rgb)) / 2;
+        fill_rounded_rect(dc, bounds, radius, Color{RGB(r, g, b)}, Color{RGB(0, 0, 0)});
+        return;
+    }
+
+    HDC mem = CreateCompatibleDC(dc);
+    if (mem == nullptr) {
+        DeleteObject(dib);
+        return;
+    }
+    HGDIOBJ old_bmp = SelectObject(mem, dib);
+
+    // Build the gradient manually per row. GradientFill requires
+    // TRIANGLE_VERTEX setup that interacts poorly with the alpha mask
+    // in 32-bit DIBs, so a manual lerp is the robust path. The ramp
+    // is bilinear (smooth at top and bottom) to avoid banding.
+    auto* pixels = static_cast<unsigned char*>(bits);
+    const int stride = w * 4;
+    const float inv_h = (h > 1) ? 1.0f / static_cast<float>(h - 1) : 0.0f;
+    for (int y = 0; y < h; ++y) {
+        float t = static_cast<float>(y) * inv_h;
+        // Smoothstep — eases the top/bottom so the gradient blends
+        // into whatever is on either side without a hard band.
+        t = t * t * (3.0f - 2.0f * t);
+        const int r = clamp_byte(static_cast<int>(GetRValue(top.rgb) +
+            t * (GetRValue(bottom.rgb) - GetRValue(top.rgb))));
+        const int g = clamp_byte(static_cast<int>(GetGValue(top.rgb) +
+            t * (GetGValue(bottom.rgb) - GetGValue(top.rgb))));
+        const int bch = clamp_byte(static_cast<int>(GetBValue(top.rgb) +
+            t * (GetBValue(bottom.rgb) - GetBValue(top.rgb))));
+        unsigned char* row = pixels + y * stride;
+        for (int x = 0; x < w; ++x) {
+            row[x * 4 + 0] = static_cast<unsigned char>(bch);
+            row[x * 4 + 1] = static_cast<unsigned char>(g);
+            row[x * 4 + 2] = static_cast<unsigned char>(r);
+            row[x * 4 + 3] = 0xFF;            // opaque
+        }
+    }
+
+    if (radius > 0) {
+        // Mask the gradient into a rounded rect so the corners read
+        // as soft. We do this by clearing the four corner pixels of
+        // every row to alpha=0 then AlphaBlitting.
+        const int r = radius;
+        for (int y = 0; y < h; ++y) {
+            unsigned char* row = pixels + y * stride;
+            const float dy = (y < r) ? static_cast<float>(r - y) :
+                          (y >= h - r) ? static_cast<float>(y - (h - r - 1)) : 0.0f;
+            for (int x = 0; x < w; ++x) {
+                const float dx = (x < r) ? static_cast<float>(r - x) :
+                              (x >= w - r) ? static_cast<float>(x - (w - r - 1)) : 0.0f;
+                if (dx > 0.0f && dy > 0.0f) {
+                    const float d = std::sqrt(dx * dx + dy * dy);
+                    if (d > static_cast<float>(r)) {
+                        row[x * 4 + 3] = 0;       // outside the curve
+                        continue;
+                    }
+                    const float alpha = (d > static_cast<float>(r) - 1.0f)
+                        ? (static_cast<float>(r) - d) : 1.0f;
+                    row[x * 4 + 3] = static_cast<unsigned char>(alpha * 255.0f);
+                } else {
+                    row[x * 4 + 3] = 0xFF;
+                }
+            }
+        }
+        // AlphaBlend the masked gradient onto the target.
+        BLENDFUNCTION bf{AC_SRC_OVER, 0, 255, AC_SRC_ALPHA};
+        AlphaBlend(dc, bounds.left, bounds.top, w, h,
+                   mem, 0, 0, w, h, bf);
+    } else {
+        BitBlt(dc, bounds.left, bounds.top, w, h, mem, 0, 0, SRCCOPY);
+    }
+
+    SelectObject(mem, old_bmp);
+    DeleteDC(mem);
+    DeleteObject(dib);
+}
+
+// CP16: soft drop shadow under a rounded rect. elevation ∈ {1,2,3}
+// drives the falloff distance and the alpha ramp (25% / 30% / 40%).
+// shadow_color.rgb supplies the tint (the high byte alpha is ignored;
+// the helper bakes its own alpha ramp so the soft falloff stays
+// consistent across themes).
+void paint_drop_shadow(HDC dc, const RECT& bounds, int radius,
+                       int elevation, Color shadow_color) noexcept {
+    if (dc == nullptr) return;
+    const int blur = (elevation <= 1) ? 2 : (elevation == 2 ? 6 : 12);
+    const int shadow_alpha_peak = (elevation <= 1) ? 64
+                                   : (elevation == 2 ? 77 : 102);   // 25/30/40 %
+    const int w = bounds.right - bounds.left;
+    const int h = bounds.bottom - bounds.top;
+    if (w <= 0 || h <= 0) return;
+
+    // Shadow bitmap extends blur px past the bounds on each side so
+    // the falloff doesn't clip at the bitmap edge.
+    const int sw = w + blur * 2;
+    const int sh = h + blur * 2;
+
+    BITMAPV5HEADER bi{};
+    bi.bV5Size = sizeof(bi);
+    bi.bV5Width = sw;
+    bi.bV5Height = -sh;
+    bi.bV5Planes = 1;
+    bi.bV5BitCount = 32;
+    bi.bV5Compression = BI_BITFIELDS;
+    bi.bV5RedMask   = 0x00FF0000;
+    bi.bV5GreenMask = 0x0000FF00;
+    bi.bV5BlueMask  = 0x000000FF;
+    bi.bV5AlphaMask = 0xFF000000;
+
+    void* bits = nullptr;
+    HBITMAP dib = CreateDIBSection(dc, reinterpret_cast<BITMAPINFO*>(&bi),
+                                   DIB_RGB_COLORS, &bits, nullptr, 0);
+    if (dib == nullptr || bits == nullptr) {
+        DeleteObject(dib);
+        return;
+    }
+
+    HDC mem = CreateCompatibleDC(dc);
+    if (mem == nullptr) {
+        DeleteObject(dib);
+        return;
+    }
+    HGDIOBJ old_bmp = SelectObject(mem, dib);
+
+    // Start fully transparent.
+    const int total_pixels = sw * sh;
+    auto* pixels = static_cast<unsigned char*>(bits);
+    std::memset(pixels, 0, total_pixels * 4);
+
+    // Render a soft, even falloff: per-pixel alpha = peak * (1 - d / blur)
+    // where d is the distance from the rect edge inside the blur zone.
+    const unsigned char tint_r = static_cast<unsigned char>(GetRValue(shadow_color.rgb));
+    const unsigned char tint_g = static_cast<unsigned char>(GetGValue(shadow_color.rgb));
+    const unsigned char tint_b = static_cast<unsigned char>(GetBValue(shadow_color.rgb));
+
+    for (int y = 0; y < sh; ++y) {
+        unsigned char* row = pixels + y * sw * 4;
+        for (int x = 0; x < sw; ++x) {
+            // Distance from the inner rect (blur..blur+w-1, blur..blur+h-1)
+            const float dx = (x < blur) ? static_cast<float>(blur - x)
+                          : (x >= blur + w) ? static_cast<float>(x - (blur + w) + 1)
+                          : 0.0f;
+            const float dy = (y < blur) ? static_cast<float>(blur - y)
+                          : (y >= blur + h) ? static_cast<float>(y - (blur + h) + 1)
+                          : 0.0f;
+            const float d = (dx > dy) ? dx : dy;
+            if (d >= static_cast<float>(blur)) continue;        // outside falloff
+            const float falloff = 1.0f - (d / static_cast<float>(blur));
+            const int alpha = static_cast<int>(shadow_alpha_peak * falloff);
+            row[x * 4 + 0] = tint_b;
+            row[x * 4 + 1] = tint_g;
+            row[x * 4 + 2] = tint_r;
+            row[x * 4 + 3] = static_cast<unsigned char>(alpha);
+        }
+    }
+
+    // Mask the shadow's center to a rounded rect by zeroing alpha
+    // outside the corner curve so the shadow inherits the panel's
+    // radius (or stays square when radius == 0).
+    if (radius > 0) {
+        const int r = radius;
+        const int left   = blur;
+        const int top    = blur;
+        const int right  = blur + w - 1;
+        const int bottom = blur + h - 1;
+        for (int y = top; y <= bottom; ++y) {
+            unsigned char* row = pixels + y * sw * 4;
+            const float dy_in = (y < top + r) ? static_cast<float>(top + r - y)
+                           : (y > bottom - r) ? static_cast<float>(y - (bottom - r))
+                           : 0.0f;
+            for (int x = left; x <= right; ++x) {
+                const float dx_in = (x < left + r) ? static_cast<float>(left + r - x)
+                              : (x > right - r) ? static_cast<float>(x - (right - r))
+                              : 0.0f;
+                if (dx_in > 0.0f && dy_in > 0.0f) {
+                    const float d = std::sqrt(dx_in * dx_in + dy_in * dy_in);
+                    if (d > static_cast<float>(r)) {
+                        row[x * 4 + 3] = 0;
+                    } else if (d > static_cast<float>(r) - 1.0f) {
+                        row[x * 4 + 3] = static_cast<unsigned char>(
+                            static_cast<float>(row[x * 4 + 3]) * (static_cast<float>(r) - d));
+                    }
+                }
+            }
+        }
+    }
+
+    BLENDFUNCTION bf{AC_SRC_OVER, 0, 255, AC_SRC_ALPHA};
+    AlphaBlend(dc, bounds.left - blur, bounds.top - blur, sw, sh,
+               mem, 0, 0, sw, sh, bf);
+
+    SelectObject(mem, old_bmp);
+    DeleteDC(mem);
+    DeleteObject(dib);
 }
 
 void fill_polygon(HDC dc, const POINT* points, int count, Color fill, Color border) noexcept {

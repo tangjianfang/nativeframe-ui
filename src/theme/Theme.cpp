@@ -17,6 +17,7 @@ ThemePalette theme_palette(ThemeMode mode) noexcept {
             to_color(RGB(217, 119, 87)),  to_color(RGB(232, 148, 120)), to_color(RGB(255, 255, 255)),
             to_color(RGB(58, 46, 38)),   to_color(RGB(237, 237, 235)), to_color(RGB(229, 115, 111)),
             to_color(RGB(111, 170, 130)), to_color(RGB(217, 162, 58)),
+            to_color(RGB(0, 0, 0)),       // CP16: shadow tint (alpha baked by helper)
         };
     case ThemeMode::high_contrast:
         // WCAG AAA high-contrast profile. All foreground/background pairs
@@ -60,6 +61,7 @@ ThemePalette theme_palette(ThemeMode mode) noexcept {
             to_color(RGB(255, 132, 132)), // danger       — 8.89:1 AAA
             to_color(RGB(80, 255, 132)),  // success      — 15.98:1 AAA
             to_color(RGB(255, 176, 0)),   // warning      — 11.46:1 AAA, orange to separate from yellow accent
+            to_color(RGB(255, 255, 255)), // CP16: shadow tint — HC uses a white halo so the shadow reads as a glow, not a smudge
         };
     case ThemeMode::system:
     case ThemeMode::light:
@@ -70,6 +72,7 @@ ThemePalette theme_palette(ThemeMode mode) noexcept {
             to_color(RGB(217, 119, 87)),  to_color(RGB(193, 95, 63)),   to_color(RGB(255, 255, 255)),
             to_color(RGB(242, 214, 200)), to_color(RGB(31, 30, 29)),    to_color(RGB(199, 84, 80)),
             to_color(RGB(77, 124, 95)),   to_color(RGB(184, 130, 31)),
+            to_color(RGB(0, 0, 0)),       // CP16: shadow tint (alpha baked by helper)
         };
     }
 }

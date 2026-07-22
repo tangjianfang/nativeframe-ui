@@ -15,5 +15,5 @@ target_include_directories(nfui_core
         $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
         $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/resources>
 )
-target_link_libraries(nfui_core PUBLIC comctl32)
+target_link_libraries(nfui_core PUBLIC comctl32 msimg32)
 nfui_apply_compiler_options(nfui_core)
