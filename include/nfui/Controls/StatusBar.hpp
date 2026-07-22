@@ -14,6 +14,8 @@ protected:
     // P6.1: self-paint chrome with palette.surface so theme transitions are
     // clean; SB_SETBKCOLOR is unsupported in ComCtl32 v6 (see
     // docs/KNOWLEDGE/polish/2026-07-22-statusbar-theme-color.md).
+    // CP1: chained DefSubclassProc after on_paint so the OS still draws part
+    // text / size grip on top of our palette background.
     void on_paint(HDC dc, const PaintState& state) noexcept override;
     [[nodiscard]] bool wants_self_paint() const noexcept override { return true; }
     void on_subclass_mouse_move([[maybe_unused]] LPARAM lparam) noexcept override {}

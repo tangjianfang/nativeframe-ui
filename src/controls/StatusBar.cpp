@@ -11,9 +11,11 @@ bool StatusBar::create(const ControlCreateParams& params) noexcept {
 }
 
 void StatusBar::on_paint(HDC dc, const PaintState& state) noexcept {
-    // P6.1: self-paint the bar background with palette.surface; ComCtl32 v6
+// P6.1: self-paint the bar background with palette.surface; ComCtl32 v6
     // ignores SB_SETBKCOLOR. See
     // docs/KNOWLEDGE/polish/2026-07-22-statusbar-theme-color.md.
+    // CP1: use MemoryDC-backed paint so the result composes cleanly with the
+    // OS-drawn part text / size grip that DefSubclassProc paints on top.
     const ThemePalette* pal = palette();
     const ThemePalette& p = pal ? *pal : theme_palette(ThemeMode::light);
     const Color fill = style_.surface_brush.value_or(p.surface);

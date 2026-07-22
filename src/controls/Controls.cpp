@@ -200,7 +200,10 @@ LRESULT CALLBACK Control::subclass_proc(HWND hwnd,
                 control->on_paint(dc, state);
                 EndPaint(hwnd, &ps);
             }
-            return 0;
+            // Chain DefSubclassProc so the native control can render its
+            // content (notably StatusBar parts and text) over the custom
+            // palette background.
+            return DefSubclassProc(hwnd, message, wparam, lparam);
         }
         break;
     }
