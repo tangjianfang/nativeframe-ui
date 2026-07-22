@@ -6,6 +6,11 @@
 #include <windows.h>
 #include <windowsx.h>
 
+// P1.4 chrome theming: Tooltip / Panel / Splitter all adopt FrameStyle so
+// the consumer can override their fill surfaces. We tag one of each on the
+// existing demo controls so the chrome theming is visible without a separate
+// page.
+
 namespace {
 
 constexpr int id_ok = 102;
@@ -14,6 +19,9 @@ constexpr int id_list = 104;
 constexpr int id_view = 105;
 constexpr int id_icon = 106;
 constexpr int id_theme_toggle = 107;
+constexpr int id_panel = 108;
+constexpr int id_splitter = 109;
+constexpr int id_tooltip_target = 110;
 
 class ControlsWindow final : public nfui::Window {
 public:
@@ -96,6 +104,8 @@ protected:
             InvalidateRect(list_.hwnd(), nullptr, FALSE);
             InvalidateRect(view_.hwnd(), nullptr, FALSE);
             InvalidateRect(icon_.hwnd(), nullptr, FALSE);
+            InvalidateRect(panel_.hwnd(), nullptr, FALSE);
+            InvalidateRect(splitter_.hwnd(), nullptr, FALSE);
             InvalidateRect(hwnd(), nullptr, FALSE);
             return 0;
         }
@@ -223,6 +233,45 @@ private:
             ListView_InsertItem(view_.hwnd(), &item);
         }
 
+        // P1.4 chrome theming: a Panel sitting underneath the OK button and a
+        // vertical Splitter drag-handle to the right of it. Both adopt
+        // FrameStyle overrides so the consumer can prove the chrome tracks
+        // the palette without any subclass work.
+        if (!create_child(panel_, id_panel, L"", 16, 96, 96, 244)) {
+            return false;
+        }
+        nfui::FrameStyle panel_style{};
+        // Surface_brush falls back to palette.surface if unset, but we set it
+        // explicitly to highlight the override path.
+        panel_style.surface_brush = palette_.surface_hover;
+        panel_style.accent        = palette_.accent;
+        panel_.set_style(panel_style);
+
+        if (!create_child(splitter_, id_splitter, L"", 114, 96, 6, 244)) {
+            return false;
+        }
+        nfui::FrameStyle splitter_style{};
+        splitter_style.surface_brush = palette_.accent;
+        splitter_.set_style(splitter_style);
+
+        // Tooltip — invisible at rest, attached to the OK button via the
+        // documented TTM_ADDTOOL message. Demonstrates the chrome_text /
+        // chrome_bg FrameStyle fields applied through Tooltip::create().
+        if (!create_child(tooltip_, id_tooltip_target, L"", 0, 0, 0, 0)) {
+            return false;
+        }
+        nfui::FrameStyle tooltip_style{};
+        tooltip_style.chrome_text = palette_.text;
+        tooltip_style.chrome_bg    = palette_.surface;
+        tooltip_.set_style(tooltip_style);
+        TOOLINFOW tool_info{};
+        tool_info.cbSize   = sizeof(tool_info);
+        tool_info.uFlags   = TTF_SUBCLASS | TTF_IDISHWND;
+        tool_info.hwnd     = hwnd();
+        tool_info.uId      = reinterpret_cast<UINT_PTR>(ok_.hwnd());
+        tool_info.lpszText = const_cast<LPWSTR>(L"V1.4 chrome — palette.surface tooltip");
+        SendMessageW(tooltip_.hwnd(), TTM_ADDTOOL, 0, reinterpret_cast<LPARAM>(&tool_info));
+
         return true;
     }
 
@@ -237,6 +286,9 @@ private:
     nfui::ListBox list_;
     nfui::ListView view_;
     nfui::IconView icon_;
+    nfui::Panel panel_;
+    nfui::Splitter splitter_;
+    nfui::Tooltip tooltip_;
 
     void apply_toggle_theme() noexcept {
         mode_ = (mode_ == nfui::ThemeMode::dark) ? nfui::ThemeMode::light : nfui::ThemeMode::dark;
@@ -247,6 +299,25 @@ private:
         list_.set_palette(&palette_);
         view_.set_palette(&palette_);
         icon_.set_palette(&palette_);
+        panel_.set_palette(&palette_);
+        splitter_.set_palette(&palette_);
+        // Refresh FrameStyle overrides so chrome tracks the new palette.
+        nfui::FrameStyle panel_style{};
+        panel_style.surface_brush = palette_.surface_hover;
+        panel_style.accent        = palette_.accent;
+        panel_.set_style(panel_style);
+        nfui::FrameStyle splitter_style{};
+        splitter_style.surface_brush = palette_.accent;
+        splitter_.set_style(splitter_style);
+        // Tooltip chrome uses SetXxxColor APIs applied at create() — re-send
+        // them now that the palette has changed.
+        if (tooltip_.hwnd() != nullptr) {
+            const nfui::FrameStyle& tooltip_style = tooltip_.style();
+            const COLORREF fg = tooltip_style.chrome_text.value_or(palette_.text).rgb;
+            const COLORREF bg = tooltip_style.chrome_bg.value_or(palette_.surface).rgb;
+            SendMessageW(tooltip_.hwnd(), TTM_SETTIPTEXTCOLOR, 0, fg);
+            SendMessageW(tooltip_.hwnd(), TTM_SETTIPBKCOLOR,   0, bg);
+        }
         SetWindowTextW(theme_toggle_.hwnd(),
                        mode_ == nfui::ThemeMode::dark ? L"Switch to light" : L"Switch to dark");
         InvalidateRect(theme_toggle_.hwnd(), nullptr, FALSE);
@@ -255,6 +326,8 @@ private:
         InvalidateRect(list_.hwnd(), nullptr, FALSE);
         InvalidateRect(view_.hwnd(), nullptr, FALSE);
         InvalidateRect(icon_.hwnd(), nullptr, FALSE);
+        InvalidateRect(panel_.hwnd(), nullptr, FALSE);
+        InvalidateRect(splitter_.hwnd(), nullptr, FALSE);
         InvalidateRect(hwnd(), nullptr, FALSE);
     }
 };
