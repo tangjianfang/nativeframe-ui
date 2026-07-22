@@ -154,6 +154,17 @@ LRESULT CALLBACK Control::subclass_proc(HWND hwnd,
             return r;
         }
     }
+    case WM_THEMECHANGED:
+    case WM_SYSCOLORCHANGE:
+    case WM_SETTINGCHANGE: {
+        // System theme notifications do not carry the application's injected
+        // palette. Chain first so native controls refresh their own theme data,
+        // then invalidate so custom paint and native chrome converge on the
+        // same message-loop turn.
+        LRESULT r = DefSubclassProc(hwnd, message, wparam, lparam);
+        InvalidateRect(hwnd, nullptr, FALSE);
+        return r;
+    }
     case WM_SETTEXT: {
         if (control != nullptr && lparam != 0) {
             try {

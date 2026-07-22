@@ -33,6 +33,10 @@ void Button::on_paint(HDC dc, const PaintState& state) noexcept {
     const RECT paint_bounds = mem.valid()
         ? RECT{0, 0, b.right - b.left, b.bottom - b.top}
         : b;
+    // RoundRect leaves the four outside corner pixels untouched. Clear those
+    // pixels from the current palette first so a theme swap cannot preserve a
+    // frame from the previous palette in the rounded boundary.
+    fill_rect(target, paint_bounds, p.background);
     fill_rounded_rect(target, paint_bounds, radius, face, border);
     FontCache* cache = fonts();
     HFONT font = nullptr;

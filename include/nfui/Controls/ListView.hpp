@@ -25,6 +25,7 @@ public:
 protected:
     // Consumes NMLVCUSTOMDRAW during CDDS_ITEMPREPAINT; returns CDRF_NEWFONT or CDRF_DODEFAULT.
     LRESULT on_custom_draw_item(NMLVCUSTOMDRAW* cd) noexcept;
+    void on_palette_changed() noexcept override;
 private:
     friend class Control;
     ListViewStyle style_{};
