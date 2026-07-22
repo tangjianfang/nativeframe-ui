@@ -177,6 +177,21 @@ target_link_libraries(NativeFrameUIControlsPlayground PRIVATE NativeFrameUI::Nat
 nfui_apply_compiler_options(NativeFrameUIControlsPlayground)
 nfui_add_resources(NativeFrameUIControlsPlayground)
 
+add_executable(NativeFrameUIDialogTour WIN32
+    samples/NativeFrameUIDialogTour/NativeFrameUIDialogTour.cpp
+)
+# CP12: DialogTour uses nfui::Dialog (nfui_dialog) + a custom : public nfui::Window
+# + Application. No framework controls — the dialog template owns its own
+# native Edit / CheckBox / ComboBox.
+target_link_libraries(NativeFrameUIDialogTour PRIVATE
+    NativeFrameUI::nfui_core
+    NativeFrameUI::nfui_theme
+    NativeFrameUI::nfui_window
+    NativeFrameUI::nfui_dialog
+)
+nfui_apply_compiler_options(NativeFrameUIDialogTour)
+nfui_add_resources(NativeFrameUIDialogTour)
+
 if(BUILD_TESTING)
     add_executable(NativeFrameUISmokeTest
         tests/nativeframeui_smoke.cpp
