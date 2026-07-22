@@ -149,4 +149,9 @@ if(BUILD_TESTING)
                 ${CMAKE_CURRENT_SOURCE_DIR}/tools/verify_boundaries.ps1
                 -Root ${CMAKE_CURRENT_SOURCE_DIR}
     )
+    add_test(NAME NativeFrameUIArchitectureCheck
+        COMMAND powershell -NoProfile -ExecutionPolicy Bypass -File
+                ${CMAKE_CURRENT_SOURCE_DIR}/tools/verify_architecture.ps1
+                -Root ${CMAKE_CURRENT_SOURCE_DIR}
+    )
 endif()
