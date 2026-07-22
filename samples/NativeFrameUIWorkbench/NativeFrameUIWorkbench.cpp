@@ -90,6 +90,15 @@ public:
         HMENU help_menu = CreatePopupMenu();
         AppendMenuW(help_menu, MF_STRING, command_about, L"&About");
         AppendMenuW(menu, MF_POPUP, reinterpret_cast<UINT_PTR>(help_menu), L"&Help");
+        // CP22: the menu / context menu here are intentionally raw native
+        // chrome. The workbench's stated purpose is to exercise the
+        // resource dialog and the framework controls (ListView / TreeView /
+        // TabControl / Edit / StatusBar); driving the menu through a
+        // framework wrapper would be a separate round of work. The chosen
+        // path also keeps the menu surface identical to ResourceGallery's
+        // demo of LoadMenuW so reviewers can compare. To distinguish the
+        // raw menu from themed chrome, every other surface in this window
+        // adopts the shared palette / font cache.
         SetMenu(hwnd(), menu);
 
         // create_children() -> apply_native_fonts() needs a valid DPI before
@@ -271,6 +280,13 @@ private:
         SendMessageW(list_.hwnd(),         WM_SETFONT, reinterpret_cast<WPARAM>(ui_font), TRUE);
         SendMessageW(progress_.hwnd(),     WM_SETFONT, reinterpret_cast<WPARAM>(ui_font), TRUE);
         SendMessageW(status_.hwnd(),       WM_SETFONT, reinterpret_cast<WPARAM>(ui_font), TRUE);
+        // CP22: inspector_ is a self-painting StaticText so it does not need
+        // WM_SETFONT for the text itself, but the prior omission left the
+        // "Inspector: ..." caption rendered with a different face than the
+        // siblings (Tahoma-ish 8pt vs Segoe UI 9pt). Forcing the cached
+        // Segoe UI face keeps the inspector label in the same family as
+        // every other native chrome surface.
+        SendMessageW(inspector_.hwnd(),    WM_SETFONT, reinterpret_cast<WPARAM>(ui_font), TRUE);
     }
 
     static TVINSERTSTRUCTW tree_item(const wchar_t* text) {

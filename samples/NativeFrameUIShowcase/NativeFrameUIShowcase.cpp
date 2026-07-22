@@ -63,10 +63,36 @@ protected:
             }
             return 0;
         case WM_LBUTTONDOWN:
+            // CP22: a mouse click on a paint-only affordance (theme toggle
+            // or nav row) also moves keyboard focus onto it so Tab/Enter
+            // behave consistently with the click path.
             if (view_.on_left_button_down({GET_X_LPARAM(lparam), GET_Y_LPARAM(lparam)})) {
                 InvalidateRect(hwnd(), nullptr, FALSE);
             }
             return 0;
+        case WM_KEYDOWN: {
+            // CP22: keyboard navigation across the painted affordances.
+            bool redraw = false;
+            switch (wparam) {
+            case VK_TAB:
+                view_.cycle_focus((GetKeyState(VK_SHIFT) & 0x8000) != 0);
+                redraw = true;
+                break;
+            case VK_RETURN:
+            case VK_SPACE:
+                if (view_.activate_focused()) {
+                    redraw = true;
+                }
+                break;
+            default:
+                break;
+            }
+            if (redraw) {
+                InvalidateRect(hwnd(), nullptr, FALSE);
+                return 0;
+            }
+            return 0;
+        }
         case WM_DPICHANGED: {
             auto* suggested = reinterpret_cast<RECT*>(lparam);
             view_.set_dpi(HIWORD(wparam));

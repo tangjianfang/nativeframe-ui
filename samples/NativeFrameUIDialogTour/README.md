@@ -23,16 +23,21 @@ copy-pasteable pattern for:
 
 ## Key controls
 
-The main window itself uses only raw `BUTTON` controls (no framework
-wrapper). The framework surface it exercises:
+CP22: the launch buttons now go through `nfui::Button` and the status strip
+through `nfui::StaticText`, so the chrome is palette-driven and matches the
+rest of the framework surface (previously these were raw `BUTTON` /
+`STATIC` with native Win32 grey + Tahoma 8pt). The framework surface the
+sample exercises:
 
 | Surface | Where |
 |---|---|
 | `nfui::Application` | `app.run()` host / `Application` instance |
 | `nfui::Window` (custom `: public`) | the tour window + `handle_message` dispatch |
+| `nfui::Button` | `about_btn_`, `prefs_btn_`, `close_btn_` |
+| `nfui::StaticText` | `status_label_` (bottom strip) |
 | `nfui::Dialog` | `about_.show_modal(...)`, `prefs_.show_modeless(...)` |
 | `nfui::OwnedHwnd` | inside `Dialog`, owning the modeless HWND |
-| `nfui::ThemePalette` | `app_` baseline (not switched in this sample) |
+| `nfui::ThemePalette` + `nfui::FontCache` | shared by every wrapper |
 
 The modeless **preferences** dialog uses three native controls defined in
 `IDD_NFUI_PREFS` (see `resources/NativeFrameUI.rc`):
@@ -67,15 +72,13 @@ target_link_libraries(NativeFrameUIDialogTour PRIVATE
     NativeFrameUI::nfui_theme
     NativeFrameUI::nfui_window
     NativeFrameUI::nfui_dialog
+    NativeFrameUI::nfui_button
+    NativeFrameUI::nfui_text
 )
 ```
 
 ## Known limitations
 
-- The status strip is a native `STATIC` (sunken frame) rather than a
-  framework `StaticText`. The sample focuses on the dialog wrapper, not on
-  control theming; `NativeFrameUIComponentGallery` covers the
-  framework-controlled equivalent.
 - The modeless dialog's HWND is tracked via a single global pointer
   (`g_modeless_dlg`) because the message loop needs it before the
   `Dialog` wrapper can be queried. Two simultaneous modeless dialogs
