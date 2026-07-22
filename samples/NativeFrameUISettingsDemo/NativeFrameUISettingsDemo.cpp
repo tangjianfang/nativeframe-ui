@@ -166,11 +166,19 @@ private:
             24,
         };
 
-        // The save button self-paints in coral via the shared Button path; it
-        // needs the Claude palette + Segoe UI font injected so it matches the
-        // rest of the shell.
-        save_button_.set_palette(&palette_);
-        save_button_.set_font_cache(&fonts_);
+        // Bind every wrapper before creation so self-painted and native
+        // controls share one visual dependency path. Native controls retain
+        // their Win32 chrome and receive the cached UI font below.
+        categories_.inject_theme(&palette_, &fonts_);
+        profile_name_.inject_theme(&palette_, &fonts_);
+        workspace_root_.inject_theme(&palette_, &fonts_);
+        theme_combo_.inject_theme(&palette_, &fonts_);
+        telemetry_.inject_theme(&palette_, &fonts_);
+        startup_.inject_theme(&palette_, &fonts_);
+        save_button_.inject_theme(&palette_, &fonts_);
+        status_label_.inject_theme(&palette_, &fonts_);
+        description_.inject_theme(&palette_, &fonts_);
+        status_bar_.inject_theme(&palette_, &fonts_);
 
         if (!categories_.create(params)) {
             return false;
@@ -314,7 +322,7 @@ private:
         GetWindowRect(status_bar_.hwnd(), &status_rect);
         const int status_height = status_rect.bottom - status_rect.top;
         const int outer = dpi_.logical_to_pixels(20);
-        const int gap = dpi_.logical_to_pixels(14);
+        const int gap = dpi_.logical_to_pixels(16);
         const int panel_top = dpi_.logical_to_pixels(132);
         const int category_width = dpi_.logical_to_pixels(220);
         const int label_height = dpi_.logical_to_pixels(22);

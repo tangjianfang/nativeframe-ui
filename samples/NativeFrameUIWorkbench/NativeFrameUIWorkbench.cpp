@@ -159,6 +159,20 @@ private:
             24,
         };
 
+        // Bind shared visual dependencies before creating any HWND so every
+        // wrapper starts with the same palette and font cache. Native controls
+        // still keep their system chrome; self-painted controls consume these
+        // pointers directly.
+        search_.inject_theme(&palette_, &fonts_);
+        tree_.inject_theme(&palette_, &fonts_);
+        tabs_.inject_theme(&palette_, &fonts_);
+        list_.inject_theme(&palette_, &fonts_);
+        inspector_.inject_theme(&palette_, &fonts_);
+        status_.inject_theme(&palette_, &fonts_);
+        progress_.inject_theme(&palette_, &fonts_);
+        left_splitter_.inject_theme(&palette_, &fonts_);
+        right_splitter_.inject_theme(&palette_, &fonts_);
+
         static_cast<void>(search_.create(params));
 
         params.control_id = id_tree;
@@ -175,11 +189,8 @@ private:
         insert_tab(1, L"Output");
 
         params.control_id = id_list;
-        // Wire the ListView to the Claude palette + Segoe UI cache before
-        // create(): the Win32 chrome is initialised inside create() and our
-        // custom-draw path reads palette_, so it must be live by then.
-        list_.set_palette(&palette_);
-        list_.set_font_cache(&fonts_);
+        // The ListView custom-draw path reads the shared palette injected
+        // above, so it is ready before its first paint.
         static_cast<void>(list_.create(params));
         ListView_SetExtendedListViewStyle(list_.hwnd(), LVS_EX_FULLROWSELECT | LVS_EX_GRIDLINES);
         LVCOLUMNW column{};
@@ -211,12 +222,8 @@ private:
         static_cast<void>(status_.create(params));
         set_status(L"Ready - NativeFrame UI Workbench");
 
-        // The self-painting inspector (StaticText) needs the Claude palette +
-        // Segoe UI font injected so it matches the cream background. The
-        // ListView's set_palette/set_font_cache were wired above so its
-        // custom-draw path adopts the warm ink + selection tokens.
-        inspector_.set_palette(&palette_);
-        inspector_.set_font_cache(&fonts_);
+        // The self-painting inspector and ListView consume the shared palette
+        // and font cache injected before creation.
 
         // Native controls keep their Win32 chrome but adopt Segoe UI so the
         // text matches the shared paint. lParam=TRUE forces an immediate
