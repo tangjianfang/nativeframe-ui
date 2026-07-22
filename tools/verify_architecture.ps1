@@ -60,6 +60,7 @@ function Get-ModuleName {
         'Font.hpp'            { return 'font' }
         'Icon.hpp'            { return 'icon' }
         'Paint.hpp'           { return 'paint' }
+        'VectorIcon.hpp'      { return 'paint' }
         'Animation.hpp'      { return 'paint' }
         'ResourceContext.hpp' { return 'resource' }
         'Command.hpp'         { return 'command' }

@@ -341,6 +341,41 @@ void draw_polyline(HDC dc, const POINT* points, int count, Color color, int widt
     DeleteObject(pen);
 }
 
+// CP18: ellipse helpers for vector glyphs. GDI's Ellipse() draws with the
+// currently-selected brush (interior) and pen (outline); we select NULL_PEN
+// for a pure fill and NULL_BRUSH for a pure stroke so a dot and a ring do not
+// paint each other's region. Degenerate rects are ignored to match the rect
+// helpers (a 0-area ellipse would still paint a 1px sliver on some drivers).
+void fill_ellipse(HDC dc, const RECT& bounds, Color fill) noexcept {
+    if (dc == nullptr) return;
+    const int w = bounds.right - bounds.left;
+    const int h = bounds.bottom - bounds.top;
+    if (w <= 0 || h <= 0) return;
+    HBRUSH brush = CreateSolidBrush(fill.rgb);
+    if (brush == nullptr) return;
+    HGDIOBJ old_brush = SelectObject(dc, brush);
+    HGDIOBJ old_pen = SelectObject(dc, GetStockObject(NULL_PEN));
+    Ellipse(dc, bounds.left, bounds.top, bounds.right, bounds.bottom);
+    if (old_brush && old_brush != HGDI_ERROR) SelectObject(dc, old_brush);
+    if (old_pen && old_pen != HGDI_ERROR) SelectObject(dc, old_pen);
+    DeleteObject(brush);
+}
+
+void draw_ellipse(HDC dc, const RECT& bounds, Color color, int width) noexcept {
+    if (dc == nullptr) return;
+    const int w = bounds.right - bounds.left;
+    const int h = bounds.bottom - bounds.top;
+    if (w <= 0 || h <= 0) return;
+    HPEN pen = CreatePen(PS_SOLID, width < 1 ? 1 : width, color.rgb);
+    if (pen == nullptr) return;
+    HGDIOBJ old_pen = SelectObject(dc, pen);
+    HGDIOBJ old_brush = SelectObject(dc, GetStockObject(NULL_BRUSH));
+    Ellipse(dc, bounds.left, bounds.top, bounds.right, bounds.bottom);
+    if (old_pen && old_pen != HGDI_ERROR) SelectObject(dc, old_pen);
+    if (old_brush && old_brush != HGDI_ERROR) SelectObject(dc, old_brush);
+    DeleteObject(pen);
+}
+
 void draw_text(HDC dc, const RECT& bounds, std::wstring_view text, HFONT font, Color text_color, UINT format) noexcept {
     // Note: this helper passes text.data() directly to DrawTextW without copying
     // into a mutable buffer. When the caller passes DT_END_ELLIPSIS or

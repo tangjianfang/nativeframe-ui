@@ -178,6 +178,13 @@ target_link_libraries(NativeFrameUIControlsPlayground PRIVATE NativeFrameUI::Nat
 nfui_apply_compiler_options(NativeFrameUIControlsPlayground)
 nfui_add_resources(NativeFrameUIControlsPlayground)
 
+add_executable(NativeFrameUIIconGallery WIN32
+    samples/NativeFrameUIIconGallery/NativeFrameUIIconGallery.cpp
+)
+target_link_libraries(NativeFrameUIIconGallery PRIVATE NativeFrameUI::NativeFrameUI)
+nfui_apply_compiler_options(NativeFrameUIIconGallery)
+nfui_add_resources(NativeFrameUIIconGallery)
+
 add_executable(NativeFrameUIDialogTour WIN32
     samples/NativeFrameUIDialogTour/NativeFrameUIDialogTour.cpp
 )

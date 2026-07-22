@@ -3,6 +3,7 @@
 #include <nfui/Controls/Control.hpp>
 #include <nfui/Theme.hpp>
 #include <nfui/Animation.hpp>
+#include <nfui/VectorIcon.hpp>
 
 #include <optional>
 
@@ -15,6 +16,11 @@ struct ButtonStyle {
     std::optional<int>   horizontal_padding;
     std::optional<int>   vertical_padding;
     std::optional<bool>  use_semibold;
+    // CP18: optional leading vector glyph drawn to the left of the caption.
+    // Defaults to accent_text (same as the caption) so an icon button reads
+    // against the accent face; override for semantic glyphs (search, gear).
+    std::optional<IconKind> icon;
+    std::optional<Color>    icon_color;
 };
 
 class Button : public Control {
