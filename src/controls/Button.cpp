@@ -7,7 +7,13 @@ namespace nfui {
 bool Button::create(const ControlCreateParams& params) noexcept {
     ControlCreateParams owner_params = params;
     owner_params.style &= ~WS_BORDER;
-    return create_native(L"BUTTON", owner_params, BS_OWNERDRAW | BS_FLAT);
+    // CP15: BS_FLAT alongside BS_OWNERDRAW is poison — Windows draws the
+    // default flat-button chrome (light-grey fill RGB(240,238,230)) once
+    // during the first paint cycle before our DRAWITEM handler reaches the
+    // DC. In dark mode that frame is visible as a white flash on the
+    // rounded corner until the next full repaint. Drop BS_FLAT so the
+    // first-paint chrome goes straight to our owner-draw handler.
+    return create_native(L"BUTTON", owner_params, BS_OWNERDRAW);
 }
 
 void Button::on_paint(HDC dc, const PaintState& state) noexcept {

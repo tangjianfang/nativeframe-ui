@@ -166,6 +166,7 @@ target_link_libraries(NativeFrameUIMinimal PRIVATE
     NativeFrameUI::nfui_theme
     NativeFrameUI::nfui_control_base
     NativeFrameUI::nfui_button
+    NativeFrameUI::nfui_text
 )
 nfui_apply_compiler_options(NativeFrameUIMinimal)
 nfui_add_resources(NativeFrameUIMinimal)

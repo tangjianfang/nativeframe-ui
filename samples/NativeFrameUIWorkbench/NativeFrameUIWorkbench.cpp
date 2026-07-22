@@ -32,12 +32,38 @@ public:
             return true;
         });
         commands_.set_handler(nfui::CommandId{command_about}, [this](nfui::CommandId) {
-            MessageBoxW(hwnd(),
-                        L"NativeFrame UI Workbench\nPure Win32 integration sample.",
-                        L"About NativeFrame UI",
-                        MB_OK | MB_ICONINFORMATION);
+            // CP15: route the About dialog through the framework's
+            // nfui::Dialog wrapper over IDD_NFUI_ABOUT instead of the
+            // system MessageBoxW. Native MessageBox chrome bypasses every
+            // visual contract in the framework and reads as 1995-era
+            // USER32 chrome on Win11; nfui::Dialog honours the same
+            // palette and font cache the rest of the workbench uses.
+            static_cast<void>(about_.show_modal(instance_,
+                                                MAKEINTRESOURCEW(IDD_NFUI_ABOUT),
+                                                hwnd(),
+                                                &WorkbenchWindow::about_dlg_proc));
             return true;
         });
+    }
+
+    static INT_PTR CALLBACK about_dlg_proc(HWND dlg, UINT msg, WPARAM wp, LPARAM lp) {
+        (void)wp;
+        (void)lp;
+        switch (msg) {
+            case WM_INITDIALOG:
+                return TRUE;
+            case WM_COMMAND:
+                if (LOWORD(wp) == IDOK || LOWORD(wp) == IDCANCEL) {
+                    EndDialog(dlg, LOWORD(wp));
+                    return TRUE;
+                }
+                return FALSE;
+            case WM_CLOSE:
+                EndDialog(dlg, IDCANCEL);
+                return TRUE;
+            default:
+                return FALSE;
+        }
     }
 
     [[nodiscard]] bool create_main(int show_command) noexcept {
@@ -318,6 +344,7 @@ private:
     HINSTANCE instance_{};
     nfui::ResourceContext resources_;
     nfui::CommandRouter commands_;
+    nfui::Dialog about_{};
     nfui::ThemePalette palette_;
     nfui::FontCache fonts_;
     nfui::Edit search_;

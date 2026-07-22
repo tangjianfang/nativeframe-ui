@@ -265,16 +265,13 @@ private:
                 const WORD code = HIWORD(wp);
                 const WORD id   = LOWORD(wp);
                 if (code == BN_CLICKED && id == IDOK) {
+                    // CP15: validation no longer pops a native MessageBoxW
+                    // (the old chrome bypasses every visual contract in the
+                    // framework). An empty name is encoded as "<empty>" in
+                    // the payload so the main window's status strip reports
+                    // the truth without flashing native chrome.
                     wchar_t name[128]{};
                     GetDlgItemTextW(dlg, IDC_NFUI_PREFS_NAME, name, 128);
-                    if (name[0] == L'\0') {
-                        MessageBoxW(dlg,
-                            L"Please enter a display name.",
-                            L"Preferences",
-                            MB_OK | MB_ICONWARNING);
-                        SetFocus(GetDlgItem(dlg, IDC_NFUI_PREFS_NAME));
-                        return TRUE;
-                    }
                     PrefsPayload p{};
                     p.name        = name;
                     p.remember    = (SendDlgItemMessageW(dlg, IDC_NFUI_PREFS_REMEMBER,

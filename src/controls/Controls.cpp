@@ -200,7 +200,13 @@ LRESULT CALLBACK Control::subclass_proc(HWND hwnd,
         break; // other notify codes → DefSubclassProc
     }
     case WM_PAINT: {
-        if (control != nullptr && control->wants_self_paint()) {
+        // CP15: skip the self-paint path when the HWND carries an
+        // owner-draw style flag. SS_OWNERDRAW / BS_OWNERDRAW controls
+        // receive WM_DRAWITEM for full custom paint; letting WM_PAINT
+        // through here would double-paint the same client area.
+        if (control != nullptr
+            && control->wants_self_paint()
+            && !control_is_owner_draw(hwnd)) {
             PAINTSTRUCT ps{};
             HDC dc = BeginPaint(hwnd, &ps);
             if (dc != nullptr) {
