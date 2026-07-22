@@ -94,16 +94,15 @@ void ComboBox::paint_chrome() noexcept {
     const bool dropped = SendMessageW(hwnd(), CB_GETDROPPEDSTATE, 0, 0) != FALSE;
     const Color border = !enabled
         ? alpha_blend(p.border, p.background, 0.55f)
-        : (focused ? p.accent_hover : p.border);
+        : (focused ? p.accent : p.border);
+    const int border_width = (enabled && focused) ? 2 : 1;
 
     HDC window_dc = GetWindowDC(hwnd());
     if (window_dc != nullptr) {
         RECT bounds{};
         GetWindowRect(hwnd(), &bounds);
         OffsetRect(&bounds, -bounds.left, -bounds.top);
-        SetDCBrushColor(window_dc, border.rgb);
-        FrameRect(window_dc, &bounds,
-                  static_cast<HBRUSH>(GetStockObject(DC_BRUSH)));
+        paint_focus_border(window_dc, bounds, border, border_width);
         ReleaseDC(hwnd(), window_dc);
     }
 

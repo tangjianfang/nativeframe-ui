@@ -51,11 +51,15 @@ void Edit::paint_border() noexcept {
     const ThemePalette& p = effective_palette(palette());
     const bool enabled = IsWindowEnabled(hwnd()) != FALSE;
     const bool focused = GetFocus() == hwnd();
+    // CP19: distinct accent focus ring. Unfocused/disabled use the 1px chrome
+    // border; focused paints a 2px accent border so the active field reads
+    // unmistakably across light/dark/high-contrast themes (previously the focus
+    // state only nudged the border hue to accent_hover, which was easy to miss).
     const Color border = !enabled
         ? alpha_blend(p.border, p.background, 0.55f)
-        : (focused ? p.accent_hover : p.border);
-    SetDCBrushColor(dc, border.rgb);
-    FrameRect(dc, &bounds, static_cast<HBRUSH>(GetStockObject(DC_BRUSH)));
+        : (focused ? p.accent : p.border);
+    const int width = (enabled && focused) ? 2 : 1;
+    paint_focus_border(dc, bounds, border, width);
     ReleaseDC(hwnd(), dc);
 }
 

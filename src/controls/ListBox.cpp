@@ -5,11 +5,91 @@
 
 namespace nfui {
 
+namespace {
+
+const ThemePalette& effective_palette(const ThemePalette* injected) noexcept {
+    static const ThemePalette fallback = theme_palette(ThemeMode::light);
+    return injected ? *injected : fallback;
+}
+
+} // namespace
+
 bool ListBox::create(const ControlCreateParams& params) noexcept {
     if (!create_native(L"LISTBOX", params, WS_BORDER | LBS_NOTIFY | LBS_OWNERDRAWFIXED | LBS_HASSTRINGS | WS_VSCROLL)) return false;
     const int row = font_pixel_height(font_pt::ui, dpi_of(hwnd())) + 8;
     SendMessageW(hwnd(), LB_SETITEMHEIGHT, 0, static_cast<LPARAM>(row));
+    // CP19: install a chrome subclass alongside the base Control subclass_proc
+    // (which still owns OCM_DRAWITEM reflection + row-hover). This proc only
+    // owns the non-client focus ring; DefSubclassProc chains back to the base.
+    if (SetWindowSubclass(hwnd(), &ListBox::visual_subclass_proc,
+                          reinterpret_cast<UINT_PTR>(this),
+                          reinterpret_cast<DWORD_PTR>(this)) == FALSE) {
+        DestroyWindow(hwnd());
+        return false;
+    }
     return true;
+}
+
+void ListBox::paint_border() noexcept {
+    if (!valid()) {
+        return;
+    }
+    HDC dc = GetWindowDC(hwnd());
+    if (dc == nullptr) {
+        return;
+    }
+    RECT bounds{};
+    GetWindowRect(hwnd(), &bounds);
+    OffsetRect(&bounds, -bounds.left, -bounds.top);
+    const ThemePalette& p = effective_palette(palette());
+    const bool enabled = IsWindowEnabled(hwnd()) != FALSE;
+    const bool focused = GetFocus() == hwnd();
+    const Color border = !enabled
+        ? alpha_blend(p.border, p.background, 0.55f)
+        : (focused ? p.accent : p.border);
+    const int width = (enabled && focused) ? 2 : 1;
+    paint_focus_border(dc, bounds, border, width);
+    ReleaseDC(hwnd(), dc);
+}
+
+LRESULT CALLBACK ListBox::visual_subclass_proc(HWND hwnd,
+                                                UINT message,
+                                                WPARAM wparam,
+                                                LPARAM lparam,
+                                                UINT_PTR subclass_id,
+                                                DWORD_PTR ref_data) noexcept {
+    auto* box = reinterpret_cast<ListBox*>(ref_data);
+    if (box == nullptr) {
+        return DefSubclassProc(hwnd, message, wparam, lparam);
+    }
+    switch (message) {
+    case WM_SETFOCUS:
+    case WM_KILLFOCUS:
+    case WM_ENABLE: {
+        LRESULT result = DefSubclassProc(hwnd, message, wparam, lparam);
+        RedrawWindow(hwnd, nullptr, nullptr,
+                     RDW_INVALIDATE | RDW_FRAME | RDW_UPDATENOW);
+        return result;
+    }
+    case WM_NCPAINT: {
+        LRESULT result = DefSubclassProc(hwnd, message, wparam, lparam);
+        box->paint_border();
+        return result;
+    }
+    case WM_THEMECHANGED:
+    case WM_SYSCOLORCHANGE:
+    case WM_SETTINGCHANGE: {
+        LRESULT result = DefSubclassProc(hwnd, message, wparam, lparam);
+        RedrawWindow(hwnd, nullptr, nullptr, RDW_INVALIDATE | RDW_FRAME);
+        return result;
+    }
+    case WM_NCDESTROY:
+        RemoveWindowSubclass(hwnd, &ListBox::visual_subclass_proc, subclass_id);
+        return DefSubclassProc(hwnd, message, wparam, lparam);
+    default:
+        break;
+    }
+    return DefSubclassProc(hwnd, message, wparam, lparam);
 }
 
 void ListBox::set_hovered_row(int row) noexcept {
@@ -83,6 +163,15 @@ void ListBox::on_subclass_mouse_move(LPARAM lparam) noexcept {
 
 void ListBox::on_subclass_mouse_leave() noexcept {
     set_hovered_row(-1);
+}
+
+void ListBox::on_palette_changed() noexcept {
+    // Repaint the non-client focus ring as well as the client rows so a palette
+    // swap never leaves the old border colour behind.
+    if (valid()) {
+        RedrawWindow(hwnd(), nullptr, nullptr,
+                     RDW_INVALIDATE | RDW_ERASE | RDW_FRAME | RDW_UPDATENOW);
+    }
 }
 
 } // namespace nfui
