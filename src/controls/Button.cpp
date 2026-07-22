@@ -48,8 +48,8 @@ void Button::on_paint(HDC dc, const PaintState& state) noexcept {
     if (cache != nullptr) {
         const int dpi = dpi_of(hwnd());
         font = style_.use_semibold.value_or(false)
-            ? cache->semibold(dpi, 9)
-            : cache->regular(dpi, 9);
+            ? cache->semibold(dpi, font_pt::ui)
+            : cache->regular(dpi, font_pt::ui);
     }
     draw_text(target, paint_bounds, caption(), font, text_color,
               DT_CENTER | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS);

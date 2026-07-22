@@ -7,7 +7,7 @@ namespace nfui {
 
 bool ListBox::create(const ControlCreateParams& params) noexcept {
     if (!create_native(L"LISTBOX", params, WS_BORDER | LBS_NOTIFY | LBS_OWNERDRAWFIXED | LBS_HASSTRINGS | WS_VSCROLL)) return false;
-    const int row = font_pixel_height(9, dpi_of(hwnd())) + 8;
+    const int row = font_pixel_height(font_pt::ui, dpi_of(hwnd())) + 8;
     SendMessageW(hwnd(), LB_SETITEMHEIGHT, 0, static_cast<LPARAM>(row));
     return true;
 }
@@ -50,7 +50,7 @@ void ListBox::draw_item(DRAWITEMSTRUCT* di) noexcept {
         if (len != LB_ERR && len < 255) {
             wchar_t buf[256]{};
             if (SendMessageW(di->hwndItem, LB_GETTEXT, di->itemID, reinterpret_cast<LPARAM>(buf)) != LB_ERR) {
-                HFONT font = fonts() ? fonts()->regular(dpi_of(di->hwndItem), 9) : nullptr;
+                HFONT font = fonts() ? fonts()->regular(dpi_of(di->hwndItem), font_pt::ui) : nullptr;
                 RECT text_rc = rc;
                 text_rc.left += style_.horizontal_padding.value_or(8);
                 draw_text(di->hDC, text_rc, buf, font, fg, DT_LEFT | DT_VCENTER | DT_SINGLELINE);

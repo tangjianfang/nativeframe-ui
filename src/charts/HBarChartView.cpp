@@ -14,9 +14,9 @@ namespace nfui {
 namespace {
 
 // Tick visual constants match BarChartView so the two renders stay visually
-// consistent when shown side-by-side. Legend-specific constants live in
+// consistent when shown side-by-side. Mono tick label point size uses the
+// shared font_pt token (font_pt::chart_tick). Legend constants live in
 // internal/ChartsPaint.cpp.
-constexpr int kTickFontPt = 9;
 constexpr int kTickCount = 5;
 constexpr int kAxisLabelGutter = 18;
 // Half-width of the tick-label text rect on the value axis (centered under
@@ -231,7 +231,7 @@ void HBarChartView::on_paint(HDC hdc, const RECT& bounds) {
     }
 
     const int dpi = (hwnd() != nullptr) ? dpi_of(hwnd()) : 96;
-    HFONT tick_font = (fonts_ != nullptr) ? fonts_->mono(dpi, kTickFontPt) : nullptr;
+    HFONT tick_font = (fonts_ != nullptr) ? fonts_->mono(dpi, font_pt::chart_tick) : nullptr;
 
     // In stacked mode the tick labels should reflect the row-sum range, not
     // the per-series axis range, so the x-axis reads [axis_y_.min, max_row_sum].

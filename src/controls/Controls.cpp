@@ -100,7 +100,7 @@ LRESULT CALLBACK Control::subclass_proc(HWND hwnd,
     case ocm_base + WM_MEASUREITEM: {
         auto* mi = reinterpret_cast<MEASUREITEMSTRUCT*>(lparam);
         if (mi != nullptr && mi->CtlType == ODT_LISTBOX) {
-            mi->itemHeight = static_cast<UINT>(font_pixel_height(9, dpi_of(hwnd)) + 8);
+            mi->itemHeight = static_cast<UINT>(font_pixel_height(font_pt::ui, dpi_of(hwnd)) + 8);
             return TRUE;
         }
         break; // let DefSubclassProc handle unknown CtlTypes
