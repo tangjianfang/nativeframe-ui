@@ -49,8 +49,10 @@ void draw_default_placeholder(HWND hwnd,
     draw_line(target, POINT{legend.right, legend.top}, POINT{legend.right, legend.bottom}, palette.border, 1);
 
     // Mono tick labels along x (bottom) and y (left). Real axis ticks land in C3/C4.
+    // Point 9 matches the C3/C4 tick font so the default placeholder reads with the
+    // same weight as the real axis labels once a subclass overrides on_paint.
     const int dpi = (hwnd != nullptr) ? dpi_of(hwnd) : 96;
-    HFONT tick_font = (fonts != nullptr) ? fonts->mono(dpi, 8) : nullptr;
+    HFONT tick_font = (fonts != nullptr) ? fonts->mono(dpi, 9) : nullptr;
     wchar_t buf[32]{};
     for (int i = 0; i <= 4; ++i) {
         const int x = plot.left + (plot.right - plot.left) * i / 4;

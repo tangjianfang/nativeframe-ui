@@ -1,9 +1,9 @@
 // Shared legend-column drawing helper for the 4 chart views. Lifted from
 // BarChartView / HBarChartView / LineChartView / SplineChartView so all four
 // render the legend identically: a surface-coloured column with a 1px border,
-// one rounded swatch and one mono series-name label per row, vertically
-// centered in the plot band. Public callers go through the views; this file
-// is internal to nfui_charts.
+// one rounded swatch and one series-name label per row, vertically centered
+// in the plot band. Public callers go through the views; this file is
+// internal to nfui_charts.
 
 #include "ChartsPaint.hpp"
 
@@ -22,6 +22,11 @@ constexpr int kLegendSwatch = 12;
 constexpr int kLegendPadX = 8;
 constexpr int kLegendPadY = 6;
 constexpr int kLegendRowH = 18;
+// Use Segoe UI (regular) for the series-name labels: these are prose
+// strings like "Revenue" or "Monthly revenue (USDk)", not numeric data.
+// Mono is reserved for the actual numeric tick labels so the two columns
+// read with the typographic distinction the rest of the chrome uses.
+constexpr bool kLegendUseMonoFont = false;
 // Spacing between the plot's right edge and the legend column. The old
 // per-view helpers passed `bounds` and computed this implicitly; we use
 // `plot_bounds.right` directly here.
@@ -43,7 +48,11 @@ void draw_legend_column(HDC hdc,
     // the in-view fallback behaviour the four subclasses used to do inline.
     const ThemePalette& pal =
         palette != nullptr ? *palette : theme_palette(ThemeMode::light);
-    HFONT font = (fonts != nullptr) ? fonts->mono(dpi, kLegendFontPt) : nullptr;
+    HFONT font = (fonts != nullptr)
+        ? (kLegendUseMonoFont
+            ? fonts->mono(dpi, kLegendFontPt)
+            : fonts->regular(dpi, kLegendFontPt))
+        : nullptr;
 
     const int col_w = legend_width_px;
     const int col_left = plot_bounds.right + kLegendGapPx;
