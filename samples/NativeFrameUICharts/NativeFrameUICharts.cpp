@@ -51,7 +51,7 @@ constexpr std::array<double, 12> kBarMonths = {
 
 // Three-year revenue breakdown by platform. Categories are desktop, mobile,
 // tablet, console, smart-TV. Each year's mix shifts towards mobile + TV so the
-// grouped horizontal bars show the platform shift story.
+// stacked horizontal bars show the platform shift story.
 constexpr std::array<std::wstring_view, 5> kHbarCategories = {
     L"Desktop", L"Mobile", L"Tablet", L"Console", L"Smart TV",
 };
@@ -378,6 +378,7 @@ private:
                     std::move(points)});
             }
             hbar_.set_kind(nfui::ChartKind::bar_horizontal);
+            hbar_.set_stacked(true);
             hbar_.set_series(std::move(series));
             hbar_.set_axis_y(nfui::ChartAxisRange{0.0, 100.0, L"{:.0f}"});
         }

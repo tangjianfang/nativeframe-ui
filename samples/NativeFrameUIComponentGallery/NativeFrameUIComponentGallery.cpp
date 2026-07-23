@@ -262,7 +262,10 @@ private:
 
     void apply_native_fonts() noexcept {
         const int dpi_value = dpi_.dpi();
-        const HFONT ui_font = fonts_.regular(dpi_value, 9);
+        // CP32: native HWNDs use the sm (13 pt) body scale so the gallery
+        // reads consistently with the redesigned samples. ui (9 pt) remains
+        // the historical default; sm sits one step up the design scale.
+        const HFONT ui_font = fonts_.regular(dpi_value, nfui::font_pt::sm);
         SendMessageW(listbox_.hwnd(),   WM_SETFONT, reinterpret_cast<WPARAM>(ui_font), TRUE);
         SendMessageW(combobox_.hwnd(),  WM_SETFONT, reinterpret_cast<WPARAM>(ui_font), TRUE);
         SendMessageW(edit_.hwnd(),      WM_SETFONT, reinterpret_cast<WPARAM>(ui_font), TRUE);
@@ -293,7 +296,9 @@ private:
         const int left = client.left + outer;
         const int content_left = left + label_w;
 
-        int y = client.top + outer + dpi_.logical_to_pixels(36);  // leave space for header
+        // CP32: title (xl, 28 pt) + subtitle (sm, 13 pt) own the top band;
+        // body starts below with a comfortable 16 px breathing room.
+        int y = client.top + outer + dpi_.logical_to_pixels(72);
 
         // Place one control inside its section row. Each call advances `y`.
         auto place = [&](int id, int logical_w, int logical_h) {
@@ -407,21 +412,33 @@ private:
         nfui::fill_rect(target, client, palette_.background);
 
         const int dpi_value = dpi_.dpi();
-        HFONT header_font  = fonts_.serif(dpi_value, 16);
-        HFONT section_font = fonts_.semibold(dpi_value, 9);
-        HFONT body_font    = fonts_.regular(dpi_value, 9);
+        // CP32: full design-scale typography. xl headline, sm body footer.
+        HFONT header_font  = fonts_.bold(dpi_value, nfui::font_pt::xl);
+        HFONT section_font = fonts_.semibold(dpi_value, nfui::font_pt::sm);
+        HFONT body_font    = fonts_.regular(dpi_value, nfui::font_pt::sm);
 
         const int outer = dpi_.logical_to_pixels(16);
         const int label_w = dpi_.logical_to_pixels(140);
         const int left = client.left + outer;
 
-        RECT title{left, client.top + outer, client.right - outer, client.top + outer + dpi_.logical_to_pixels(28)};
+        // Page title (xl) + sm subtitle on its own band. The subtitle reads
+        // as body copy so the title band does not feel crowded.
+        RECT title{left, client.top + outer, client.right - outer, client.top + outer + dpi_.logical_to_pixels(40)};
         nfui::draw_text(target,
                         title,
                         L"NativeFrame UI ComponentGallery",
                         header_font,
                         palette_.text,
-                        DT_LEFT | DT_TOP | DT_SINGLELINE | DT_NOPREFIX);
+                        DT_LEFT | DT_TOP | DT_SINGLELINE | DT_END_ELLIPSIS | DT_NOPREFIX);
+
+        RECT subtitle{left, title.bottom + dpi_.logical_to_pixels(2),
+                      client.right - outer, title.bottom + dpi_.logical_to_pixels(22)};
+        nfui::draw_text(target,
+                        subtitle,
+                        L"Every control class in its expected state. Vertical sections stack top to bottom.",
+                        body_font,
+                        palette_.text_secondary,
+                        DT_LEFT | DT_TOP | DT_SINGLELINE | DT_END_ELLIPSIS | DT_NOPREFIX);
 
         RECT footer{left,
                     client.bottom - outer - dpi_.logical_to_pixels(16),
@@ -429,12 +446,14 @@ private:
                     client.bottom - outer};
         nfui::draw_text(target,
                         footer,
-                        L"Every control class in its expected state. Vertical sections stack top to bottom.",
+                        L"Link-coverage smoke for the umbrella target — if any control fails to instantiate, its section will be obviously empty.",
                         body_font,
                         palette_.text_secondary,
-                        DT_LEFT | DT_TOP | DT_SINGLELINE | DT_NOPREFIX);
+                        DT_LEFT | DT_TOP | DT_SINGLELINE | DT_END_ELLIPSIS | DT_NOPREFIX);
 
-        // Section labels run down the left margin.
+        // Section labels run down the left margin. Each label gets a 2 px
+        // coral accent bar on the left edge so the column reads as a brand-
+        // consistent navigation strip rather than a plain text list.
         static constexpr const wchar_t* labels[] = {
             L"Button",
             L"CheckBox",
@@ -473,16 +492,32 @@ private:
             tall_h,
         };
 
-        int y = client.top + outer + dpi_.logical_to_pixels(36);
+        // CP32: section label band — a 2 px wide coral bar on the left edge
+        // of each section label, sized to the section's logical row. The bar
+        // mirrors the sidebar nav indicator from the Showcase sample and
+        // quietly identifies each section as a named card slot. Band y is
+        // aligned to the layout body's first row so labels line up with the
+        // controls next to them.
+        const int bar_w = dpi_.logical_to_pixels(2);
+        const int label_band_x = left;
+        int y = client.top + outer + dpi_.logical_to_pixels(72);
         for (std::size_t i = 0; i < std::size(labels); ++i) {
-            RECT label{left, y, left + label_w - gap, y + (heights[i] > 0 ? heights[i] : row_h)};
+            const int row_top = y;
+            const int row_bottom = y + (heights[i] > 0 ? heights[i] : row_h);
+            const int bar_h = row_bottom - row_top;
+            RECT bar{label_band_x, row_top, label_band_x + bar_w, row_bottom};
+            nfui::fill_rect(target, bar, palette_.accent);
+            RECT label{label_band_x + dpi_.logical_to_pixels(10),
+                       row_top,
+                       left + label_w - gap,
+                       row_bottom};
             nfui::draw_text(target,
                             label,
                             labels[i],
                             section_font,
-                            palette_.text_secondary,
+                            palette_.text,
                             DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX);
-            y += heights[i] + gap;
+            y += bar_h + gap;
             if (heights[i] == 0) {
                 y += row_h;  // status bar gets a row too
             }

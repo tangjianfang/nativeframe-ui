@@ -598,7 +598,7 @@ private:
         SendMessageW(status_bar_.hwnd(), WM_SIZE, 0, 0);
 
         const int outer = px(16);
-        const int gap = px(10);
+        const int gap = px(12);
         const int row = px(28);
         const int col_w = px(360);
 
@@ -610,11 +610,13 @@ private:
         MoveWindow(theme_dark_.hwnd(), tx, top, btn_w, row, TRUE); tx += btn_w + gap;
         MoveWindow(theme_hc_.hwnd(), tx, top, px(150), row, TRUE);
 
-        const int body_top = top + row + px(28);
+        // CP32: section header band ends at client.top + px(104); body content
+        // begins immediately below with a 12 px breathing room.
+        const int body_top = client.top + px(116);
 
         // ---- Column 1: dynamic controls ----
         int x1 = client.left + outer;
-        int y = body_top + px(4);
+        int y = body_top;
         const int small_w = px(108);
         MoveWindow(add_button_.hwnd(), x1, y, small_w, row, TRUE);
         MoveWindow(remove_button_.hwnd(), x1 + small_w + gap, y, small_w, row, TRUE);
@@ -635,7 +637,7 @@ private:
 
         // ---- Column 2: keyboard nav + state ----
         int x2 = x1 + col_w + px(32);
-        y = body_top + px(4);
+        y = body_top;
         MoveWindow(nav_hint_.hwnd(), x2, y, col_w, px(36), TRUE);
         y += px(40);
         const int tile_w = px(64);
@@ -664,7 +666,7 @@ private:
         // ---- Column 3: gallery strip ----
         int x3 = x2 + col_w + px(32);
         const int gcol_w = std::max(px(300), static_cast<int>(client.right - outer - x3));
-        y = body_top + px(4);
+        y = body_top;
         MoveWindow(gallery_listview_.hwnd(), x3, y, gcol_w, px(110), TRUE);
         y += px(120);
         MoveWindow(gallery_treeview_.hwnd(), x3, y, gcol_w, px(110), TRUE);
@@ -682,22 +684,42 @@ private:
     void paint_background(HDC dc, const RECT& client) noexcept {
         nfui::fill_rect(dc, client, palette_.background);
         const int d = dpi_.dpi();
-        HFONT title_font = fonts_.serif(d, 18);
-        HFONT header_font = fonts_.semibold(d, 10);
-        HFONT body_font = fonts_.regular(d, nfui::font_pt::ui);
+        HFONT title_font = fonts_.bold(d, nfui::font_pt::xl);
+        HFONT subtitle_font = fonts_.regular(d, nfui::font_pt::sm);
+        HFONT header_font = fonts_.semibold(d, nfui::font_pt::md);
+        HFONT body_font = fonts_.regular(d, nfui::font_pt::sm);
 
-        RECT title{client.left + px(16), client.top + px(12),
-                   client.right - px(420), client.top + px(40)};
+        // Title — page-level xl headline, left-aligned with the outer 16/24
+        // spacing rhythm. The subtitle sits directly below in muted sm copy.
+        const int outer = px(24);
+        RECT title{client.left + outer, client.top + px(16),
+                   client.right - px(420), client.top + px(48)};
         nfui::draw_text(dc, title, L"Controls Playground", title_font, palette_.text,
                         DT_LEFT | DT_TOP | DT_SINGLELINE | DT_NOPREFIX);
 
+        RECT subtitle{client.left + outer, title.bottom + px(2),
+                      client.right - px(420), title.bottom + px(20)};
+        nfui::draw_text(dc, subtitle,
+                        L"Interactive surface: theme switching, dynamic create/destroy, keyboard navigation, state changes.",
+                        subtitle_font, palette_.text_secondary,
+                        DT_LEFT | DT_TOP | DT_SINGLELINE | DT_END_ELLIPSIS | DT_NOPREFIX);
+
+        // CP32: column section headers — each gets a small accent bar (2 px
+        // wide, ~16 px tall) on the left edge and a semibold md label. The
+        // bar reads as a quiet brand marker without competing with the rest
+        // of the chrome.
         auto header = [&](int x, const wchar_t* text) {
-            RECT r{x, client.top + px(52), x + px(340), client.top + px(74)};
-            nfui::draw_text(dc, r, text, header_font, palette_.text_secondary,
+            const int bar_h = px(16);
+            const int bar_w = px(2);
+            const int bar_y = client.top + px(84);
+            RECT bar{x, bar_y, x + bar_w, bar_y + bar_h};
+            nfui::fill_rect(dc, bar, palette_.accent);
+            RECT r{x + px(10), client.top + px(80), x + px(340), client.top + px(104)};
+            nfui::draw_text(dc, r, text, header_font, palette_.text,
                             DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX);
         };
         const int col_w = px(360);
-        const int x1 = client.left + px(16);
+        const int x1 = client.left + outer;
         const int x2 = x1 + col_w + px(32);
         const int x3 = x2 + col_w + px(32);
         header(x1, L"1 · Dynamic create / destroy");
@@ -727,6 +749,9 @@ private:
         const int radius = nfui::theme_metrics().corner_radius_control;
         for (const Swatch& s : swatches) {
             RECT r{x, state_strip_top_, x + sw, state_strip_top_ + sh};
+            // CP32: subtle elevation-1 shadow under each swatch so they read
+            // as discrete cards against the workspace background.
+            nfui::paint_drop_shadow(dc, r, radius, 1, p.shadow);
             nfui::fill_rounded_rect(dc, r, radius, s.fill, s.border);
             if (s.ring) {
                 RECT inner{r.left + px(3), r.top + px(3), r.right - px(3), r.bottom - px(3)};
@@ -736,8 +761,8 @@ private:
                             DT_CENTER | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX);
             x += sw + gap;
         }
-        RECT caption{state_strip_left_, state_strip_top_ + sh + px(2),
-                     state_strip_left_ + (sw + gap) * 5, state_strip_top_ + sh + px(22)};
+        RECT caption{state_strip_left_, state_strip_top_ + sh + px(4),
+                     state_strip_left_ + (sw + gap) * 5, state_strip_top_ + sh + px(24)};
         nfui::draw_text(dc, caption, L"State reference — repainted from the live palette",
                         font, palette_.text_secondary, DT_LEFT | DT_TOP | DT_SINGLELINE | DT_NOPREFIX);
     }

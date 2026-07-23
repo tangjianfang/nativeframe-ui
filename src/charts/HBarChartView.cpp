@@ -23,6 +23,70 @@ constexpr int kAxisLabelGutter = 28;
 // the tick position). Mirrors BarChartView's constant — see the comment
 // there for the rationale (dense numeric ticks need elbow room).
 constexpr int kTickLabelHalfWidthPx = 24;
+constexpr int kValueLabelMinInsideLogical = 24;
+constexpr int kValueLabelGapLogical = 4;
+constexpr int kValueLabelPadLogical = 4;
+
+struct ValueLabel {
+    RECT bar{};
+    std::wstring text{};
+    Color series_color{};
+};
+
+[[nodiscard]] SIZE measure_text(HDC hdc,
+                                HFONT font,
+                                std::wstring_view text) noexcept {
+    SIZE size{};
+    if (hdc == nullptr || text.empty()) {
+        return size;
+    }
+
+    HGDIOBJ old_font = font != nullptr ? SelectObject(hdc, font) : nullptr;
+    GetTextExtentPoint32W(hdc, text.data(), static_cast<int>(text.size()), &size);
+    if (old_font != nullptr && old_font != HGDI_ERROR) {
+        SelectObject(hdc, old_font);
+    }
+    return size;
+}
+
+void draw_value_label_at_end(HDC hdc,
+                             const ValueLabel& value_label,
+                             HFONT font,
+                             const ThemePalette& pal,
+                             const DpiScale& dpi) noexcept {
+    const SIZE text_size = measure_text(hdc, font, value_label.text);
+    const int text_w = std::max(dpi.logical_to_pixels(1),
+                                static_cast<int>(text_size.cx));
+    const int label_h = std::max(dpi.logical_to_pixels(16),
+                                 static_cast<int>(text_size.cy));
+    const int pad = dpi.logical_to_pixels(kValueLabelPadLogical);
+    const int gap = dpi.logical_to_pixels(kValueLabelGapLogical);
+    const int segment_w = value_label.bar.right - value_label.bar.left;
+    const int min_inside_w = std::max(
+        dpi.logical_to_pixels(kValueLabelMinInsideLogical), text_w + pad * 2);
+    const int center_y = value_label.bar.top +
+                         (value_label.bar.bottom - value_label.bar.top) / 2;
+
+    RECT label{};
+    Color text_color{};
+    UINT alignment = 0;
+    if (segment_w >= min_inside_w) {
+        label.right = value_label.bar.right - pad;
+        label.left = label.right - text_w - pad;
+        text_color = pal.accent_text;
+        alignment = DT_RIGHT;
+    } else {
+        label.left = value_label.bar.right + gap;
+        label.right = label.left + text_w + pad;
+        text_color = value_label.series_color;
+        alignment = DT_LEFT;
+    }
+    label.top = center_y - label_h / 2;
+    label.bottom = label.top + label_h;
+
+    draw_text(hdc, label, value_label.text, font, text_color,
+              alignment | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX);
+}
 
 // (Tick labels are formatted inline via nfui::format_axis_tick so callers can
 // pick the precision per axis via ChartAxisRange::label_format.)
@@ -96,14 +160,29 @@ void HBarChartView::on_paint(HDC hdc, const RECT& bounds) {
 
     fill_rect(hdc, bounds, pal.background);
 
-    // compute_chart_layout swaps plot_w/plot_h for bar_horizontal so the plot
-    // area is naturally wide as a value axis (x) and tall for categories (y).
+    // Start with the shared horizontal-chart layout, then restore its available
+    // width/height below because this renderer performs the orientation mapping
+    // directly when it computes rows and bar lengths.
     const std::size_t series_count = series_.size();
     ChartLayout layout = compute_chart_layout(bounds, ChartKind::bar_horizontal, series_count);
+    // compute_chart_layout transposes the available plot dimensions for the
+    // horizontal kind. This renderer already maps values to x and categories
+    // to y explicitly, so undo that transposition here; otherwise a wide,
+    // short chart gets a narrow plot extending far below its child window.
+    const int transposed_plot_w = layout.plot_bounds.right - layout.plot_bounds.left;
+    const int transposed_plot_h = layout.plot_bounds.bottom - layout.plot_bounds.top;
+    layout.plot_bounds.right = layout.plot_bounds.left + transposed_plot_h;
+    layout.plot_bounds.bottom = layout.plot_bounds.top + transposed_plot_w;
     if (layout.plot_bounds.right <= layout.plot_bounds.left ||
         layout.plot_bounds.bottom <= layout.plot_bounds.top) {
         return;
     }
+
+    const int dpi = (hwnd() != nullptr) ? dpi_of(hwnd()) : 96;
+    const DpiScale dpi_scale(dpi);
+    HFONT value_font = (fonts_ != nullptr)
+        ? fonts_->semibold(dpi, font_pt::sm)
+        : nullptr;
 
     std::size_t bar_count = 0;
     for (const auto& s : series_) {
@@ -112,7 +191,6 @@ void HBarChartView::on_paint(HDC hdc, const RECT& bounds) {
 
     if (bar_count == 0) {
         draw_plot_frame(hdc, layout, pal);
-        const int dpi = (hwnd() != nullptr) ? dpi_of(hwnd()) : 96;
         charts_internal::draw_legend_column(hdc, layout.plot_bounds,
                                             layout.legend_width_px, series_,
                                             palette_, fonts_, dpi);
@@ -138,6 +216,13 @@ void HBarChartView::on_paint(HDC hdc, const RECT& bounds) {
     const int sub_h = std::max(1, row_h / static_cast<int>(std::max<std::size_t>(1, series_count)));
     // Vertical gap of 1px between rows so adjacent categories do not fuse.
     const int row_gap = std::min(2, std::max(0, row_h / 4));
+
+    std::vector<ValueLabel> value_labels;
+    std::size_t value_label_count = 0;
+    for (const ChartSeries& series : series_) {
+        value_label_count += std::min(series.points.size(), bar_count);
+    }
+    value_labels.reserve(value_label_count);
 
     // In stacked mode the per-row sum governs the row's visual extent, so we
     // pre-compute row sums + the global max once and reuse them for the value
@@ -200,6 +285,11 @@ void HBarChartView::on_paint(HDC hdc, const RECT& bounds) {
                     RECT bar{bar_left, row_top, bar_right, row_bottom};
                     fill_rounded_rect(hdc, bar, theme_metrics().corner_radius_control,
                                       series.color, series.color);
+                    value_labels.push_back(ValueLabel{
+                        bar,
+                        format_axis_tick(v, axis_y_.label_format),
+                        series.color,
+                    });
                 }
                 cursor = v_end;
                 if (cursor >= eff_max) break;  // row saturated; drop later segments
@@ -232,11 +322,21 @@ void HBarChartView::on_paint(HDC hdc, const RECT& bounds) {
                 RECT bar{bar_left, sub_top, bar_right, sub_bottom};
                 fill_rounded_rect(hdc, bar, theme_metrics().corner_radius_control,
                                   series.color, series.color);
+                value_labels.push_back(ValueLabel{
+                    bar,
+                    format_axis_tick(p.y, axis_y_.label_format),
+                    series.color,
+                });
             }
         }
     }
 
-    const int dpi = (hwnd() != nullptr) ? dpi_of(hwnd()) : 96;
+    // Render labels after all segments so a later series fill cannot cover a
+    // narrow segment's outside label.
+    for (const ValueLabel& value_label : value_labels) {
+        draw_value_label_at_end(hdc, value_label, value_font, pal, dpi_scale);
+    }
+
     HFONT tick_font = (fonts_ != nullptr) ? fonts_->mono(dpi, font_pt::chart_tick) : nullptr;
 
     // In stacked mode the tick labels should reflect the row-sum range, not
