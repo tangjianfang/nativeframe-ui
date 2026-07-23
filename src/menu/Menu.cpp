@@ -78,6 +78,18 @@ void Menu::apply_palette(OwnedMenu& menu) noexcept {
     }
 }
 
+void Menu::apply_to_bar(HWND host) noexcept {
+    apply_palette(bar_);
+    // CP28-B: nudge the bar to repaint with the new MENUINFO brush. On
+    // Win10/11 the menu bar chrome is themed and the background brush is
+    // only honored for popup submenus, so DrawMenuBar is a best-effort
+    // hint rather than a guarantee — but it prevents the stale theme
+    // paint that would otherwise stick until the next WM_NCACTIVATE.
+    if (host != nullptr && IsWindow(host) != FALSE) {
+        DrawMenuBar(host);
+    }
+}
+
 std::wstring Menu::escape_mnemonic(const std::wstring& text) noexcept {
     // Win32 menu labels use '&' as the mnemonic marker. If the input
     // already contains '&&' (a literal '&'), MenuBuilder treats the pair

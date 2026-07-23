@@ -22,7 +22,7 @@ constexpr int kTickCount = 5;
 constexpr int kAxisLabelGutter = 18;
 // Spline uses a thinner stroke than the polyline renderer — a heavy stroke
 // fights the smoothness of the curve and produces a muddy line.
-constexpr int kSplineLineWidthPx = 1;
+constexpr int kSplineLineWidthPx = 3;
 
 // (Tick labels are formatted inline via nfui::format_axis_tick so callers can
 // pick the precision per axis via ChartAxisRange::label_format.)
@@ -125,15 +125,22 @@ void SplineChartView::on_paint(HDC hdc, const RECT& bounds) {
         if (pts.size() < 2) continue;
         const std::vector<POINT> bez = catmull_rom_to_bezier(pts, tension_);
         if (bez.empty()) continue;
-        // PolyBezier expects the count to satisfy (count - 1) % 3 == 0, i.e. one
-        // cubic segment per 4 points (segments share endpoints). catmull_rom_to_bezier
-        // returns 4*(n-1) points = 4n - 4 = 3*(n-1) + 1, exactly the count Windows
-        // expects for n-1 chained cubic segments.
+        // CP28: catmull_rom_to_bezier emits 1 + 3*(n-1) chained-cubic points
+        // (start anchor + 3 per segment); both PolyBezier and Graphics::
+        // DrawBeziers consume that layout. The previous version emitted
+        // 4*(n-1) — that count was wrong by 3n-1 and was the reason Win32
+        // silently dropped the spline (the empty chart CP27 caught).
         const int bez_count = static_cast<int>(bez.size());
         if (bez_count < 4) continue;
 
-        // Build a coloured pen sized for the spline stroke; PolyBezier uses the
-        // currently selected pen for the curve (no width parameter).
+        // CP28: catmull_rom_to_bezier emits 1 + 3*(n-1) chained-cubic points
+        // (start anchor + 3 per segment); both PolyBezier and Graphics::
+        // DrawBeziers consume that layout. The previous version emitted
+        // 4*(n-1) — that count was wrong by 3n-1 and was the reason Win32
+        // silently dropped the spline (the empty chart CP27 caught). The
+        // AA helper now falls back to pure-GDI PolyBezier on Graphics
+        // construction failure (e.g. the memory DCs PrintWindow produces),
+        // so the spline always renders even when GDI+ cannot bind.
         charts_internal::draw_beziers_aa(
             hdc, bez.data(), bez_count, series.color, kSplineLineWidthPx);
     }

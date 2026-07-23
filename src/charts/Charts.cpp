@@ -117,7 +117,15 @@ std::vector<POINT> catmull_rom_to_bezier(const std::vector<POINT>& points,
                                           double tension) noexcept {
     std::vector<POINT> out;
     if (points.size() < 2) return out;
-    out.reserve(4 * (points.size() - 1));
+    // CP28: Win32 PolyBezier and Gdiplus::Graphics::DrawBeziers expect
+    // chained-cubic segments in a 1 + 3*N count (1 = first-segment start
+    // anchor, 3*N = three points per subsequent segment: c1, c2, end). The
+    // previous revision reserved 4*(N-1) and emitted four points per
+    // segment, which yielded 3N-1 too many and made both backends fail
+    // silently — exactly the empty spline-chart the CP27 audit caught.
+    // Number of cubic segments is N-1, so the correct output count is
+    // 1 + 3*(N-1) = 3N - 2.
+    out.reserve(3 * points.size() - 2);
 
     const double t = std::clamp(tension, 0.0, 1.0);
     const double k = t / 3.0;
@@ -131,14 +139,6 @@ std::vector<POINT> catmull_rom_to_bezier(const std::vector<POINT>& points,
                                  (static_cast<double>(b.y) - static_cast<double>(a.y)) * factor);
     };
 
-    auto emit_segment = [&](const POINT& b0, const POINT& b1,
-                            const POINT& b2, const POINT& b3) {
-        out.push_back(b0);
-        out.push_back(b1);
-        out.push_back(b2);
-        out.push_back(b3);
-    };
-
     for (std::size_t i = 0; i + 1 < points.size(); ++i) {
         const POINT& p1 = points[i];
         const POINT& p2 = points[i + 1];
@@ -146,7 +146,6 @@ std::vector<POINT> catmull_rom_to_bezier(const std::vector<POINT>& points,
         const POINT& p0 = (i == 0) ? p1 : points[i - 1];
         const POINT& p3 = (i + 2 >= points.size()) ? p2 : points[i + 2];
 
-        const POINT b0 = p1;
         const POINT b1 = POINT{
             lerp_x(p1, p1, 0.0) + static_cast<LONG>(k * (p2.x - p0.x) + 0.5),
             lerp_y(p1, p1, 0.0) + static_cast<LONG>(k * (p2.y - p0.y) + 0.5),
@@ -155,9 +154,15 @@ std::vector<POINT> catmull_rom_to_bezier(const std::vector<POINT>& points,
             lerp_x(p2, p2, 0.0) - static_cast<LONG>(k * (p3.x - p1.x) + 0.5),
             lerp_y(p2, p2, 0.0) - static_cast<LONG>(k * (p3.y - p1.y) + 0.5),
         };
-        const POINT b3 = p2;
 
-        emit_segment(b0, b1, b2, b3);
+        // First segment also needs the start anchor (subsequent segments
+        // reuse the previous end as their start).
+        if (i == 0) {
+            out.push_back(p1);
+        }
+        out.push_back(b1);
+        out.push_back(b2);
+        out.push_back(p2);
     }
     return out;
 }

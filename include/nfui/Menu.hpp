@@ -142,8 +142,14 @@ public:
     // just rebuilds the brush.
     void apply_palette(OwnedMenu& menu) noexcept;
 
-    // Convenience: same as apply_palette but for the bar().
-    void apply_to_bar() noexcept { apply_palette(bar_); }
+    // Convenience: same as apply_palette but for the bar(). When `host`
+    // is non-null, also calls DrawMenuBar on it so the menu bar repaints
+    // immediately with the freshly-installed brush. (Pass the HWND that
+    // the menu has already been attached to with SetMenu; on Win10/11 the
+    // MENUINFO background brush is only honored for popup submenus, so
+    // this is a best-effort nudge, not a guarantee the bar surface will
+    // visibly change — that's a known Win32 theme limitation.)
+    void apply_to_bar(HWND host = nullptr) noexcept;
 
     // Read the palette that drives MENUINFO chrome.
     [[nodiscard]] const ThemePalette& palette() const noexcept { return palette_; }

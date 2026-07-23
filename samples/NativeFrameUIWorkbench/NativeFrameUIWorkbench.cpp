@@ -91,7 +91,12 @@ public:
         // readable and frees us from the raw CreateMenu / AppendMenuW
         // chain. Each popup() returns a builder that targets the new
         // submenu, so chained .item() calls populate that submenu.
-        menu_.apply_to_bar();
+        // CP28-B: apply_to_bar() now takes the host HWND so it can call
+        // DrawMenuBar and refresh the menu bar chrome with the freshly
+        // installed brush (best-effort nudge on Win10/11 — popup
+        // submenus always honor MIM_BACKGROUND; menu bar background is
+        // a known Win32 theme limitation).
+        menu_.apply_to_bar(hwnd());
         (void)menu_.builder(menu_.bar()).popup(L"&File")
             .item(L"E&xit", IDM_NFUI_EXIT);
         (void)menu_.builder(menu_.bar()).popup(L"&Help")
