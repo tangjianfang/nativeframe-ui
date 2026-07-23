@@ -1106,10 +1106,14 @@ private:
 
     void paint_tabs_highlight(HWND tabs_hwnd) noexcept {
         // CP32: query the selected tab and overlay a 2 device-px coral bar
-        // at the bottom of its rect. TabCtrl_GetItemRect returns coords in
-        // the tab control's client space, which matches a GetDC on the
-        // tabs HWND — no MapWindowPoints needed. A negative index (no
-        // selection) or a failed rect query short-circuits cleanly.
+        // at the bottom of the tab strip. TabCtrl_GetItemRect returns
+        // coords in the tabs HWND's client space (left/top are correct),
+        // but item.bottom can exceed the HWND's client height because the
+        // OS computes a logical tab height from font metrics + padding
+        // that doesn't always fit in the assigned window height. Pin the
+        // bar to client.bottom - 2 so it always lands at the visible base
+        // of the tab strip; pair with item.left/right so the stripe width
+        // matches the selected tab's horizontal extent.
         const int sel = TabCtrl_GetCurSel(tabs_hwnd);
         if (sel < 0) {
             return;
@@ -1122,7 +1126,9 @@ private:
         if (dc == nullptr) {
             return;
         }
-        RECT highlight{item.left, item.bottom - 2, item.right, item.bottom};
+        RECT client{};
+        GetClientRect(tabs_hwnd, &client);
+        const RECT highlight{item.left, client.bottom - 2, item.right, client.bottom};
         nfui::fill_rect(dc, highlight, palette_.accent);
         ReleaseDC(tabs_hwnd, dc);
     }
