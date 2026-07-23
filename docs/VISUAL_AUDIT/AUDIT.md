@@ -1,330 +1,222 @@
-# CP27 — Visual Audit Report (像素级真实评审)
-
-> **Round 5/8** of the autonomous polish loop.
-> 用户反馈 (Round 3): "相差甚远. 很多窗口背景还是灰色的,都没有去实现demo,没有精心打造"。
-> 本轮作者**不再依赖代码自述**而**真实运行 13 个 sample exe + PrintWindow 抓像素**,
-> 逐张审看,把"代码说有"和"实际渲染"区分开。
-
-## 0. 工具链
-
-- 截图 exe: `tools/visual_audit/screenshot.cpp` (Standalone Win32, PrintWindow + PW_RENDERFULLCONTENT)
-- 13 张 BMP 抓自 `out/build/x64-debug/Debug/<sample>.exe`
-- 经 PowerShell `System.Drawing` 批量转 PNG (PowerShell 接受透明 alpha, BMP 拒绝)
-- 所有截图位于 `docs/VISUAL_AUDIT/*.png` (与本报告同目录)
-
-## 1. 总览:打分分布
-
-> 评分公式: `chrome_polish × 0.4 + layout_density × 0.3 + status_bar × 0.1 + iconography × 0.1 + palette_consistency × 0.1`
-> 满分 100。每一项 **像素级严格**,发现 1 个严重缺陷扣 8-15 分。
-
-| Sample                       | chrome | layout | status | icons | palette | **Total** | 等价 React 等级 |
-|------------------------------|--------|--------|--------|-------|---------|-----------|-----------------|
-| NativeFrameUIIconGallery     | 95     | 90     | 100    | 100   | 95      | **94**    | ✅ 精品      |
-| NativeFrameUIDarkStudio      | 95     | 80     | 95     | 80    | 95      | **89**    | ✅ 精品      |
-| NativeFrameUIControlsPlayground | 88  | 85     | 70     | 70    | 85      | **83**    | ⚠️ 接近精品 |
-| NativeFrameUIShowcase        | 85     | 70     | 0      | 85    | 90      | **72**    | ⚠️ 接近精品 |
-| NativeFrameUIWorkbench       | 75     | 65     | 80     | 75    | 80      | **73**    | ⚠️ 接近精品 |
-| NativeFrameUIResourceGallery | 80     | 80     | 0      | 70    | 75      | **67**    | ❌ 仍灰      |
-| NativeFrameUICharts          | 80     | 75     | 0      | 65    | 75      | **66**    | ❌ 仍灰 (Spline 渲染失败) |
-| NativeFrameUISettingsDemo    | 78     | 80     | 0      | 60    | 75      | **64**    | ❌ 仍灰      |
-| NativeFrameUIDialogTour      | 78     | 65     | n/a    | 55    | 75      | **65**    | ⚠️ 接近精品 (小窗口,够干净) |
-| NativeFrameUIThemeDemo       | 75     | 70     | 0      | 70    | 85      | **68**    | ❌ 仍灰 (title 截断) |
-| NativeFrameUIComponentGallery | 60    | 35     | 0      | 30    | 70      | **44**    | ❌ wireframe (ListView header 平, 滚动截断)|
-| NativeFrameUIControls        | 65     | 60     | 0      | 35    | 70      | **56**    | ❌ 仍灰 (窗口标题栏 native)|
-| NativeFrameUIMinimal         | 30     | 40     | n/a    | 10    | 30      | **28**    | ❌ broken (窗口看起来空) |
-
-**未加权平均: 67/100**。
-
-### 与之前自我打分的对照
-
-| 轮次 | 自评 | 像素真评 | 差距原因 |
-|------|------|----------|----------|
-| CP22 | 99   | (未跑像素)| 仅基于代码路径自述 |
-| CP23 | 99   | (未跑像素)| 同上 |
-| CP24 | 99   | (未跑像素)| 同上 |
-| CP25 | 92   | (未跑像素)| 同上 |
-| CP26 | 99   | (未跑像素)| 同上 |
-| **CP27** | (未定)| **67** | 真实像素评审 |
-
-> **结论**: 过去 5 轮 92-99 的自评都基于"代码 写对了"。这一轮首次基于"像素
-> 看起来对"打分,**真实评分 67/100,远低于之前宣称的 99%。** 用户反馈"相
-> 差甚远"完全成立——自我评分的"精品"在大批 sample 上只是"勉强够用"。
-
-## 2. 逐张像素发现 (严重缺陷置顶)
-
-### 2.1 NativeFrameUIWorkbench  -- 73/100 (基线)
-
-[截图](Workbench_light.png)
-
-**好消息**:
-- P0-1 修复生效 (TreeView 没有黑底, 用户报告已修)
-- CP24 ProgressBar 自绘生效 (底部橙色 fill)
-- CP25 Slider 自绘生效 (右上角橙色 thumb)
-- StatusBar 底部有色块 (橙色 fill)
-
-**仍有问题**:
-- **菜单栏** "File / Help": **完全是 native Win32 灰底**, 不是 `palette.surface`。
-  CP24-A `nfui::Menu::apply_to_bar()` 我以为生效了, 但截图里仍然是 native chrome。
-- **Search 编辑框**: native white box, 无 chrome
-- **Header caption "Item"**: 看起来是默认 Tahoma-ish 字体, **CP26 Semibold 修复看不出明显效果** (视觉上跟 body rows 没区别)
-- **Splitter (中间灰竖条)**: native chrome
-- **布局密度低**: 大量空白, 整体像 wireframe 而非 React UI
-
-### 2.2 NativeFrameUIShowcase -- 72/100
-
-[截图](NativeFrameUIShowcase.png)
-
-**好消息**:
-- Sidebar / Workspace / Inspector 三栏布局稳定
-- Drop shadow 在 card 上可见 (但很subtle)
-- Badge "Stable / Release Ready / Explicit" 颜色合理
-- Status bar 缺失的发现: **截图里底部没有可见的 status bar!** 应该填那一段
-
-**严重缺陷**:
-- **Sidebar 标题 "NativeFrame UI" 右侧被截断**: 显示 "NativeFrame U",**最后两个字符没了**。
-  sidebar 宽度 220 logical px, 字体过大。
-- Inspector 右边栏的卡片 "Resource story" 内容被截断 ("nfui_add_resources" 末尾被剪)
-- Workspace card 下方有大段空 (OK)
-
-### 2.3 NativeFrameUIDarkStudio -- 89/100 (本轮最高)
-
-[截图](NativeFrameUIDarkStudio.png)
-
-**好消息**:
-- dark 模式看起来 real,有 shell 感
-- 4 个 navigation 选中条 (Surface) 橙色
-- Header card / Preview canvas 大块橙色 accent 都到位
-- 底部 metric cards 都可见
-- StatusBar 底部有 (右下角细条可见)
-
-**需要改善**:
-- Preview canvas 内部那条 "Live preview" 提示框框着 #333 黑底, 文字对比偏弱
-- 整体密度比 SampleBalancing 类的 React dark app 还差一截 (主要是 metric cards 之间留白太多)
-
-### 2.4 NativeFrameUIComponentGallery -- 44/100 (最低)
-
-[截图](NativeFrameUIComponentGallery.png)
-
-**严重缺陷** (按视觉冲击排序):
-- **ListView header band "Column A / Column B / Column C" 视觉上跟 body rows
-  几乎没区别**: 顶部一条线, 三个 caption 看着像是一行 row label, 而非 header。
-  CP26 Semibold fix 在这里**没看出差别**。
-- **TreeView "Child A / B / C" 行高不一致 / 后面被截**: 项目子树看起来挤挤的
-- **ComboBox 是个 plain white box**: 下拉箭头在右, 边框细, 没有 themed chrome
-- **IconView 是 32px 的纯深蓝色小方块**, 完全没有 Icon 应该有的样子 (ResourceGallery 同样问题)
-- **StatusBar 行完全没有可见的 chrome**: 应该是 CP23-A 自绘了, 但视觉上感觉不到
-- **页面 layout 严重溢出**: 880×1320 但 bottom controls (Panel + Splitter) 之后
-  "Every control class is exclusive" 文字只露出顶部 1px, 整页滚不下也不可见
-- TabControl "Tab 1 / 2 / 3" 还行, active tab 有底部边框
-
-> 这个 sample 是 **演示每种控件** 的核心门面, 分数 44/100 说明 chrome 自绘
-> 在 CP26 之后**仍有系统性的视觉扁平问题**。
-
-### 2.5 NativeFrameUIThemeDemo -- 68/100
-
-[截图](NativeFrameUIThemeDemo.png)
-
-**好消息**:
-- "Light / Dark / High Contrast" 切换按钮漂亮 (橙色 filled)
-- "OK / Cancel" 按钮 OK
-- "Active mode: Light" 文字提示右上
-
-**严重缺陷**:
-- **窗口标题 "NativeFrame UI ThemeDemo" 被截断**: 截图里只看到顶部一点字形,
-  像被卷上去滚出了画面顶部 (或者 title 字体大到占两行, 但窗口不够高)
-- **StatusBar 行不见**: "ThemeDemo: ready" 应该在那, 截图里看不到
-- TreeView 行只显示 "Project" + "Source" 一半, "Resources" / "Tests" 都被截
+# Visual Audit Report
 
-### 2.6 NativeFrameUIControlsPlayground -- 83/100
+审计口径：以下结论来自 `PrintWindow` 对真实 Win32 `HWND` 的 WIC PNG 截图，不使用浏览器或合成 mock。工具把主题请求作为 `--theme` 传给 sample，并对标准窗口 chrome 请求对应主题；但除 ThemeDemo 外，这批 sample 没有可由启动参数切换到三种主题的实现。因此，多数组的内容区在三张图中完全相同，dark 最多只改变非客户区标题栏。这不是审计工具伪造失败，而是 sample 缺少运行时主题入口的直接证据。
 
-[截图](NativeFrameUIControlsPlayground.png)
+## NativeFrameUIWorkbench — 评分: 38/100
 
-**好消息**:
-- 3 列布局密度最好的一帧
-- Light/Dark/HC 切换按钮有色
-- Keyboard navigation tiles (Home/Search/Build/Locked/Run) 显示正确
-- State reference tiles (Normal/Hover/Pressed/Focused/Disabled) 都可见
-- "Disable sample row" 橙色 filled 按钮 OK
-- ListView 小但能看出 "Control/Module" 两列
-- TreeView "Playground" root + 子项 OK
-- TabControl Design/Preview/Log OK
-- ProgressBar 橙色 fill
-
-**待改善**:
-- Section 1 "Dynamic create/destroy" 下方有一个**巨大的空矩形** (Layout 留白但看起来 dead)
-- Section 3 "Every control wrapper" 列表只有 Button/ListView/TreeView 三行 (实际框架控件 11+ 种) — 应该有更多 wrapper
+截图:
+- docs/VISUAL_AUDIT/Workbench_light.png
+- docs/VISUAL_AUDIT/Workbench_dark.png
+- docs/VISUAL_AUDIT/Workbench_hc.png
 
-### 2.7 NativeFrameUISettingsDemo -- 64/100
-
-[截图](NativeFrameUISettingsDemo.png)
+| 截图 | native gray chrome 残留 |
+|---|---|
+| light | 左侧 Search Edit 的硬黑边；TreeView 的系统展开线；中间 TabControl、ListView 表头和大片灰白行底；顶部 File/Help 菜单。 |
+| dark | 只有标题栏变暗，客户区仍是 light；Edit、TreeView、Tab、ListView 全部保持灰色系统观感，形成最明显的混合主题。 |
+| hc | 未进入真正高对比内容主题；同样的灰色 Edit/Tree/Tab/ListView 和低对比浅灰分隔线仍在。 |
 
-**好消息**:
-- 标题 "SettingsDemo" 副文本可见
-- "Save snapshot" 按钮右上
-- Left ListBox (General/Workspace/Release) General 选中 OK
-- Form 表单 Profile name / Workspace root / Theme preference 都显示
-- 2 个 Checkbox (Enable telemetry / Restore workspace) 选中状态正确
-- Theme combo 显示 "Follow system"
+**精品控件**：橙色 Slider 和底部 ProgressBar 有统一 accent；三栏 splitter 比裸系统分隔条克制。
 
-**严重缺陷**:
-- **Edit 框两个都是 plain white box**, 边框细, 完全没 chrome (不像 themed control)
-- **顶部那条红 hairline 太刺眼**: "Pause-state pending changes" 上方一条红线穿过,
-  跟整体 cream 调子不和谐
-- Save button 是右侧唯一显眼 chrome element, 其他控件都太低调
-
-### 2.8 NativeFrameUICharts -- 66/100
-
-[截图](NativeFrameUICharts.png)
-
-**好消息**:
-- Bar chart 12 根橙色柱, 渐变上升
-- HBar chart 3 系列 (FY2022 橙 / FY2023 绿 / FY2024 金黄) 5 类
-- Line chart 2 series (Revenue 橙 / Costs 绿) 12 点
-- Area chart 填充橙色
-- 都带 caption
-
-**严重缺陷**:
-- **Spline chart 完全空白**: 只有 axis gridlines, **没有曲线**! 这是个严重 bug,
-  用户读 chart 看到 4/5 正常会以为这是 demo, 但 Splene 本身就该画曲线但没画
-- 坐标轴标签 "1 2 3 4 5 6 7 8 9" 之类角标文字被 axis 标注遮住
-
-### 2.9 NativeFrameUIIconGallery -- 94/100 (最好)
-
-[截图](NativeFrameUIIconGallery.png)
-
-**优点 (CP18 矢量图标系统的代表作)**:
-- 14 张 icon card 网格 (chevron × 4, check, close, plus, minus, search, gear, info, warning, dot, hamburger) 全部渲染
-- 每张 card 是圆角 surface, 带 palette.gray 描边
-- icon 用 GDI primitive (line / poly / arc) 画得不错
-- "Icon Buttons (Button::set_icon)" 行底部 4 个图标按钮 (Search/Settings/Add/Close)
-  橙色 filled + 白图标, **完全 React 等级**
-- 顶部 3 个 theme toggle 按钮 OK
-
-**可改善**:
-- "Vector Icon Gallery" caption 字偏小
-- Info icon 圈里是 "i", warning 是 ⚠️ 三角 + !
-
-### 2.10 NativeFrameUIResourceGallery -- 67/100
-
-[截图](NativeFrameUIResourceGallery.png)
-
-**好消息**:
-- 顶部 "Open resource dialog / Reload assets" 按钮 OK
-- Asset checklist 表 (String/Menu/Dialog/Icon/Bitmap/Toolbar marker 全 loaded) OK
-- Preview panel 显示 icon (32x32 深蓝方块) + Bitmap (大块深蓝 + 白色网格)
-
-**严重缺陷**:
-- **顶部 "File" 是 native Win32 menu bar**: CP24-A `apply_to_bar()` **没生效**,
-  `MIM_BACKGROUND` brush 没把 native 灰色染成 palette.surface
-- Bitmap 很大块但**实际是什么看不出来** (深蓝/白色的网格? 像是 placeholder
-  而不是实际业务图标)
-
-### 2.11 NativeFrameUIDialogTour -- 65/100
-
-[截图](NativeFrameUIDialogTour.png)
-
-**好消息**:
-- 3 个 launch 按钮 (Show About modal / Show Preferences modeless / Close modeless) 橙色 filled
-- 底部 status strip "about=unset prefs_open=no last=<none>" 可见
-- 整体小窗口 (360×240) 干净
-
-**待改善**:
-- 窗口背景看起来**略带 green-tinted** 而不是纯 cream, 跟整体调子不太一致
-- 没有图标按钮 (Search 等)
-
-### 2.12 NativeFrameUIControls -- 56/100
-
-[截图](NativeFrameUIControls.png)
-
-**好消息**:
-- Title 显示, "Switch to dark" 按钮 OK
-- ListBox with Apple/Banana/Cherry/Dates 可见, "Banana" 选中
-- ListView Item column + Row 0/1/2 可见
-- OK / Cancel 按钮 OK
-- IconView (深蓝 32x32) 可见
-
-**严重缺陷**:
-- 窗口标题栏 **是 native Win32 chrome** (默认灰色 + 白色关/最小化按钮), 没 themed
-- 窗口**没有可见的 status bar**
-- 整体 layout 太窄 (480×360), 控件排得局促
-
-### 2.13 NativeFrameUIMinimal -- 28/100 (最差)
-
-[截图](NativeFrameUIMinimal.png)
-
-**严重缺陷**:
-- 截图里看到的是**一个小窗口, 中间一块淡橙色**, **完全没有文字, 完全没有 "Click me" 按钮**
-- 应该是 button + static text, 但**文字不可见** (文字颜色 vs surface 颜色大概一致)
-- window 320×120 太小, 像是个 broken shell
-
-> 这是 minimal link 的 demo, 但**视觉上完全 broken**, 应该立刻修。
-
-## 3. 跨 sample 共性严重缺陷 (top 10 必须修)
-
-按视觉冲击从大到小:
-
-1. **Spline chart 完全空白** -- NativeFrameUICharts 主缺陷, 一个 chart 不画用户立刻知道 demo 不全
-2. **NativeFrameUIMinimal 文字完全不可见** -- 截图显示 window 几乎空白, broken shell 体验
-3. **native menu bar 残留** (ResourceGallery "File" / Workbench "File Help") -- CP24-A `apply_to_bar()` 实际上没把 menu chrome 主题化
-4. **很多 sample 缺可见 status bar** (Workbench/DarkStudio/ComponentGallery/ThemeDemo/Charts/SettingsDemo/ResourceGallery/Controls)
-   - CP23-A 自绘了 chrome, 但**视觉上没有 status bar 元素出现** (theme/状态文本)
-5. **ThemeDemo 标题被截断 / ComponentGallery 滚动溢出** -- 窗口尺寸 vs 内容尺寸偏差, 顶部标题/底部控件被剪
-6. **ListView header band 视觉上跟 body rows 一致** -- CP26 Semibold fix **肉眼几乎看不出差别**,
-   header 应该是 quantized background + slightly raised visual weight
-7. **NativeFrameUIControls / NativeFrameUIMinimal 标题栏 native 灰底** -- 没替换为 themed chrome
-8. **Edit 控件 (SettingsDemo / Controls) 是 plain white box** -- Edit 自绘没像 Button 那样有 rounded chrome
-9. **ComboBox 是 plain white box** -- 跟 Edit 同一类问题, ComboBox 自绘不彻底
-10. **IconView 渲染 32x32 深蓝色方块, 而非应用图标** -- 截图无数次看到一个深蓝小方块,
-    应该是 IDI_NFUI_APP 资源加载失败或者 IDA 给的是 placeholder
-
-> 拿 React 的 Material UI / shadcn 对照, 一个**接近精品**的桌面 UI demo 应该至少有:
-> - **整页 background 是按层级变化的** (Workspace, Panel, Field 三层)
-> - **每个控件圆角 + 微阴影 + 触摸的 hover/press 反馈**
-> - **菜单栏、滚动条、标题栏都是 themed chrome, 没有任何 native 灰底突兀**
-> - **视觉密度高 (90% 的区域有信息), 不留大片空白**
-> 
-> **当前 NativeFrameUI: 普遍 60-70, 最好的 IconGallery 90+, 最差的 Minimal 28**。
-> 想达 95+ 必须连修上面 10 条, 同时 systemically 提升 chrome polish 和 visual density。
-
-## 4. CP28+ 推进路线建议
-
-### CP28 (修复 top 10)
-- Spline chart 真正画曲线
-- Menu bar 应用 MENUINFO 让 chrome 真正染 surface
-- Minimal sample 调整 button 文字颜色 / surface 对比
-- ThemeDemo 标题 clipping (裁剪窗口尺寸 vs 内容 calc)
-- ComponentGallery 移除过大空白, 改用更紧的 layout
-- ListView header 在 caption 上加大 visual weight (加 divider height + 加 row count?)
-- StatusBar 在所有 sample 里确保调用 + 显示文字
-- Edit/ComboBox 自绘圆角 chrome
-- IconView 用 IDI_NFUI_APP 真正加载 (或者用一个更具表达力的 glyph 替代)
-
-### CP29 (visual density 系统提升)
-- 每个 sample 默认 panel 背景 + 卡片背景 + 字段背景三层
-- shadow 系统在各 sample 一致应用
-- 触控 hover 反馈 (鼠标移上去按钮变色 + 圆角放大 1px)
-
-### CP30 (跨 sample 视觉合同)
-- 同样的按钮大小、边距、字段宽度在所有 sample 一致
-- 同一个应用的 title bar / icon 在所有 sample 一致 (无需 unit-app-by-app)
-
-### 后续 (CP31-32)
-- HC (high-contrast) 主题视觉验证 — 当前还没拿到 theme 切换后的截图
-- 真实运行 Workbench × 3 themes × 11 其他 samples, 拼成 33 张对比图
-
-## 5. 测试结果
-
-(无需运行 CTest, 此 round 是 visual review round)
-手动检查: 全部 13 张截图存在, 4.2 MB BMP 合计。
-
-## 6. 下一步 (CP28)
-
-按上面 TOP-10 顺序, 第一波建议先修 #1-#5 (硬功能 bug):
-1. Spline chart 渲染
-2. Menu bar 真正 chrome 主题化
-3. Minimal sample 视觉修复
-4. StatusBar cross-sample 确认
-5. ThemeDemo / ComponentGallery layout 溢出
-
-预计需要 1.5-2 倍 CP26 工作量, 因为 Menu 和 StatusBar 都需要重新确认是否真的 self-paint。
+**仍然 native gray**：几乎所有主要交互区。左上 Edit 像默认 Win32 输入框，中部 Tab 与 ListView 表头有 1995 年属性页风格，TreeView 线条和空白底没有现代状态层，菜单完全是系统默认。右侧空白 inspector 让整个窗口像未完成的 IDE skeleton。
 
+**与 React UI 库的差距**:
+- Material UI/shadcn 会给搜索、导航、tab、table 明确的容器层级、hover/selected state 和 8px 间距体系；这里是控件直接铺在灰底上。
+- 信息密度失衡：中间和右侧约八成面积为空，但边框与 splitter 很多，视觉重量都落在系统线框而非内容。
+- dark/high contrast 请求只换标题栏或根本无变化，远达不到 React 主题 token 一次切换全树的完整性。
+
+**修复建议**：1. 先彻底 owner-draw Edit/Tree/Tab/ListView，包括表头、行状态和 focus ring；2. 建立真实的 light/dark/HC 运行时切换并统一非客户区；3. 用有内容的 inspector、行高和 section spacing 重做三栏密度。
+
+## NativeFrameUIShowcase — 评分: 68/100
+
+截图:
+- docs/VISUAL_AUDIT/Showcase_light.png
+- docs/VISUAL_AUDIT/Showcase_dark.png
+- docs/VISUAL_AUDIT/Showcase_hc.png
+
+| 截图 | native gray chrome 残留 |
+|---|---|
+| light | `Switch to dark` 像浅灰系统按钮；卡片虽有圆角，但 Adoption 卡仍带突兀的系统式阴影/立体边。 |
+| dark | 只有标题栏变暗，按钮仍写着 `Switch to dark`，说明客户区没有进入 dark；所有浅灰卡片原样保留。 |
+| hc | 内容仍是 light，不是高对比；浅灰描边、浅橙选中背景和灰色说明文字对高对比用户不可信。 |
+
+**精品控件**：左侧选中导航、KPI 卡片、三色 badge、右侧 inspector card 已经形成较完整的产品化 chrome；圆角、暖色 accent 和卡片间距比其它 sample 明显成熟。
+
+**仍然 native gray**：主题切换按钮缺少品牌化状态；第一张 KPI 卡的阴影像旧式 raised panel。左上品牌标题被截成 `NativeFrame U`，副标题也发生截断；右侧三张说明卡文字被底边裁切。这些裁切比“控件是不是现代”更致命。
+
+**与 React UI 库的差距**:
+- shadcn/Radix 的响应式布局不会允许品牌和卡片正文被容器硬裁切；这里固定尺寸痕迹明显。
+- 右侧栏和主画布下半部过空，纵向 rhythm 断裂；React dashboard 通常会用 grid 自动平衡卡片高度与留白。
+- 声称 light/dark showcase，但自动 dark/high-contrast 启动均未切换内容，主题 API 可验证性不足。
+
+**修复建议**：1. 消灭品牌、描述和 inspector 的全部文本裁切；2. 为主题切换提供可自动化的 HWND/命令入口并实现 HC；3. 去掉 raised 阴影，统一 card elevation、按钮状态与响应式 grid。
+
+## NativeFrameUIDarkStudio — 评分: 72/100
+
+截图:
+- docs/VISUAL_AUDIT/DarkStudio_light.png
+- docs/VISUAL_AUDIT/DarkStudio_dark.png
+- docs/VISUAL_AUDIT/DarkStudio_hc.png
+
+| 截图 | native gray chrome 残留 |
+|---|---|
+| light | 客户区固定 dark，但标题栏是 light，形成系统 chrome 与应用 chrome 的断层；底部 StatusBar/resize grip 仍有原生条带感。 |
+| dark | 标题栏和客户区一致，是三张中唯一完整观感；底部状态条仍像独立 Win32 带状控件。 |
+| hc | 未进入高对比，仍是固定暗色；低对比灰字和橙底灰字继续存在。 |
+
+**精品控件**：左侧 rail 的选中态、圆角 section/card、深色层级、KPI 卡和 accent outline 是本批最接近成品的一组。dark 标题栏下整体视觉是连贯的。
+
+**仍然 native gray**：主要客户区几乎没有裸灰控件，但底部状态条和 resize grip 仍暴露桌面工具感；light 截图的白标题栏尤其像把现代网页面板塞进老窗口。橙色 Preview canvas 占比过大，正文却是低对比灰橙组合。
+
+**与 React UI 库的差距**:
+- 颜色层级接近现代 dark dashboard，但大面积高饱和橙色抢走全部焦点，缺少 Material/shadcn 常见的中性 surface 与节制 accent。
+- 字号偏小、说明文字对比不足；现代 React 组件通常会通过 semantic foreground token 保证对比。
+- 只有固定 dark，light/HC 请求无内容变化，主题系统不完整。
+
+**修复建议**：1. 把橙色大画布降为中性 surface，仅保留局部 accent；2. 提升正文对比和字号；3. 补齐真正 light/HC 主题并统一 status bar/non-client chrome。
+
+## NativeFrameUISettingsDemo — 评分: 54/100
+
+截图:
+- docs/VISUAL_AUDIT/SettingsDemo_light.png
+- docs/VISUAL_AUDIT/SettingsDemo_dark.png
+- docs/VISUAL_AUDIT/SettingsDemo_hc.png
+
+| 截图 | native gray chrome 残留 |
+|---|---|
+| light | Profile/Workspace 两个 Edit 是硬边灰底；Theme ComboBox 是系统箭头；两行 CheckBox 是白色小方框叠灰色行底。 |
+| dark | 仅标题栏深色，表单客户区仍白；Edit/Combo/CheckBox 继续 native gray，混合主题非常明显。 |
+| hc | 未进入高对比；低对比浅橙分类选中态、灰说明字和灰输入框照旧。 |
+
+**精品控件**：`Save snapshot` 按钮、左侧 category 选中胶囊、顶部细 accent divider 有一致的暖色 chrome。
+
+**仍然 native gray**：核心正好是设置页最重要的表单控件——Edit、ComboBox、CheckBox——全部像系统默认控件。右侧表单纵向只使用窗口上半部，下面大片空白；复选框的灰条背景像老式 property page。
+
+**与 React UI 库的差距**:
+- 与 shadcn Form 相比，label/input/help text 的层级和纵向间距不统一，输入框高度太薄，focus/validation 状态不可见。
+- 主题选择器只是数据项，不会改变当前 shell；现代 React 设置页通常立即预览主题并持久化 token 状态。
+- 侧栏与表单宽度缺少 responsive max-width，超宽窗口显得内容漂浮。
+
+**修复建议**：1. 优先重画 Edit/Combo/CheckBox 的边框、hover、focus、disabled；2. 让主题偏好即时切换整个窗口并支持 HC；3. 收紧内容 max-width，重建表单 8/12/16px spacing rhythm。
+
+## NativeFrameUIDialogTour — 评分: 42/100
+
+截图:
+- docs/VISUAL_AUDIT/DialogTour_light.png
+- docs/VISUAL_AUDIT/DialogTour_dark.png
+- docs/VISUAL_AUDIT/DialogTour_hc.png
+
+| 截图 | native gray chrome 残留 |
+|---|---|
+| light | 窗口本身是小型系统 dialog 比例；底部状态文本无容器、无层级，整体仍像传统 Win32 对话框。 |
+| dark | 只有标题栏变暗，白色客户区和三枚橙色按钮不变；典型混合主题。 |
+| hc | 客户区未进入 HC；橙底白字按钮与细小灰状态文本仍保持普通 light 配色。 |
+
+**精品控件**：三个按钮的填充、圆角和统一尺寸明显使用 framework chrome，至少没有默认灰按钮白边。
+
+**仍然 native gray**：窗口布局和信息架构仍是“按钮垂直堆叠 + 一行 debug 状态”的 1995 套壳。关闭按钮在没有 modeless dialog 时仍占主操作位，状态文本 `about=unset prefs_open=no last=<none>` 是开发诊断串，不是产品 UI。
+
+**与 React UI 库的差距**:
+- Radix Dialog 示例会有标题、描述、主次操作、关闭 affordance 和明确的内容层级；这里只是三个同权按钮。
+- 320×200 固定布局、极小正文和裸状态串没有现代 spacing、typography 或 empty state。
+- dark/HC 请求不作用于客户区，无法证明 dialog 主题覆盖。
+
+**修复建议**：1. 把启动页做成带标题/说明/状态 card 的真实 tour；2. 建立主次按钮层级，移除裸 debug 串；3. 让主窗和实际 modal/modeless dialog 都可被自动切换并截图审计。
+
+## NativeFrameUIResourceGallery — 评分: 61/100
+
+截图:
+- docs/VISUAL_AUDIT/ResourceGallery_light.png
+- docs/VISUAL_AUDIT/ResourceGallery_dark.png
+- docs/VISUAL_AUDIT/ResourceGallery_hc.png
+
+| 截图 | native gray chrome 残留 |
+|---|---|
+| light | 顶部 File 菜单是系统默认；底部 StatusBar/resize grip 是原生带状 chrome；预览 bitmap 是生硬的蓝白矩形。 |
+| dark | 只暗化标题栏，菜单、卡片和整个客户区仍 light；系统菜单与 dark non-client 直接冲突。 |
+| hc | 未进入 HC，浅米色 card 描边和细小灰字仍在；菜单也没有 sample 级高对比处理。 |
+
+**精品控件**：两个顶栏按钮、标题 hero card、左右内容 card 统一了圆角与暖色；整体结构比 Workbench 清楚。
+
+**仍然 native gray**：File 菜单和底部状态条最明显。Asset checklist 只是多行裸文本，Preview 的资源图是无说明的色块，像测试夹具而非 gallery。两个大 card 下半部巨大空白。
+
+**与 React UI 库的差距**:
+- Material gallery 会把每类资源做成带缩略图、名称、状态、操作的可扫描 item；这里是 debug checklist 文本。
+- card 使用了现代外框，但内容密度和 empty-state 设计没有跟上，视觉仍像测试 harness。
+- 缺少 dark/HC token 路径，三主题审计实际上只得到一个 light 内容主题。
+
+**修复建议**：1. 把资源清单和 preview 改为真实 item grid/list；2. 主题化 menu/status bar 并补全 dark/HC；3. 消除大面积空 card，增加缩略图说明、状态 badge 和可见交互反馈。
+
+## NativeFrameUIComponentGallery — 评分: 45/100
+
+截图:
+- docs/VISUAL_AUDIT/ComponentGallery_light.png
+- docs/VISUAL_AUDIT/ComponentGallery_dark.png
+- docs/VISUAL_AUDIT/ComponentGallery_hc.png
+
+| 截图 | native gray chrome 残留 |
+|---|---|
+| light | CheckBox/RadioButton 白方块、Edit 硬边、ComboBox 系统箭头、ListView 灰表头、TreeView 展开框、TabControl 凸边全部残留。 |
+| dark | 只有标题栏深色；整页控件仍 light/native gray，所有残留区域与 light 相同。 |
+| hc | 未进入真正 HC；灰表头、灰 Tab、浅灰勾选行和细边输入框原样不变。 |
+
+**精品控件**：Default/Hover 按钮、ListBox 选中行、橙色 ProgressBar 有统一 palette；左侧控件类别标签便于对照。
+
+**仍然 native gray**：这是裸控件残留最集中的截图。CheckBox、RadioButton、Edit、ComboBox、ListView header、TreeView、TabControl 每一类都暴露系统灰 chrome。窗口底部 Panel + Splitter 内容被截断，右侧滚动条也像传统 Win32；`StatusBar` 标签和实际 TabControl 位置关系甚至让语义看起来错位。
+
+**与 React UI 库的差距**:
+- 与 Material UI component gallery 相比，没有统一 control height、radius、focus ring、disabled opacity 和交互状态矩阵。
+- 纵向表单像控件测试清单，而不是有 section/card/anchor navigation 的文档页面；大量不规则横向宽度破坏对齐。
+- dark/HC 完全未覆盖客户区，视觉 QA 无法验证组件级主题一致性。
+
+**修复建议**：1. 将上述七类 native gray 控件逐个 owner-draw/theme 化；2. 重排为 card section + 统一列宽，并修复底部裁切；3. 为每类控件展示 hover/focus/disabled/error 以及三主题状态。
+
+## NativeFrameUIThemeDemo — 评分: 48/100
+
+截图:
+- docs/VISUAL_AUDIT/ThemeDemo_light.png
+- docs/VISUAL_AUDIT/ThemeDemo_dark.png
+- docs/VISUAL_AUDIT/ThemeDemo_hc.png
+
+| 截图 | native gray chrome 残留 |
+|---|---|
+| light | CheckBox/RadioButton、Edit、ComboBox、ListView header、TreeView、TabControl 都保留灰白系统 chrome。 |
+| dark | 主题确实切到 Dark，但 CheckBox/RadioButton 仍是刺眼白块，ListView header 和 TabControl 整条发白，Tree/ListBox 右端出现白色块。 |
+| hc | 主题确实切到 High Contrast，但 CheckBox/RadioButton、ListView header、TabControl 仍是白色系统岛；控件并未全部服从统一 HC token。 |
+
+**精品控件**：Light/Dark/High Contrast 三个按钮可真实切换；Button、ProgressBar、背景、label 和 non-client 在 dark/HC 下能明显响应。高对比的黑/白/黄方向是可辨识的。
+
+**仍然 native gray**：页面顶部大标题被主题按钮覆盖/裁切；ListView 行内容和 TreeView 子项被控件高度裁掉。dark 模式尤其暴露“黑色 custom shell 中嵌白色 native islands”，看起来像 1995 控件直接贴进暗色网页。TabControl、表头、勾选框是最高冲击缺陷。
+
+**与 React UI 库的差距**:
+- React 设计系统的 dark token 会覆盖 trigger、content、border、icon、focus ring；这里主题只覆盖部分 wrapper，内部 native parts 仍泄漏白色。
+- gallery 缺少 section card 与稳定 vertical rhythm，控件宽度任意，标题还被首行按钮遮挡。
+- HC 虽能切换，但不能只靠黄按钮和黑背景；所有边界、选择、focus、disabled 状态都需系统色语义验证。
+
+**修复建议**：1. 最高优先消灭 dark/HC 下所有白色 native island；2. 修复标题、ListView、TreeView 的裁切；3. 建立逐控件主题一致性矩阵并让自动审计激活每个模式。
+
+## 总览
+
+| Sample | 评分 | 关键缺陷 |
+|---|---:|---|
+| Workbench | 38 | 核心 Edit/Tree/Tab/ListView 全是灰色系统 chrome，内容极空，主题只换标题栏。 |
+| Showcase | 68 | 品牌与 card 文本裁切，主题启动请求未切换客户区。 |
+| DarkStudio | 72 | 固定 dark；橙色画布过重、正文对比低、light/HC 不存在。 |
+| SettingsDemo | 54 | 表单核心控件 native gray，布局空，主题偏好不改变 shell。 |
+| DialogTour | 42 | 三按钮加 debug 串，仍是传统小对话框信息架构。 |
+| ResourceGallery | 61 | menu/status 原生，资源展示像测试夹具，三主题内容相同。 |
+| ComponentGallery | 45 | 七类控件泄漏系统灰 chrome，底部裁切，dark/HC 未覆盖。 |
+| ThemeDemo | 48 | 虽能真切主题，但 dark/HC 出现大片白色 native island，并有多处裁切。 |
+| **真实平均分** | **53.5** | 明显低于 92.9；当前整体是“若干 polished shell + 大量未统一的 Win32 内核控件”。 |
+
+## CP28+ 必须修复的 Top-10 缺陷优先级
+
+1. **消灭 dark/HC 的白色 native islands**：先处理 CheckBox、RadioButton、ListView header、TabControl、TreeView/ListBox scrollbar。
+2. **统一 Edit/ComboBox chrome**：输入框与下拉框必须有一致 border、radius、hover、focus、disabled 和主题 token。
+3. **让三主题真正贯穿 sample 全树**：禁止只切标题栏；提供可自动化命令入口，并同步 non-client、menu、status bar 与所有 child HWND。
+4. **修复所有首屏裁切**：Showcase 品牌/inspector、ThemeDemo 标题/ListView/TreeView、ComponentGallery 底部内容必须零裁切。
+5. **重做 Workbench 核心 IDE 控件**：Tree/Tab/ListView/header/search 是最大面积的 1995 灰色 chrome，视觉冲击高于任何小按钮。
+6. **建立统一 8px spacing 与 control-height 体系**：修正 gallery 中任意宽度、薄输入框、拥挤标签和大面积无意义空白。
+7. **降低 DarkStudio 橙色画布视觉重量**：用中性 surface 承载内容，把 accent 限制在选择、进度和关键操作。
+8. **将 DialogTour 从测试启动器升级为产品化 tour**：加入标题、说明、主次操作和状态 card，移除裸 debug 串。
+9. **把 ResourceGallery 的 debug checklist 改为可扫描的资源卡/列表**：增加缩略图、名称、状态 badge、说明和操作反馈。
+10. **建立自动视觉基线与失败门槛**：每个组件至少覆盖 light/dark/HC 的 default/hover/focus/disabled；任何混合主题、白岛或裁切都应阻止 CP 验收。
