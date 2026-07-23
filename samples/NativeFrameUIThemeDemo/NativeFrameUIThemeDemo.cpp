@@ -807,31 +807,19 @@ private:
         // by 4 IconView HWNDs placed in layout_demo.
         draw_segmented(target, cards.feedback, 3);
 
-        // ProgressBar percent label — small caption above the bar's right edge.
+        // ProgressBar percent label — small caption aligned to the right
+        // of the row label, mirroring the reference layout.
         const RowRect progress_row = row_within(cards.feedback, 1);
-        const HWND progress_hwnd = g_demo.progress != nullptr ? g_demo.progress->hwnd() : nullptr;
-        if (progress_hwnd != nullptr) {
-            RECT bar_rect{};
-            GetWindowRect(progress_hwnd, &bar_rect);
-            MapWindowPoints(HWND_DESKTOP, hwnd(), reinterpret_cast<LPPOINT>(&bar_rect), 2);
-            const RECT pct_rect = make_rect(bar_rect.right - dpi_.logical_to_pixels(48),
-                                            bar_rect.top - dpi_.logical_to_pixels(20),
-                                            dpi_.logical_to_pixels(48),
-                                            dpi_.logical_to_pixels(16));
-            nfui::draw_text(target,
-                            pct_rect,
-                            L"65%",
-                            fonts_.semibold(dpi_.dpi(), nfui::font_pt::sm),
-                            palette_.text,
-                            DT_RIGHT | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX);
-        }
-        (void)progress_row;
-
-        // Status bar — keep at the very bottom so the focus ring around
-        // the last interactive control does not get clipped.
-        if (g_demo.status != nullptr) {
-            SendMessageW(g_demo.status->hwnd(), WM_PAINT, 0, 0);
-        }
+        const RECT pct_rect = make_rect(progress_row.label.right - dpi_.logical_to_pixels(48),
+                                        progress_row.label.top,
+                                        dpi_.logical_to_pixels(48),
+                                        dpi_.logical_to_pixels(16));
+        nfui::draw_text(target,
+                        pct_rect,
+                        L"65%",
+                        fonts_.semibold(dpi_.dpi(), nfui::font_pt::sm),
+                        palette_.text,
+                        DT_RIGHT | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX);
     }
 
     void apply_window_icon() noexcept {

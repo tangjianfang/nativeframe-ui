@@ -295,6 +295,9 @@ private:
         spline_.set_palette(palette_);
         area_.set_palette(palette_);
         populate_data();
+        // Re-layout so the card legend entries pick up the new series colors
+        // and the chart HWNDs land on the freshly sized card rects.
+        layout_charts();
     }
 
     void populate_data() noexcept {
@@ -667,26 +670,46 @@ private:
         const int dot_size = dpi.logical_to_pixels(8);
         const int gap = dpi.logical_to_pixels(8);
 
-        // Walk entries left-to-right. Dot first (circle), then label. The
-        // legend strip is centred vertically inside layout.legend so multi-
-        // line legend rows still read on the same baseline.
+        const HFONT font = fonts_.regular(dpi.dpi(), nfui::font_pt::sm);
+        HGDIOBJ prev_font = SelectObject(target, font);
+
+        // Walk entries left-to-right. Each entry: filled circle, then a
+        // label sized to its measured text. The legend strip is centred
+        // vertically inside layout.legend so a clipped trailing label still
+        // reads on the same baseline as its dot.
         int x = layout.legend.left;
         const int cy = layout.legend.top + (rect_height(layout.legend) - dot_size) / 2;
         for (const LegendEntry& entry : layout.legend_entries) {
+            // Measure the label into a fresh null-terminated buffer —
+            // std::wstring_view is NOT guaranteed to be null-terminated
+            // and GetTextExtentPoint32W requires a NUL-terminated wide str.
+            std::wstring text_buf(entry.text);
+            SIZE sz{};
+            GetTextExtentPoint32W(target, text_buf.c_str(),
+                                  static_cast<int>(text_buf.size()), &sz);
+            const int label_w = static_cast<int>(sz.cx);
+
             RECT dot{x, cy, x + dot_size, cy + dot_size};
             nfui::fill_ellipse(target, dot, entry.color);
             x += dot_size + gap;
 
-            RECT label{x, layout.legend.top,
-                       layout.legend.right - x, rect_height(layout.legend)};
+            const int label_right = std::min<int>(x + label_w,
+                                                  layout.legend.right);
+            RECT label{x, layout.legend.top, label_right, layout.legend.bottom};
             nfui::draw_text(target,
                             label,
                             entry.text,
-                            fonts_.regular(dpi.dpi(), nfui::font_pt::sm),
+                            font,
                             p.text_secondary,
                             DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS | DT_NOPREFIX);
-            x += label.right; // label.right == original right edge when no clipping
+
+            x = label_right + gap;
+            if (x + dot_size >= layout.legend.right) {
+                break;  // no room for another dot+label pair
+            }
         }
+
+        SelectObject(target, prev_font);
     }
 
     void apply_window_icon() noexcept {
