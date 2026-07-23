@@ -915,9 +915,14 @@ int wmain() {
         const ThemePalette light = theme_palette(ThemeMode::light);
         const ThemePalette dark  = theme_palette(ThemeMode::dark);
         ok = expect(light.accent.rgb == RGB(217, 119, 87), L"light accent is Claude Code coral #D97757") && ok;
-        ok = expect(dark.accent.rgb  == RGB(217, 119, 87), L"dark accent is Claude Code coral #D97757") && ok;
+        // CP32: dark mode shifts the brand accent toward a slightly brighter,
+        // desaturated coral so it reads cleanly against the neutral dark
+        // background. The light-mode brand is unchanged.
+        ok = expect(dark.accent.rgb  == RGB(232, 142, 110), L"dark accent is desaturated coral #E88E6E") && ok;
         ok = expect(light.background.rgb == RGB(250, 249, 245), L"light background is warm cream #FAF9F5") && ok;
-        ok = expect(dark.background.rgb  == RGB(31, 30, 29),    L"dark background is warm ink #1F1E1D") && ok;
+        // CP32: dark background is now a neutral cool gray (#242426) instead
+        // of the previous warm sepia, matching the reference's neutral shell.
+        ok = expect(dark.background.rgb  == RGB(36, 36, 38),    L"dark background is neutral ink #242426") && ok;
         ok = expect(light.text.rgb != dark.text.rgb, L"light and dark text differ") && ok;
         const ThemeMetrics m = theme_metrics();
         ok = expect(m.corner_radius_control == 6, L"metrics control radius == 6") && ok;

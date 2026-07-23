@@ -10,10 +10,25 @@ namespace nfui {
 // chart legend. Naming the magic number avoids the scattered "9" literal
 // the codebase had before CP8 and keeps every visual surface in sync when
 // the design system bumps it.
+//
+// CP32: extended to a full 6-step scale (xs/sm/base/md/lg/xl) so samples
+// can pull sizes from one place. The numeric values map to the design
+// scale 12 / 13 / 14 / 16 / 20 / 28. All sizes compose with DpiScale and
+// FontCache so any DPI retains the proportions of the design. Existing
+// `font_pt::ui` callers stay on 9 pt; new sample surfaces should pick the
+// step that fits the design (base for body, lg for KPI values, xl for
+// page titles).
 namespace font_pt {
-constexpr int ui = 9;       // Buttons, static text, listbox rows, combobox rows, listview items
-constexpr int chart_tick = 9;   // Chart axis tick labels (mono)
-constexpr int chart_legend = 9; // Chart legend series names
+constexpr int xs    = 12;   // CP32: micro copy, table rows, dense chips
+constexpr int sm    = 13;   // CP32: secondary text, helper labels
+constexpr int base  = 14;   // CP32: design baseline body size
+constexpr int md    = 16;   // CP32: section titles, table headers
+constexpr int lg    = 20;   // CP32: card values, page subtitles
+constexpr int xl    = 28;   // CP32: page titles, hero numbers
+// historical / chart aliases — back-compat for the codebase pre-CP32.
+constexpr int ui    = 9;    // buttons, list rows, combobox rows, listview items
+constexpr int chart_tick   = ui;   // Chart axis tick labels (mono)
+constexpr int chart_legend = sm;   // Chart legend series names
 } // namespace font_pt
 
 [[nodiscard]] int font_pixel_height(int point_size, int dpi) noexcept;

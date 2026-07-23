@@ -13,12 +13,16 @@ int clamp_byte(int v) noexcept { return v < 0 ? 0 : (v > 255 ? 255 : v); }
 ThemePalette theme_palette(ThemeMode mode) noexcept {
     switch (mode) {
     case ThemeMode::dark:
+        // CP32: shift background / surface toward a more neutral cool gray so
+        // the chrome reads like the reference's desaturated shell instead of
+        // the previous warm/sepia tint. The accent is also lifted a touch so
+        // the brand coral stays distinct against the lifted surface.
         return ThemePalette{
-            to_color(RGB(31, 30, 29)),    to_color(RGB(42, 41, 39)),    to_color(RGB(53, 52, 47)),
-            to_color(RGB(61, 60, 54)),    to_color(RGB(237, 237, 235)), to_color(RGB(168, 163, 154)),
-            to_color(RGB(217, 119, 87)),  to_color(RGB(232, 148, 120)), to_color(RGB(255, 255, 255)),
-            to_color(RGB(58, 46, 38)),   to_color(RGB(237, 237, 235)), to_color(RGB(229, 115, 111)),
-            to_color(RGB(111, 170, 130)), to_color(RGB(217, 162, 58)),  to_color(RGB(86, 160, 211)),
+            to_color(RGB(36, 36, 38)),    to_color(RGB(46, 46, 48)),    to_color(RGB(56, 56, 60)),
+            to_color(RGB(64, 64, 68)),    to_color(RGB(238, 238, 240)), to_color(RGB(170, 170, 176)),
+            to_color(RGB(232, 142, 110)), to_color(RGB(244, 165, 130)), to_color(RGB(255, 255, 255)),
+            to_color(RGB(58, 46, 38)),    to_color(RGB(238, 238, 240)), to_color(RGB(232, 122, 108)),
+            to_color(RGB(120, 184, 140)), to_color(RGB(232, 176, 70)),  to_color(RGB(96, 168, 216)),
             to_color(RGB(0, 0, 0)),       // CP16: shadow tint (alpha baked by helper)
         };
     case ThemeMode::high_contrast:
