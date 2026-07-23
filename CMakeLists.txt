@@ -208,6 +208,8 @@ nfui_apply_compiler_options(NativeFrameUIDialogTour)
 nfui_add_resources(NativeFrameUIDialogTour)
 
 if(BUILD_TESTING)
+    add_subdirectory(tools/visual_audit)
+
     add_executable(NativeFrameUISmokeTest
         tests/nativeframeui_smoke.cpp
     )
