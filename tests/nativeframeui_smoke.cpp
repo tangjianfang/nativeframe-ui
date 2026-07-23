@@ -156,6 +156,14 @@ LRESULT CALLBACK reflection_test_subclass_proc(HWND hwnd, UINT message, WPARAM w
 int per_component_smoke(); // defined below main() — per-component lib split smoke checks (T4-T12).
 
 int wmain() {
+    // CP29: Modal dialog round-trip (DialogBoxParamW) blocks on its own
+    // message pump until a human dismisses the dialog. In CI / headless
+    // runs nobody does, and the test would hang to ctest's timeout. Set
+    // NONFUI_SKIP_DIALOG=1 by default so direct invocation also avoids
+    // the modal; developers who want to exercise the modal path can set
+    // NONFUI_SKIP_DIALOG=0 explicitly. CMakeLists.txt also sets the same
+    // env var via set_tests_properties so ctest picks it up reliably.
+    SetEnvironmentVariableW(L"NONFUI_SKIP_DIALOG", L"1");
     if (int rc = per_component_smoke(); rc != 0) {
         return rc;
     }
@@ -1031,9 +1039,14 @@ int wmain() {
         using namespace nfui;
         const std::vector<POINT> pts{ POINT{0, 0}, POINT{10, 10}, POINT{20, 5} };
         const std::vector<POINT> bez = catmull_rom_to_bezier(pts, 0.5);
-        ok = expect(bez.size() == 8,
-                    L"catmull_rom_to_bezier returns 4 control points per segment") && ok;
-        // Segment 0 endpoint x: B0 of segment 0 == P0.x; B3 of segment 0 == P1.x.
+        // CP28: PolyBezier / DrawBeziers expect chained-cubic segments in
+        // 1 + 3*(N-1) layout (start anchor + 3 control points per segment).
+        // For 3 input points there are 2 cubic segments, so 7 output points
+        // is correct — the previous test asserted 8 (4 per segment), which
+        // matched the broken pre-CP28 implementation that emitted one extra
+        // point per segment and made both GDI/GDI+ silently fail to paint.
+        ok = expect(bez.size() == 7,
+                    L"catmull_rom_to_bezier returns 1 + 3*(N-1) control points (PolyBezier layout)") && ok;
         // Sanity: first and last control-point x values match the first/last inputs.
         ok = expect(bez.front().x == pts.front().x && bez.back().x == pts.back().x,
                     L"catmull_rom_to_bezier endpoint x matches input endpoints") && ok;

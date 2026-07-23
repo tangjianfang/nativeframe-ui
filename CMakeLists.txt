@@ -217,6 +217,15 @@ if(BUILD_TESTING)
     nfui_apply_compiler_options(NativeFrameUISmokeTest)
     nfui_add_resources(NativeFrameUISmokeTest)
     add_test(NAME NativeFrameUISmokeTest COMMAND NativeFrameUISmokeTest)
+    # CP29: the smoke test's modal-dialog round-trip calls DialogBoxParamW
+    # which blocks on its own message pump until the dialog is dismissed.
+    # In CI / headless builds nobody dismisses it and the test hangs to
+    # the ctest timeout. Set NONFUI_SKIP_DIALOG=1 by default so ctest never
+    # invokes the modal round-trip; developers running the test directly
+    # can clear the variable to exercise the modal path interactively.
+    set_tests_properties(NativeFrameUISmokeTest PROPERTIES
+        ENVIRONMENT "NONFUI_SKIP_DIALOG=1"
+    )
     add_test(NAME NativeFrameUIBoundaryCheck
         COMMAND powershell -NoProfile -ExecutionPolicy Bypass -File
                 ${CMAKE_CURRENT_SOURCE_DIR}/tools/verify_boundaries.ps1
