@@ -3,19 +3,12 @@
 // nfui_button (NOT the NativeFrameUI umbrella). Verifies that consumers
 // can ship a minimal product with a small dependency footprint.
 //
-// Build deps (see CMakeLists.txt): NativeFrameUI::nfui_core,
-// NativeFrameUI::nfui_theme, NativeFrameUI::nfui_control_base,
-// NativeFrameUI::nfui_button. 4 libs vs. 13 via the umbrella.
-//
-// CP28-C polish: the original window was a 320x120 stretch with the
-// system white background, a centred button that read as a flat gray
-// rect, and a status label whose caption never visibly updated because
-// the static text was sitting in the chrome's bottom band. The window
-// now paints palette.background in WM_PAINT, lays out the controls on a
-// real 8/16px rhythm, and the click feedback actually moves into a
-// visible status row.
+// CP32: modern brand window with two owner-drawn buttons, the 4/8/12/16 grid,
+// and the new font_pt scale. The HWND wrappers live as globals so their
+// addresses stay stable until the parent window reaches WM_NCDESTROY.
 
 #include <nfui/Application.hpp>
+#include <nfui/Controls/Button.hpp>
 #include <nfui/Dpi.hpp>
 #include <nfui/Font.hpp>
 #include <nfui/Paint.hpp>
@@ -28,84 +21,184 @@
 
 namespace {
 
-constexpr RECT kButtonRect{180, 96, 300, 132};
+constexpr int id_confirm = 101;
+constexpr int id_reset   = 102;
 
-// CP30: status text is now stored in a process-local std::wstring rather
-// than living in a hidden StaticText HWND. Earlier the static's owner-draw
-// face kept painting its disabled gray fill over the row our parent
-// WM_PAINT was drawing, so the text never read. A static std::wstring
-// keeps the same "click button → row updates" contract without any child
-// control to fight.
-std::wstring g_status_text = L"Press the button to confirm the minimal link works.";
+// Same constant used by Control::subclass_proc to reflect owner-draw messages.
+constexpr UINT ocm_base = WM_USER + 0x1c00;
+
+// Global wrappers guarantee a stable object address for the lifetime of the
+// HWND. Control::detach_destroyed_hwnd releases the HWND at WM_NCDESTROY,
+// so the wrapper destructor does not call DestroyWindow on a dead handle.
+nfui::Button g_confirm_button;
+nfui::Button g_reset_button;
+nfui::ThemePalette g_palette;
+nfui::FontCache g_fonts;
+nfui::DpiScale g_dpi{96};
+std::wstring g_status = L"Press a button to confirm the minimal link set works.";
+HWND g_hwnd{};
+RECT g_status_rect{};
+
+int px(int logical) noexcept {
+    return g_dpi.logical_to_pixels(logical);
+}
+
+void layout() noexcept {
+    if (g_hwnd == nullptr || g_confirm_button.hwnd() == nullptr) {
+        return;
+    }
+
+    RECT client{};
+    GetClientRect(g_hwnd, &client);
+    g_dpi = nfui::DpiScale(nfui::dpi_of(g_hwnd));
+
+    const int outer   = px(24);
+    const int gap     = px(16);
+    const int btn_w   = px(140);
+    const int btn_h   = px(40);
+    const int status_h = px(24);
+
+    // Brand block: top-left, aligned to the grid.
+    // (Painted in WM_PAINT; no child control needed.)
+
+    // Status line rectangle; defined early so WM_PAINT can read it.
+    g_status_rect = RECT{outer, client.bottom - outer - status_h,
+                         client.right - outer, client.bottom - outer};
+
+    // Two buttons centred in the remaining client area.
+    const int total_w = btn_w * 2 + gap;
+    const int x = (client.right - total_w) / 2;
+    const int y = client.bottom / 2 - btn_h / 2;
+    MoveWindow(g_confirm_button.hwnd(), x, y, btn_w, btn_h, TRUE);
+    MoveWindow(g_reset_button.hwnd(), x + btn_w + gap, y, btn_w, btn_h, TRUE);
+
+    // Refresh fonts on DPI changes.
+    const int d = g_dpi.dpi();
+    SendMessageW(g_confirm_button.hwnd(), WM_SETFONT,
+                 reinterpret_cast<WPARAM>(g_fonts.semibold(d, nfui::font_pt::md)), TRUE);
+    SendMessageW(g_reset_button.hwnd(), WM_SETFONT,
+                 reinterpret_cast<WPARAM>(g_fonts.semibold(d, nfui::font_pt::md)), TRUE);
+}
 
 LRESULT CALLBACK wnd_proc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam) {
-    if (msg == WM_LBUTTONUP) {
-        // CP28-C: manual hit-test against the painted button rect. Doing
-        // this in the parent (instead of routing through a Button HWND)
-        // avoids the system gray rectangle that the framework Button
-        // wrapper leaves on Win11 because the wrapper self-paints after
-        // the parent already drew its accent fill.
-        POINT pt{GET_X_LPARAM(lparam), GET_Y_LPARAM(lparam)};
-        if (PtInRect(&kButtonRect, pt) != FALSE) {
-            g_status_text = L"NativeFrame UI is running with the minimal link set.";
-            InvalidateRect(hwnd, nullptr, FALSE);
+    switch (msg) {
+    case WM_CREATE:
+        g_hwnd = hwnd;
+        g_palette = nfui::theme_palette(nfui::ThemeMode::light);
+        g_dpi = nfui::DpiScale(nfui::dpi_of(hwnd));
+
+        g_confirm_button.inject_theme(&g_palette, &g_fonts);
+        g_reset_button.inject_theme(&g_palette, &g_fonts);
+
+        {
+            nfui::ButtonStyle style{};
+            style.use_semibold = true;
+            g_confirm_button.set_style(style);
+            g_reset_button.set_style(style);
         }
+
+        {
+            HINSTANCE instance = reinterpret_cast<LPCREATESTRUCTW>(lparam)->hInstance;
+            nfui::ControlCreateParams params{
+                instance, hwnd, id_confirm, L"Confirm",
+                0, 0, px(140), px(40), WS_CHILD | WS_VISIBLE | WS_TABSTOP
+            };
+            if (!g_confirm_button.create(params)) {
+                return -1;
+            }
+            params.control_id = id_reset;
+            params.text = L"Reset";
+            if (!g_reset_button.create(params)) {
+                return -1;
+            }
+        }
+        layout();
+        return 0;
+
+    case WM_SIZE:
+        layout();
+        InvalidateRect(hwnd, nullptr, FALSE);
+        return 0;
+
+    case WM_DPICHANGED: {
+        auto* suggested = reinterpret_cast<RECT*>(lparam);
+        if (suggested != nullptr) {
+            SetWindowPos(hwnd, nullptr,
+                         suggested->left, suggested->top,
+                         suggested->right - suggested->left,
+                         suggested->bottom - suggested->top,
+                         SWP_NOZORDER | SWP_NOACTIVATE);
+        }
+        layout();
+        InvalidateRect(hwnd, nullptr, FALSE);
         return 0;
     }
-    if (msg == WM_PAINT) {
-        // CP28-C: paint the client area entirely from the framework —
-        // background, heading, button face, and status row. Going
-        // through the framework paint primitives (fill_rect / draw_text)
-        // proves the minimal link set produces visible chrome and avoids
-        // the system gray BOX that the previous version showed because
-        // the static text controls sat on a COLOR_WINDOW background and
-        // the system theme painted over them in many DWM configs.
-        PAINTSTRUCT paint{};
-        HDC hdc = BeginPaint(hwnd, &paint);
+
+    case WM_COMMAND: {
+        const int cmd = LOWORD(wparam);
+        if (cmd == id_confirm) {
+            g_status = L"NativeFrame UI is running with the minimal link set.";
+            InvalidateRect(hwnd, &g_status_rect, FALSE);
+            return 0;
+        }
+        if (cmd == id_reset) {
+            g_status = L"Press a button to confirm the minimal link set works.";
+            InvalidateRect(hwnd, &g_status_rect, FALSE);
+            return 0;
+        }
+        break;
+    }
+
+    case WM_PAINT: {
+        PAINTSTRUCT ps{};
+        HDC hdc = BeginPaint(hwnd, &ps);
         RECT client{};
         GetClientRect(hwnd, &client);
-        const nfui::ThemePalette palette =
-            nfui::theme_palette(nfui::ThemeMode::light);
 
-        nfui::fill_rect(hdc, client, palette.background);
+        nfui::MemoryDC mem(hdc, client);
+        HDC target = mem.valid() ? mem.dc() : hdc;
 
-        // Heading — semibold, centred.
-        RECT heading{24, 32, client.right - 24, 60};
-        nfui::draw_text(hdc, heading, L"NativeFrame UI — minimal sample",
-                        static_cast<HFONT>(GetStockObject(DEFAULT_GUI_FONT)),
-                        palette.text,
-                        DT_CENTER | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX);
+        nfui::fill_rect(target, client, g_palette.background);
 
-        // Button face — accent fill, semibold caption, accent_text on accent.
-        nfui::fill_rounded_rect(hdc, kButtonRect,
-                                nfui::theme_metrics().corner_radius_control,
-                                palette.accent, palette.accent);
-        nfui::draw_text(hdc, kButtonRect, L"Click me",
-                        static_cast<HFONT>(GetStockObject(DEFAULT_GUI_FONT)),
-                        palette.accent_text,
-                        DT_CENTER | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX);
+        const int d = g_dpi.dpi();
+        const int outer = px(24);
 
-        // Status row — secondary text, centred. CP30: bumped from
-        // text_secondary (which was nearly invisible against palette.background)
-        // to palette.text and gave it a few more pixels of height so the
-        // 9pt face reads at a glance. The muted look came from before the
-        // button was wired up to a real click handler — there's no reason
-        // for the status row to fade into the chrome.
-        RECT status_rect{24, 156, client.right - 24, 184};
-        nfui::draw_text(hdc, status_rect, g_status_text,
-                        static_cast<HFONT>(GetStockObject(DEFAULT_GUI_FONT)),
-                        palette.text,
-                        DT_CENTER | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS | DT_NOPREFIX);
+        // Brand title.
+        RECT title_rc{outer, outer, client.right - outer, outer + px(40)};
+        nfui::draw_text(target, title_rc, L"NativeFrame UI",
+                        g_fonts.bold(d, nfui::font_pt::xl), g_palette.text,
+                        DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX);
 
-        EndPaint(hwnd, &paint);
+        // Brand subtitle.
+        RECT sub_rc{outer, outer + px(36), client.right - outer, outer + px(62)};
+        nfui::draw_text(target, sub_rc, L"Minimal sample",
+                        g_fonts.regular(d, nfui::font_pt::sm), g_palette.text_secondary,
+                        DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX);
+
+        // Accent divider under the brand block.
+        RECT divider{outer, outer + px(68), outer + px(120), outer + px(70)};
+        nfui::fill_rect(target, divider, g_palette.accent);
+
+        // Status line at the bottom of the window.
+        if (g_status_rect.bottom > g_status_rect.top) {
+            nfui::draw_text(target, g_status_rect, g_status,
+                            g_fonts.regular(d, nfui::font_pt::base), g_palette.text,
+                            DT_CENTER | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS | DT_NOPREFIX);
+        }
+
+        EndPaint(hwnd, &ps);
         return 0;
     }
-    if (msg == WM_ERASEBKGND) {
+
+    case WM_ERASEBKGND:
         return 1;
-    }
-    if (msg == WM_DESTROY) {
+
+    case WM_DESTROY:
         PostQuitMessage(0);
         return 0;
+
+    default:
+        break;
     }
     return DefWindowProcW(hwnd, msg, wparam, lparam);
 }
@@ -118,16 +211,7 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, LPWSTR, int) {
         return 1;
     }
 
-    nfui::ThemePalette palette = nfui::theme_palette(nfui::ThemeMode::light);
-    nfui::FontCache fonts;
-
-    // CP28-C: build the background brush from palette.background so the
-    // window reads as part of the framework instead of the default
-    // COLOR_WINDOW white. The brush lives for the lifetime of the app
-    // (deleted at process exit; intentionally a leak by design here —
-    // this sample never resizes or re-themes so we don't have to plumb
-    // ownership).
-    HBRUSH background_brush = CreateSolidBrush(palette.background.rgb);
+    g_palette = nfui::theme_palette(nfui::ThemeMode::light);
 
     WNDCLASSEXW wc{};
     wc.cbSize = sizeof(wc);
@@ -135,28 +219,21 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, LPWSTR, int) {
     wc.lpfnWndProc = &wnd_proc;
     wc.hInstance = instance;
     wc.hCursor = LoadCursorW(nullptr, IDC_ARROW);
-    wc.hbrBackground = background_brush;
+    wc.hbrBackground = CreateSolidBrush(g_palette.background.rgb);
     wc.lpszClassName = L"NFUI_MINIMAL";
-    if (RegisterClassExW(&wc) == 0) return 2;
+    if (RegisterClassExW(&wc) == 0) {
+        return 2;
+    }
 
-    // CP28-C: 480x240 gives the controls room to breathe on a 96 dpi
-    // baseline. WS_CLIPCHILDREN is intentionally NOT set — the parent
-    // WM_PAINT paints the whole client area (background, heading, button
-    // face, status row) via framework primitives. Earlier versions used
-    // child StaticText / Button wrappers that left the chrome as a flat
-    // gray rectangle on Win11; drawing through the framework paint
-    // primitives proves the minimal link set actually paints.
+    // Logical size 560 x 280; the create-time WM_CREATE path will scale and
+    // centre the controls once the window DPI is known.
     HWND hwnd = CreateWindowExW(0, wc.lpszClassName, L"NativeFrameUI Minimal",
                                 WS_OVERLAPPEDWINDOW | WS_VISIBLE,
-                                CW_USEDEFAULT, CW_USEDEFAULT, 480, 240,
+                                CW_USEDEFAULT, CW_USEDEFAULT, 560, 280,
                                 nullptr, nullptr, instance, nullptr);
-    if (hwnd == nullptr) return 3;
-
-    // CP30: removed the hidden StaticText status row — its owner-draw
-    // face kept painting over our WM_PAINT-drawn status line, leaving
-    // the text invisible. The status string now lives in g_status_text
-    // (a process-local std::wstring) and the click handler updates it
-    // directly, so we no longer need a child HWND to ferry the text.
+    if (hwnd == nullptr) {
+        return 3;
+    }
 
     MSG msg{};
     while (GetMessageW(&msg, nullptr, 0, 0) > 0) {

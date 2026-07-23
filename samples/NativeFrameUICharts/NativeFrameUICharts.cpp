@@ -220,6 +220,15 @@ private:
         if (!line_.create(params))   return false;
         if (!spline_.create(params)) return false;
         if (!area_.create(params))   return false;
+
+        // ChartView::create resets the palette/font cache pointers after
+        // registering the window class; re-bind them so every subsequent paint
+        // uses the sample's theme and DPI-aware fonts.
+        bar_.inject_theme(&palette_, &fonts_);
+        hbar_.inject_theme(&palette_, &fonts_);
+        line_.inject_theme(&palette_, &fonts_);
+        spline_.inject_theme(&palette_, &fonts_);
+        area_.inject_theme(&palette_, &fonts_);
         return true;
     }
 

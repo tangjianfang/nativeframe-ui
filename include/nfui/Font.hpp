@@ -11,9 +11,20 @@ namespace nfui {
 // the codebase had before CP8 and keeps every visual surface in sync when
 // the design system bumps it.
 namespace font_pt {
-constexpr int ui = 9;       // Buttons, static text, listbox rows, combobox rows, listview items
-constexpr int chart_tick = 9;   // Chart axis tick labels (mono)
-constexpr int chart_legend = 9; // Chart legend series names
+constexpr int ui = 9;       // Back-compat: smallest UI chrome (status bar, tiny badges)
+
+// CP32 design scale: sans-serif UI typography. Names are independent of
+// the old "ui" value so the new scale can coexist with legacy call sites.
+constexpr int xs    = 12;   // Captions, small badges, eyebrow labels
+constexpr int sm    = 13;   // Secondary body, card metadata
+constexpr int base  = 14;   // Primary body, list rows, form labels
+constexpr int md    = 16;   // Emphasised body, buttons, section headers
+constexpr int lg    = 20;   // Card titles, KPI values, sidebar section labels
+constexpr int xl    = 28;   // Window title / brand mark
+
+// Chart typography aliases (same scale, semantic names).
+constexpr int chart_tick   = xs;
+constexpr int chart_legend = sm;
 } // namespace font_pt
 
 [[nodiscard]] int font_pixel_height(int point_size, int dpi) noexcept;

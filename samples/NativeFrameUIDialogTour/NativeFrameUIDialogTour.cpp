@@ -1,28 +1,16 @@
-// CP12 sample: NativeFrameUIDialogTour
+// CP32 sample: NativeFrameUIDialogTour
 //
-// Exercises the nfui::Dialog wrapper (src/core/Dialog.cpp + include/nfui/Dialog.hpp)
-// in both modal and modeless modes. None of the existing ten samples uses
-// nfui::Dialog directly; this fills that gap and gives consumers a copy-
-// pasteable pattern for DLGPROC wiring, owned-hwnd modeless lifecycle, and
-// the modal_result / end_modeless contracts.
+// A polished, product-quality wizard shell that demonstrates nfui::Dialog for
+// both modal and modeless dialogs. The main window is a modern tour card:
+// a hero header with the application mark, a title + subtitle, three clearly
+// tiered actions, and a clean status strip.
 //
-// Three launch points on the main window:
-//   - "Show About (modal)"           : Dialog::show_modal with IDD_NFUI_ABOUT
-//   - "Show Preferences (modeless)"  : Dialog::show_modeless with IDD_NFUI_PREFS
-//   - "Close modeless"               : end_modeless() for the prefs dialog
-//
-// A status strip at the bottom reports:
-//   - last modal result (IDOK / IDCANCEL / -1)
-//   - whether the modeless dialog is open
-//   - last submitted payload (name + remember + theme)
-//
-// CP22: the three launch buttons and the status strip used to be raw
-// CreateWindowExW BUTTON / STATIC with BS_PUSHBUTTON / SS_SUNKEN — they
-// rendered in un-themed system chrome (COLOR_BTNFACE, Tahoma 8) which
-// stood out against the polished dialog chrome. They now go through
-// nfui::Button + nfui::StaticText wrappers with the same palette/font
-// injection as SettingsDemo, and the window paints palette.background
-// instead of letting the system show COLOR_BTNFACE.
+// Visual contracts:
+//   - 4/8/12/16 logical-pixel grid, scaled per-window DPI.
+//   - Typography uses the CP32 scale: xs/sm/base/md/xl.
+//   - Buttons are framework owner-drawn (rounded, gradient, hover cross-fade).
+//   - The window client area and header are painted from ThemePalette.
+//   - Every HWND wrapper is stable until WM_NCDESTROY.
 
 #include <nfui/Application.hpp>
 #include <nfui/Controls.hpp>
@@ -33,6 +21,7 @@
 #include <nfui/Theme.hpp>
 #include <nfui/Window.hpp>
 
+#include <algorithm>
 #include <string>
 #include <windowsx.h>
 
@@ -45,10 +34,18 @@ constexpr int IDC_LAUNCH_PREFS = 1002;
 constexpr int IDC_CLOSE_PREFS  = 1003;
 constexpr int IDC_STATUS_LABEL = 1004;
 
-constexpr int kButtonW = 220;
-constexpr int kButtonH = 30;
-constexpr int kPadX    = 24;
-constexpr int kPadY    = 24;
+// CP32 grid: all logical values; converted to device pixels at layout time.
+constexpr int kWindowW     = 560;
+constexpr int kWindowH     = 480;
+constexpr int kMarginOuter = 24;
+constexpr int kHeaderH     = 144;
+constexpr int kIconSize    = 56;
+constexpr int kIconGap     = 16;
+constexpr int kButtonH     = 48;
+constexpr int kButtonGap   = 16;
+constexpr int kSectionGap  = 32;
+constexpr int kStatusH     = 40;
+constexpr int kStatusGap   = 8;
 
 // Custom WM_USER message used by the prefs DLGPROC to deliver a submitted
 // payload back to the main window. Routed via SendMessageW so the DLGPROC
@@ -87,26 +84,35 @@ public:
         : instance_(instance),
           palette_(nfui::theme_palette(nfui::ThemeMode::light)) {}
 
+    ~TourWindow() noexcept override {
+        destroy_icon();
+    }
+
     bool create_main(int cmd_show) {
         nfui::WindowCreateParams params{
             instance_,
             L"NativeFrameUIDialogTourWindow",
             L"NativeFrame UI Dialog Tour",
-            WS_OVERLAPPED | WS_CAPTION | WS_SYSMENU | WS_MINIMIZEBOX,
+            WS_OVERLAPPED | WS_CAPTION | WS_SYSMENU | WS_MINIMIZEBOX | WS_MAXIMIZEBOX,
             0,
             CW_USEDEFAULT,
             CW_USEDEFAULT,
-            360,
-            240,
+            kWindowW,
+            kWindowH,
         };
         if (!create(params)) {
             return false;
         }
+
         dpi_ = nfui::DpiScale(GetDpiForWindow(hwnd()));
+        apply_window_icon();
+
         if (!create_children()) {
             return false;
         }
+
         ShowWindow(hwnd(), cmd_show);
+        UpdateWindow(hwnd());
         return true;
     }
 
@@ -119,13 +125,12 @@ public:
     }
 
     void launch_prefs() {
-        // CP22: OwnedHwnd::valid() only checks the cached pointer, not that
-        // the HWND is still alive. When the prefs DLGPROC destroys the HWND
-        // directly (IDOK / IDCANCEL / WM_CLOSE paths in prefs_dlg_proc
-        // below) without going through prefs_.end_modeless(), the wrapper
-        // keeps the dead pointer and a second click on "Show Preferences"
-        // silently no-ops. Use IsWindow() on the cached HWND so we either
-        // foreground the live dialog or treat the slot as empty.
+        // OwnedHwnd::valid() only checks the cached pointer, not that the
+        // HWND is still alive. When the prefs DLGPROC destroys the HWND
+        // directly without going through prefs_.end_modeless(), the wrapper
+        // keeps the dead pointer and a second click would silently no-op.
+        // Use IsWindow() on the cached HWND so we either foreground the live
+        // dialog or treat the slot as empty.
         if (prefs_.valid() && IsWindow(prefs_.hwnd()) != FALSE) {
             SetForegroundWindow(prefs_.hwnd());
             return;
@@ -141,8 +146,6 @@ public:
     }
 
     void close_prefs() {
-        // CP22: same IsWindow() guard so close_prefs() doesn't try to
-        // end_modeless() on a slot the DLGPROC already destroyed.
         if (prefs_.valid() && IsWindow(prefs_.hwnd()) != FALSE) {
             prefs_.end_modeless(IDCANCEL);
             g_modeless_dlg = nullptr;
@@ -166,7 +169,16 @@ protected:
                 return 0;
             case WM_DPICHANGED: {
                 dpi_ = nfui::DpiScale(HIWORD(wp));
-                apply_native_fonts();
+                auto* suggested = reinterpret_cast<RECT*>(lp);
+                if (suggested != nullptr) {
+                    SetWindowPos(hwnd(),
+                                 nullptr,
+                                 suggested->left,
+                                 suggested->top,
+                                 suggested->right - suggested->left,
+                                 suggested->bottom - suggested->top,
+                                 SWP_NOACTIVATE | SWP_NOZORDER);
+                }
                 layout_children();
                 InvalidateRect(hwnd(), nullptr, TRUE);
                 return 0;
@@ -178,13 +190,10 @@ protected:
                 HDC hdc = BeginPaint(hwnd(), &paint);
                 RECT client{};
                 GetClientRect(hwnd(), &client);
-                // CP22: paint palette.background over the entire client area
-                // so the un-themed sections between the buttons read as part
-                // of the surface, not COLOR_BTNFACE.
                 {
                     nfui::MemoryDC mem(hdc, client);
                     HDC target = mem.valid() ? mem.dc() : hdc;
-                    nfui::fill_rect(target, client, palette_.background);
+                    paint_background(target);
                 }
                 EndPaint(hwnd(), &paint);
                 return 0;
@@ -201,8 +210,8 @@ protected:
             }
             case WM_GETMINMAXINFO: {
                 auto* mmi = reinterpret_cast<MINMAXINFO*>(lp);
-                mmi->ptMinTrackSize.x = 320;
-                mmi->ptMinTrackSize.y = 220;
+                mmi->ptMinTrackSize.x = dpi_.logical_to_pixels(420);
+                mmi->ptMinTrackSize.y = dpi_.logical_to_pixels(360);
                 return 0;
             }
             case WM_NFUI_PREFS_SUBMITTED: {
@@ -223,9 +232,6 @@ protected:
 
 private:
     [[nodiscard]] bool create_children() noexcept {
-        // CP22: bind every wrapper to the shared palette + FontCache before
-        // create(), so the buttons adopt themed chrome and the status strip
-        // gets the cached UI font via its WM_SETFONT path.
         about_btn_.inject_theme(&palette_, &fonts_);
         prefs_btn_.inject_theme(&palette_, &fonts_);
         close_btn_.inject_theme(&palette_, &fonts_);
@@ -236,56 +242,73 @@ private:
             hwnd(),
             IDC_LAUNCH_ABOUT,
             L"Show About (modal)",
-            0, 0, kButtonW, kButtonH,
+            0, 0, 100, kButtonH,
         };
+
+        nfui::ButtonStyle accent_style{};
+        accent_style.use_semibold = true;
+        about_btn_.set_style(accent_style);
         if (!about_btn_.create(params)) {
             return false;
         }
 
         params.control_id = IDC_LAUNCH_PREFS;
         params.text       = L"Show Preferences (modeless)";
+        prefs_btn_.set_style(accent_style);
         if (!prefs_btn_.create(params)) {
             return false;
         }
 
         params.control_id = IDC_CLOSE_PREFS;
         params.text       = L"Close modeless";
+        close_btn_.set_style(accent_style);
         if (!close_btn_.create(params)) {
             return false;
         }
 
         params.control_id = IDC_STATUS_LABEL;
         params.text       = L"";
-        params.style      = WS_CHILD | WS_VISIBLE | WS_TABSTOP;
+        params.style      = WS_CHILD | WS_VISIBLE;
         if (!status_label_.create(params)) {
             return false;
         }
-        // CP22: subtle text colour for the status strip so it reads as
-        // secondary chrome against the painted background. single_line=true
-        // matches SettingsDemo's status_label.
+
         nfui::TextStyle status_style{};
-        status_style.foreground     = palette_.text_secondary;
-        status_style.background     = palette_.background;
-        status_style.font_size_pt   = 9;
-        status_style.align_v        = nfui::StaticTextAlignV::middle;
-        status_style.horizontal_padding = 4;
-        status_style.vertical_padding   = 2;
+        status_style.foreground         = palette_.text_secondary;
+        status_style.background         = palette_.background;
+        status_style.font_size_pt       = nfui::font_pt::sm;
+        status_style.align_v            = nfui::StaticTextAlignV::middle;
+        status_style.horizontal_padding = 0;
+        status_style.vertical_padding   = 0;
         status_label_.set_style(status_style);
 
-        apply_native_fonts();
         refresh_status();
         layout_children();
         return true;
     }
 
-    void apply_native_fonts() noexcept {
-        // CP22: nfui::StaticText is self-painting but Button relies on
-        // WM_SETFONT for its caption measure. Keep the cached UI font in
-        // sync so the labels stay Segoe UI across DPI swaps.
-        const HFONT ui_font = fonts_.regular(dpi_.dpi(), nfui::font_pt::ui);
-        SendMessageW(about_btn_.hwnd(),   WM_SETFONT, reinterpret_cast<WPARAM>(ui_font), TRUE);
-        SendMessageW(prefs_btn_.hwnd(),   WM_SETFONT, reinterpret_cast<WPARAM>(ui_font), TRUE);
-        SendMessageW(close_btn_.hwnd(),   WM_SETFONT, reinterpret_cast<WPARAM>(ui_font), TRUE);
+    void apply_window_icon() noexcept {
+        if (app_icon_ != nullptr) {
+            return;
+        }
+        app_icon_ = static_cast<HICON>(LoadImageW(
+            instance_,
+            MAKEINTRESOURCEW(IDI_NFUI_APP),
+            IMAGE_ICON,
+            GetSystemMetrics(SM_CXSMICON),
+            GetSystemMetrics(SM_CYSMICON),
+            LR_DEFAULTCOLOR));
+        if (app_icon_ != nullptr) {
+            SendMessageW(hwnd(), WM_SETICON, ICON_SMALL,
+                         reinterpret_cast<WPARAM>(app_icon_));
+        }
+    }
+
+    void destroy_icon() noexcept {
+        if (app_icon_ != nullptr) {
+            DestroyIcon(app_icon_);
+            app_icon_ = nullptr;
+        }
     }
 
     void refresh_status() {
@@ -309,35 +332,99 @@ private:
         dpi_ = nfui::DpiScale(GetDpiForWindow(hwnd()));
         RECT rc{};
         GetClientRect(hwnd(), &rc);
+
+        const int margin   = dpi_.logical_to_pixels(kMarginOuter);
+        const int header_h = dpi_.logical_to_pixels(kHeaderH);
         const int button_h = dpi_.logical_to_pixels(kButtonH);
-        const int button_w = dpi_.logical_to_pixels(kButtonW);
-        // CP22: center uses the DPI-scaled button_w so the buttons stay
-        // centred at 125/150/175/200% DPI. Previously cx used the raw
-        // logical kButtonW (=220) while the MoveWindow used the scaled
-        // button_w, which at >96% DPI pushed the buttons right of centre.
-        const int cx = (rc.right - rc.left - button_w) / 2;
-        int y        = dpi_.logical_to_pixels(kPadY);
-        const int button_gap = dpi_.logical_to_pixels(8);
-        MoveWindow(about_btn_.hwnd(), cx, y, button_w, button_h, TRUE);
-        y += button_h + button_gap;
-        MoveWindow(prefs_btn_.hwnd(), cx, y, button_w, button_h, TRUE);
-        y += button_h + button_gap;
-        MoveWindow(close_btn_.hwnd(), cx, y, button_w, button_h, TRUE);
-        y += button_h + dpi_.logical_to_pixels(12);
-        // CP22: anchor the status strip to the bottom of the client area
-        // so a tall window doesn't leave a blank palette.background band
-        // below the status. The strip's height scales with DPI; the gap
-        // between the strip and the window bottom matches kPadX.
-        const int status_h = dpi_.logical_to_pixels(22);
-        const int status_bottom_pad = dpi_.logical_to_pixels(kPadY);
-        const int status_top = std::max(static_cast<int>(y), static_cast<int>(rc.bottom - status_bottom_pad - status_h));
-        const int status_x = dpi_.logical_to_pixels(kPadX);
-        const int status_w = rc.right - rc.left - 2 * status_x;
+        const int button_w = (rc.right - rc.left) - 2 * margin;
+        const int gap      = dpi_.logical_to_pixels(kButtonGap);
+        const int section  = dpi_.logical_to_pixels(kSectionGap);
+        const int status_h = dpi_.logical_to_pixels(kStatusH);
+        const int status_y = rc.bottom - dpi_.logical_to_pixels(kMarginOuter) - status_h;
+
+        int y = header_h + section;
+        MoveWindow(about_btn_.hwnd(),  margin, y, button_w, button_h, TRUE);
+        y += button_h + gap;
+        MoveWindow(prefs_btn_.hwnd(), margin, y, button_w, button_h, TRUE);
+        y += button_h + gap;
+        MoveWindow(close_btn_.hwnd(), margin, y, button_w, button_h, TRUE);
+
         MoveWindow(status_label_.hwnd(),
-                   status_x,
-                   status_top,
-                   status_w,
-                   status_h, TRUE);
+                   margin,
+                   status_y + dpi_.logical_to_pixels(kStatusGap),
+                   button_w,
+                   status_h - dpi_.logical_to_pixels(kStatusGap), TRUE);
+    }
+
+    void paint_background(HDC target) noexcept {
+        const int dpi_value = dpi_.dpi();
+        const nfui::ThemePalette& p = palette_;
+
+        RECT client{};
+        GetClientRect(hwnd(), &client);
+        nfui::fill_rect(target, client, p.background);
+
+        // Hero header: surface background with a 1px bottom divider.
+        const int header_h = dpi_.logical_to_pixels(kHeaderH);
+        RECT header{client.left, client.top, client.right, client.top + header_h};
+        nfui::fill_rect(target, header, p.surface);
+        const RECT divider{
+            header.left,
+            header.bottom - 1,
+            header.right,
+            header.bottom,
+        };
+        nfui::fill_rect(target, divider, p.border);
+
+        // App mark on the left of the header: a rounded accent square with a
+        // white "N". This is sample-local chrome; the framework icon resource
+        // does not carry the same brand mark, so we paint it ourselves.
+        const int icon_size = dpi_.logical_to_pixels(kIconSize);
+        const int margin    = dpi_.logical_to_pixels(kMarginOuter);
+        const int icon_x    = client.left + margin;
+        const int icon_y    = client.top + (header_h - icon_size) / 2;
+        const RECT mark_rc{icon_x, icon_y, icon_x + icon_size, icon_y + icon_size};
+        const int mark_radius = nfui::theme_metrics().corner_radius_card;
+        nfui::fill_rounded_rect(target, mark_rc, mark_radius, p.accent, p.accent);
+        RECT mark_text_rc = mark_rc;
+        HFONT mark_font = fonts_.bold(dpi_value, nfui::font_pt::xl);
+        nfui::draw_text(target, mark_text_rc, L"N", mark_font, p.accent_text,
+                        DT_CENTER | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX);
+
+        // Title and subtitle to the right of the mark.
+        const int icon_gap = dpi_.logical_to_pixels(kIconGap);
+        const int text_left = icon_x + icon_size + icon_gap;
+        const int text_right = client.right - margin;
+
+        RECT title_rc{
+            text_left,
+            client.top + dpi_.logical_to_pixels(24),
+            text_right,
+            client.top + dpi_.logical_to_pixels(60),
+        };
+        HFONT title_font = fonts_.bold(dpi_value, nfui::font_pt::xl);
+        nfui::draw_text(target, title_rc, L"Dialog Tour", title_font, p.text,
+                        DT_LEFT | DT_TOP | DT_SINGLELINE | DT_NOPREFIX);
+
+        RECT subtitle_rc{
+            text_left,
+            title_rc.bottom + dpi_.logical_to_pixels(4),
+            text_right,
+            header.bottom - dpi_.logical_to_pixels(24),
+        };
+        HFONT subtitle_font = fonts_.regular(dpi_value, nfui::font_pt::base);
+        nfui::draw_text(target, subtitle_rc,
+                        L"Demonstrates modal, modeless, and lifecycle routing in a native shell.",
+                        subtitle_font, p.text_secondary,
+                        DT_LEFT | DT_TOP | DT_WORDBREAK | DT_NOPREFIX);
+
+        // 1px divider above the status strip so it reads as anchored chrome.
+        const int status_h = dpi_.logical_to_pixels(kStatusH);
+        const int status_y = client.bottom - dpi_.logical_to_pixels(kMarginOuter) - status_h;
+        nfui::draw_line(target,
+                        {client.left + margin, status_y},
+                        {client.right - margin, status_y},
+                        p.border, 1);
     }
 
     static INT_PTR CALLBACK about_dlg_proc(HWND dlg, UINT msg, WPARAM wp, LPARAM) {
@@ -371,11 +458,6 @@ private:
                 const WORD code = HIWORD(wp);
                 const WORD id   = LOWORD(wp);
                 if (code == BN_CLICKED && id == IDOK) {
-                    // CP15: validation no longer pops a native MessageBoxW
-                    // (the old chrome bypasses every visual contract in the
-                    // framework). An empty name is encoded as "<empty>" in
-                    // the payload so the main window's status strip reports
-                    // the truth without flashing native chrome.
                     wchar_t name[128]{};
                     GetDlgItemTextW(dlg, IDC_NFUI_PREFS_NAME, name, 128);
                     PrefsPayload p{};
@@ -390,9 +472,6 @@ private:
                         SendMessageW(main_hwnd, WM_NFUI_PREFS_SUBMITTED, 0,
                                      reinterpret_cast<LPARAM>(encoded.c_str()));
                     }
-                    // Modeless path: DestroyWindow tears down the HWND that
-                    // CreateDialogParamW allocated; the framework's
-                    // OwnedHwnd RAII cleans up via WM_NCDESTROY.
                     DestroyWindow(dlg);
                     g_modeless_dlg = nullptr;
                     return TRUE;
@@ -423,8 +502,9 @@ private:
     nfui::Button close_btn_;
     nfui::StaticText status_label_;
     nfui::DpiScale dpi_{96};
+    HICON app_icon_{};
     int last_about_result_{-1};
-    std::wstring last_payload_{L"<none>"};
+    std::wstring last_payload_{L"none"};
 };
 
 } // namespace

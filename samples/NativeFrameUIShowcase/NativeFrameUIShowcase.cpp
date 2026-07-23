@@ -5,7 +5,25 @@
 
 #include <windowsx.h>
 
+#include <string_view>
+
 namespace {
+
+[[nodiscard]] nfui::ThemeMode parse_theme_arg(int argc, wchar_t* argv[]) noexcept {
+    for (int i = 1; i + 1 < argc; ++i) {
+        if (std::wstring_view{argv[i]} == L"--theme") {
+            const std::wstring_view value = argv[i + 1];
+            if (value == L"dark") {
+                return nfui::ThemeMode::dark;
+            }
+            if (value == L"high_contrast" || value == L"hc") {
+                return nfui::ThemeMode::high_contrast;
+            }
+            return nfui::ThemeMode::light;
+        }
+    }
+    return nfui::ThemeMode::light;
+}
 
 class ShowcaseWindow final : public nfui::Window {
 public:
@@ -43,6 +61,10 @@ public:
         return true;
     }
 
+    void set_initial_theme(nfui::ThemeMode mode) noexcept {
+        view_.set_theme_mode(mode);
+    }
+
 protected:
     LRESULT handle_message(UINT message, WPARAM wparam, LPARAM lparam) override {
         switch (message) {
@@ -63,15 +85,11 @@ protected:
             }
             return 0;
         case WM_LBUTTONDOWN:
-            // CP22: a mouse click on a paint-only affordance (theme toggle
-            // or nav row) also moves keyboard focus onto it so Tab/Enter
-            // behave consistently with the click path.
             if (view_.on_left_button_down({GET_X_LPARAM(lparam), GET_Y_LPARAM(lparam)})) {
                 InvalidateRect(hwnd(), nullptr, FALSE);
             }
             return 0;
         case WM_KEYDOWN: {
-            // CP22: keyboard navigation across the painted affordances.
             bool redraw = false;
             switch (wparam) {
             case VK_TAB:
@@ -198,7 +216,7 @@ private:
 
 } // namespace
 
-int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int show_command) {
+int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR cmd_line, int show_command) {
     nfui::Application app({instance, show_command});
     if (!nfui::Application::initialize_process_dpi() ||
         !nfui::Application::initialize_common_controls()) {
@@ -206,6 +224,7 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int show_command) {
     }
 
     ShowcaseWindow window(instance);
+    window.set_initial_theme(parse_theme_arg(__argc, __wargv));
     if (!window.create_main(show_command)) {
         return 2;
     }

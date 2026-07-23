@@ -24,11 +24,12 @@ public:
     [[nodiscard]] bool on_left_button_down(POINT point) noexcept;
     [[nodiscard]] bool clear_hover() noexcept;
 
-    // CP22: keyboard focus for the painted chrome. Tab cycles through
-    // (theme toggle, then the four nav rows in order); Shift+Tab reverses.
-    // Enter / Space activate the currently-focused affordance. The focused
-    // affordance is rendered with a focus ring so a keyboard user can see
-    // what will activate. `focus_index == -1` means "no focus".
+    // Keyboard focus across the painted chrome. Tab order:
+    //   0 = theme toggle button
+    //   1..5 = sidebar nav rows (Overview..Settings)
+    //   6 = notification bell button
+    // Shift+Tab reverses. Enter / Space activate the focused affordance.
+    // focus_index == -1 means no focus.
     [[nodiscard]] int focus_index() const noexcept { return focus_index_; }
     void set_focus_index(int index) noexcept;
     void cycle_focus(bool reverse) noexcept;
@@ -43,5 +44,5 @@ private:
     RECT client_rect_{0, 0, 1280, 840};
     int hovered_card_{-1};
     int selected_navigation_{0};
-    int focus_index_{-1};  // 0 = theme toggle, 1..4 = nav[0..3]
+    int focus_index_{-1};  // 0=toggle, 1..5=nav, 6=notification
 };
