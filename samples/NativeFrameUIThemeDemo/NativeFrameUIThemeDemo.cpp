@@ -55,6 +55,7 @@ constexpr int kCardRadius         = 10;
 constexpr int kChipHeight         = 22;
 constexpr int kCardPadding        = 16;
 constexpr int kRowGap             = 16;
+constexpr int kChipGap            = 8;
 constexpr int kCardBorderWidth    = 1;
 
 // Card grid: 3 columns × 2 rows. Top row spans the full grid; bottom-left
@@ -284,18 +285,23 @@ private:
         const int outer = outer_margin();
         const int gap = row_gap();
         const int title_h = title_bar_height();
+        const int chip_space = chip_height() + dpi_.logical_to_pixels(kChipGap);
         const int usable_w = client.right - 2 * outer;
         const int col_w = (usable_w - gap * (kColumns - 1)) / kColumns;
 
-        const int cards_top = client.top + outer + title_h + gap;
+        // Reserve `chip_space` above each card so the section chip sits
+        // cleanly above the card with an 8 logical px gap, and reserve
+        // the same between rows so the bottom-row chip doesn't overlap
+        // the top-row card.
+        const int cards_top = client.top + outer + title_h + gap + chip_space;
         const int usable_h = (client.bottom - outer) - cards_top;
-        const int row_h = (usable_h - gap) / 2;
+        const int row_h = (usable_h - gap - chip_space) / 2;
         cards.row_h = row_h;
 
         cards.form     = make_rect(client.left + outer, cards_top, col_w, row_h);
         cards.lists    = make_rect(cards.form.right + gap, cards_top, col_w, row_h);
         cards.feedback = make_rect(cards.lists.right + gap, cards_top, col_w, row_h);
-        cards.layout   = make_rect(client.left + outer, cards.form.bottom + gap, col_w, row_h);
+        cards.layout   = make_rect(client.left + outer, cards.form.bottom + gap + chip_space, col_w, row_h);
         return cards;
     }
 
@@ -669,8 +675,11 @@ private:
 
     void draw_section_chip(HDC target, const RECT& card, const wchar_t* text) noexcept {
         const int radius = dpi_.logical_to_pixels(6);
+        const int chip_gap_px = dpi_.logical_to_pixels(kChipGap);
+        // Place the chip above the card so it does not overlap the row 0
+        // content; card.top - chip_gap_px is the bottom edge of the chip.
         const RECT chip = make_rect(card.left + card_padding(),
-                                    card.top + card_padding(),
+                                    card.top - chip_gap_px - chip_height(),
                                     dpi_.logical_to_pixels(110),
                                     chip_height());
         const nfui::Color chip_bg = nfui::alpha_blend(palette_.border, palette_.surface, 0.45f);
