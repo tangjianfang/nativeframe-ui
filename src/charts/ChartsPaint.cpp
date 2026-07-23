@@ -39,29 +39,37 @@ void draw_polyline_aa(HDC hdc,
                       Color color,
                       int width_px) noexcept {
     if (hdc == nullptr || points == nullptr || count < 2) return;
-    if (!GdiplusContext::active()) {
-        // No GDI+ available — degrade to the pure GDI polyline so callers
-        // still get a visible stroke even before nfui::initialize_chart_aa()
-        // has been called (or if startup ever fails).
-        draw_polyline(hdc, points, count, color, width_px < 1 ? 1 : width_px);
-        return;
+    const int width = width_px < 1 ? 1 : width_px;
+
+    // CP28: Gdiplus::Graphics::DrawLines can bind to the visual-audit
+    // PrintWindow memory DC and report Status::Ok yet silently produce
+    // no pixels (same failure mode as DrawBeziers). Mirror the bezier
+    // helper: try GDI+ first for a smooth AA stroke, then always
+    // overdraw with the GDI polyline so the line is visible on every DC.
+    if (GdiplusContext::active()) {
+        std::unique_ptr<Gdiplus::Graphics> graphics(
+            new Gdiplus::Graphics(hdc));
+        if (graphics->GetLastStatus() == Gdiplus::Status::Ok) {
+            graphics->SetSmoothingMode(Gdiplus::SmoothingModeAntiAlias);
+            // PixelOffsetModeHalf nudges the stroke half a pixel so
+            // integer-aligned lines don't ghost between two rows of
+            // device pixels at integer scales.
+            graphics->SetPixelOffsetMode(Gdiplus::PixelOffsetModeHalf);
+            Gdiplus::Pen pen(to_gp_color(color),
+                             static_cast<Gdiplus::REAL>(width));
+            if (pen.GetLastStatus() == Gdiplus::Status::Ok) {
+                graphics->DrawLines(
+                    &pen,
+                    reinterpret_cast<const Gdiplus::PointF*>(points),
+                    count);
+            }
+        }
     }
 
-    std::unique_ptr<Gdiplus::Graphics> graphics(
-        new Gdiplus::Graphics(hdc));
-    if (graphics->GetLastStatus() != Gdiplus::Status::Ok) return;
-
-    graphics->SetSmoothingMode(Gdiplus::SmoothingModeAntiAlias);
-    // PixelOffsetModeHalf nudges the stroke half a pixel so integer-aligned
-    // lines don't ghost between two rows of device pixels at integer scales.
-    graphics->SetPixelOffsetMode(Gdiplus::PixelOffsetModeHalf);
-
-    Gdiplus::Pen pen(to_gp_color(color), static_cast<Gdiplus::REAL>(width_px < 1 ? 1 : width_px));
-    if (pen.GetLastStatus() != Gdiplus::Status::Ok) return;
-
-    graphics->DrawLines(&pen,
-                        reinterpret_cast<const Gdiplus::PointF*>(points),
-                        count);
+    // Reliable GDI overdraw — guarantees a visible polyline on every DC
+    // the chart views can paint to, including the 32bpp memory DCs the
+    // visual-audit PrintWindow path produces.
+    draw_polyline(hdc, points, count, color, width);
 }
 
 void draw_beziers_aa(HDC hdc,
@@ -70,37 +78,46 @@ void draw_beziers_aa(HDC hdc,
                      Color color,
                      int width_px) noexcept {
     if (hdc == nullptr || points == nullptr || count < 4) return;
-    if (!GdiplusContext::active()) {
-        // GDI fallback: PolyBezier against a Solid pen. PolyBezier requires
-        // (count - 1) % 3 == 0, i.e. chained cubic Bezier segments with
-        // shared endpoints — the same shape catmull_rom_to_bezier emits.
-        HPEN pen = CreatePen(PS_SOLID, width_px < 1 ? 1 : width_px, color.rgb);
-        if (pen == nullptr) return;
-        HGDIOBJ prev_pen = SelectObject(hdc, pen);
-        HGDIOBJ prev_brush = SelectObject(hdc, GetStockObject(NULL_BRUSH));
-        PolyBezier(hdc, points, count);
-        SelectObject(hdc, prev_brush);
-        SelectObject(hdc, prev_pen);
-        DeleteObject(pen);
-        return;
+    const int width = width_px < 1 ? 1 : width_px;
+
+    // CP28: Gdiplus::Graphics::DrawBeziers binds to the visual-audit
+    // PrintWindow memory DC and reports Status::Ok, yet silently produces
+    // no pixels — the empty-spline defect CP27 caught. PolyBezier works
+    // reliably on every DC we've seen (window DC, screen DC, 32bpp memory
+    // DC), so the GDI path is the default. GDI+ is still attempted first
+    // for native HWND owners that want a smooth AA stroke, but its
+    // result is overdrawn with the GDI path so PrintWindow captures and
+    // windowed renders converge on the same visible stroke.
+    if (GdiplusContext::active()) {
+        std::unique_ptr<Gdiplus::Graphics> graphics(
+            new Gdiplus::Graphics(hdc));
+        if (graphics->GetLastStatus() == Gdiplus::Status::Ok) {
+            graphics->SetSmoothingMode(Gdiplus::SmoothingModeAntiAlias);
+            graphics->SetPixelOffsetMode(Gdiplus::PixelOffsetModeHalf);
+            Gdiplus::Pen pen(to_gp_color(color),
+                             static_cast<Gdiplus::REAL>(width));
+            if (pen.GetLastStatus() == Gdiplus::Status::Ok) {
+                graphics->DrawBeziers(
+                    &pen,
+                    reinterpret_cast<const Gdiplus::PointF*>(points),
+                    count);
+            }
+        }
     }
 
-    std::unique_ptr<Gdiplus::Graphics> graphics(
-        new Gdiplus::Graphics(hdc));
-    if (graphics->GetLastStatus() != Gdiplus::Status::Ok) return;
-
-    graphics->SetSmoothingMode(Gdiplus::SmoothingModeAntiAlias);
-    graphics->SetPixelOffsetMode(Gdiplus::PixelOffsetModeHalf);
-
-    Gdiplus::Pen pen(to_gp_color(color), static_cast<Gdiplus::REAL>(width_px < 1 ? 1 : width_px));
-    if (pen.GetLastStatus() != Gdiplus::Status::Ok) return;
-
-    // Gdiplus::Graphics::DrawBeziers treats each block of 4 points as one
-    // cubic segment and chains them by sharing endpoints, exactly matching
-    // the contract of catmull_rom_to_bezier (4*(n-1) points).
-    graphics->DrawBeziers(&pen,
-                          reinterpret_cast<const Gdiplus::PointF*>(points),
-                          count);
+    // Reliable GDI path — overdraws the GDI+ attempt so the spline is
+    // visible on every DC the chart views can render to.
+    HPEN pen = CreatePen(PS_SOLID, width, color.rgb);
+    if (pen == nullptr) return;
+    HGDIOBJ prev_pen = SelectObject(hdc, pen);
+    HGDIOBJ prev_brush = SelectObject(hdc, GetStockObject(NULL_BRUSH));
+    // PolyBezier requires (count - 1) % 3 == 0 — i.e. chained cubic
+    // Bezier segments with shared endpoints, matching the contract of
+    // catmull_rom_to_bezier (1 + 3*(n-1) points).
+    PolyBezier(hdc, points, count);
+    SelectObject(hdc, prev_brush);
+    SelectObject(hdc, prev_pen);
+    DeleteObject(pen);
 }
 
 void fill_circles_aa(HDC hdc,
@@ -109,43 +126,49 @@ void fill_circles_aa(HDC hdc,
                      int radius_px,
                      Color color) noexcept {
     if (hdc == nullptr || centers == nullptr || count <= 0 || radius_px <= 0) return;
-    if (!GdiplusContext::active()) {
-        // GDI fallback: ellipse loop with a Solid brush and null pen so the
-        // marker reads as a clean filled circle rather than a ring.
-        HBRUSH brush = CreateSolidBrush(color.rgb);
-        if (brush == nullptr) return;
-        HGDIOBJ prev_brush = SelectObject(hdc, brush);
-        HGDIOBJ prev_pen = SelectObject(hdc, GetStockObject(NULL_PEN));
-        const LONG r = static_cast<LONG>(radius_px);
-        for (int i = 0; i < count; ++i) {
-            const POINT& p = centers[i];
-            Ellipse(hdc, p.x - r, p.y - r, p.x + r, p.y + r);
+    const LONG r = static_cast<LONG>(radius_px);
+
+    // CP28: Gdiplus::Graphics::FillEllipse silently drops pixels on the
+    // visual-audit PrintWindow memory DC (same root cause as DrawBeziers
+    // / DrawLines). Try GDI+ first for an AA-soft fill, then always
+    // overdraw with a GDI Ellipse loop so the marker dots are visible on
+    // every DC the chart views paint to.
+    if (GdiplusContext::active()) {
+        std::unique_ptr<Gdiplus::Graphics> graphics(
+            new Gdiplus::Graphics(hdc));
+        if (graphics->GetLastStatus() == Gdiplus::Status::Ok) {
+            graphics->SetSmoothingMode(Gdiplus::SmoothingModeAntiAlias);
+            graphics->SetPixelOffsetMode(Gdiplus::PixelOffsetModeHalf);
+            Gdiplus::SolidBrush brush(to_gp_color(color));
+            if (brush.GetLastStatus() == Gdiplus::Status::Ok) {
+                const Gdiplus::REAL gr =
+                    static_cast<Gdiplus::REAL>(radius_px);
+                for (int i = 0; i < count; ++i) {
+                    const POINT& p = centers[i];
+                    graphics->FillEllipse(
+                        &brush,
+                        static_cast<Gdiplus::REAL>(p.x) - gr,
+                        static_cast<Gdiplus::REAL>(p.y) - gr,
+                        gr * 2.0f,
+                        gr * 2.0f);
+                }
+            }
         }
-        SelectObject(hdc, prev_pen);
-        SelectObject(hdc, prev_brush);
-        DeleteObject(brush);
-        return;
     }
 
-    std::unique_ptr<Gdiplus::Graphics> graphics(
-        new Gdiplus::Graphics(hdc));
-    if (graphics->GetLastStatus() != Gdiplus::Status::Ok) return;
-
-    graphics->SetSmoothingMode(Gdiplus::SmoothingModeAntiAlias);
-    graphics->SetPixelOffsetMode(Gdiplus::PixelOffsetModeHalf);
-
-    Gdiplus::SolidBrush brush(to_gp_color(color));
-    if (brush.GetLastStatus() != Gdiplus::Status::Ok) return;
-
-    const Gdiplus::REAL r = static_cast<Gdiplus::REAL>(radius_px);
+    // Reliable GDI overdraw — guarantees the line-chart marker dots are
+    // visible on the 32bpp memory DC the visual-audit path captures.
+    HBRUSH brush = CreateSolidBrush(color.rgb);
+    if (brush == nullptr) return;
+    HGDIOBJ prev_brush = SelectObject(hdc, brush);
+    HGDIOBJ prev_pen = SelectObject(hdc, GetStockObject(NULL_PEN));
     for (int i = 0; i < count; ++i) {
         const POINT& p = centers[i];
-        graphics->FillEllipse(&brush,
-                              static_cast<Gdiplus::REAL>(p.x) - r,
-                              static_cast<Gdiplus::REAL>(p.y) - r,
-                              r * 2.0f,
-                              r * 2.0f);
+        Ellipse(hdc, p.x - r, p.y - r, p.x + r, p.y + r);
     }
+    SelectObject(hdc, prev_pen);
+    SelectObject(hdc, prev_brush);
+    DeleteObject(brush);
 }
 
 } // namespace nfui::charts_internal

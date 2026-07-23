@@ -160,6 +160,53 @@ HWND findButtonByCaption(HWND window, std::wstring_view caption) noexcept {
     return search.match;
 }
 
+// Menu bar items live as children of the menu-bar host window with the
+// Win32 MENUCLASS class ("#32768") so the standard caption search misses
+// them. A second enumerator accepts any class and matches by exact caption
+// text — used by --expand-menu to drop a top-level menu open for
+// screenshot capture (lets us verify the palette.surface brush that
+// Menu::apply_to_bar() pushes onto the menu actually paints the popup).
+struct AnyCaptionSearch {
+    std::wstring_view caption;
+    HWND match{};
+};
+
+BOOL CALLBACK findAnyByCaption(HWND child, LPARAM parameter) noexcept {
+    auto* search = reinterpret_cast<AnyCaptionSearch*>(parameter);
+    wchar_t text[128]{};
+    if (GetWindowTextW(child, text, static_cast<int>(std::size(text))) == 0) {
+        return TRUE;
+    }
+    if (std::wstring_view{text} == search->caption) {
+        search->match = child;
+        return FALSE;
+    }
+    return TRUE;
+}
+
+HWND findDescendantByCaption(HWND window, std::wstring_view caption) noexcept {
+    AnyCaptionSearch search{caption};
+    EnumChildWindows(window, findAnyByCaption, reinterpret_cast<LPARAM>(&search));
+    return search.match;
+}
+
+// Synthesise a left-button click on a menu-item HWND by posting the
+// matching pair of mouse messages. Sends via PostMessageW so the menu's
+// internal state machine drives the actual pop-down/up sequencing; a
+// synchronous SendMessage path can race against MN_SELECT/MN_BUTTONDOWN
+// pairs on the parent menu and end with the menu closed.
+void clickMenuItem(HWND menuItem) noexcept {
+    if (menuItem == nullptr) return;
+    RECT rc{};
+    GetWindowRect(menuItem, &rc);
+    const int x = (rc.left + rc.right) / 2;
+    const int y = (rc.top + rc.bottom) / 2;
+    PostMessageW(menuItem, WM_LBUTTONDOWN,
+                 MK_LBUTTON, MAKELPARAM(x - rc.left, y - rc.top));
+    PostMessageW(menuItem, WM_LBUTTONUP, 0,
+                 MAKELPARAM(x - rc.left, y - rc.top));
+}
+
 bool requestInSampleTheme(HWND window, std::wstring_view theme) {
     // Treat captions as an in-sample theme contract only when the complete
     // Light/Dark/High Contrast selector is present. This avoids clicking an
