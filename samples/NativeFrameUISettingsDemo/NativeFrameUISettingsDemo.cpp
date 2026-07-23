@@ -87,7 +87,12 @@ public:
     explicit SettingsDemoWindow(HINSTANCE instance)
         : instance_(instance),
           resources_(instance),
-          palette_(nfui::theme_palette(nfui::ThemeMode::light)) {}
+          palette_(nfui::theme_palette(nfui::ThemeMode::light)),
+          checkbox_palette_(palette_) {
+        // CheckBox fills its client with palette.background. Match that role to
+        // the card surface so only the checked box receives the accent fill.
+        checkbox_palette_.background = palette_.surface;
+    }
 
     ~SettingsDemoWindow() noexcept override { destroy_icons(); }
 
@@ -141,7 +146,8 @@ protected:
             return 0;
         }
         case WM_LBUTTONDOWN:
-            if (handle_segment_click(GET_X_LPARAM(lparam), GET_Y_LPARAM(lparam))) {
+            if (handle_segment_click(static_cast<short>(LOWORD(lparam)),
+                                     static_cast<short>(HIWORD(lparam)))) {
                 return 0;
             }
             break;
@@ -213,9 +219,9 @@ private:
         profile_name_.inject_theme(&palette_, &fonts_);
         workspace_root_.inject_theme(&palette_, &fonts_);
         theme_combo_.inject_theme(&palette_, &fonts_);
-        auto_save_.inject_theme(&palette_, &fonts_);
-        splash_.inject_theme(&palette_, &fonts_);
-        verbose_.inject_theme(&palette_, &fonts_);
+        auto_save_.inject_theme(&checkbox_palette_, &fonts_);
+        splash_.inject_theme(&checkbox_palette_, &fonts_);
+        verbose_.inject_theme(&checkbox_palette_, &fonts_);
         save_button_.inject_theme(&palette_, &fonts_);
 
         if (!categories_.create(params)) return false;
@@ -312,7 +318,7 @@ private:
         const int card_pad = dpi_.logical_to_pixels(28);
         const int label_width = dpi_.logical_to_pixels(176);
         const int control_left = detail_card_.left + card_pad + label_width;
-        const int control_width = std::max(0, detail_card_.right - card_pad - control_left);
+        const int control_width = std::max(0, static_cast<int>(detail_card_.right) - card_pad - control_left);
         const int edit_height = dpi_.logical_to_pixels(38);
         const int first_row = detail_card_.top + dpi_.logical_to_pixels(86);
         const int row_step = dpi_.logical_to_pixels(62);
@@ -335,7 +341,7 @@ private:
                    editor_top + dpi_.logical_to_pixels(38) + (check_height + s8) * 2,
                    check_width, check_height, TRUE);
 
-        const int chip_width = dpi_.logical_to_pixels(224);
+        const int chip_width = dpi_.logical_to_pixels(250);
         const int chip_height = dpi_.logical_to_pixels(32);
         chip_bounds_ = RECT{client.right - outer - save_width - s12 - chip_width,
                             dpi_.logical_to_pixels(34),
@@ -363,7 +369,6 @@ private:
 
     void paint_background(HDC target) noexcept {
         const nfui::ThemePalette& p = palette_;
-        const int dpi_value = dpi_.dpi();
         RECT client{};
         GetClientRect(hwnd(), &client);
         nfui::fill_rect(target, client, p.background);
@@ -518,6 +523,7 @@ private:
     HINSTANCE instance_{};
     nfui::ResourceContext resources_;
     nfui::ThemePalette palette_;
+    nfui::ThemePalette checkbox_palette_;
     nfui::FontCache fonts_;
     CategoriesListBox categories_;
     nfui::Edit profile_name_;
