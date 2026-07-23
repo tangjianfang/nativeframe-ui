@@ -316,7 +316,7 @@ private:
         detail_card_ = RECT{outer + nav_width + s16, body_top,
                             client.right - outer, body_bottom};
         const int card_pad = dpi_.logical_to_pixels(28);
-        const int label_width = dpi_.logical_to_pixels(176);
+        const int label_width = dpi_.logical_to_pixels(220);
         const int control_left = detail_card_.left + card_pad + label_width;
         const int control_width = std::max(0, static_cast<int>(detail_card_.right) - card_pad - control_left);
         const int edit_height = dpi_.logical_to_pixels(38);
@@ -421,7 +421,7 @@ private:
         const int dpi_value = dpi_.dpi();
         const int radius = dpi_.logical_to_pixels(12);
         const int pad = dpi_.logical_to_pixels(28);
-        const int label_width = dpi_.logical_to_pixels(176);
+        const int label_width = dpi_.logical_to_pixels(220);
         const int first_row = detail_card_.top + dpi_.logical_to_pixels(86);
         const int row_step = dpi_.logical_to_pixels(62);
 
