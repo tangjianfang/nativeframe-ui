@@ -5,6 +5,13 @@ param(
 
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
+# Native child processes (verify_boundaries.ps1) intentionally exit non-zero for
+# the rejection fixtures. We read $LASTEXITCODE explicitly below, so opt out of
+# PowerShell 7.3+'s native-command/ErrorActionPreference integration to keep
+# those non-zero exits from being treated as errors on newer pwsh builds.
+if ($null -ne $PSNativeCommandUseErrorActionPreference) {
+    $PSNativeCommandUseErrorActionPreference = $false
+}
 
 $resolvedScript = (Resolve-Path -LiteralPath $ScriptPath).Path
 $tempRoot = Join-Path ([System.IO.Path]::GetTempPath()) ("nfui-boundary-tests-{0}" -f [guid]::NewGuid())
@@ -113,3 +120,4 @@ if ($failures.Count -gt 0) {
 }
 
 Write-Output "$passes boundary regression tests passed."
+exit 0
