@@ -97,9 +97,13 @@ void ListView::paint_header_item(HWND header, NMCUSTOMDRAW* cd) noexcept {
     // CP21: fill the column rect (CDRF_SKIPDEFAULT suppressed native paint),
     // draw a 1px right-edge divider, then the caption. Background uses the
     // palette surface so dark mode is readable; hot items use surface_hover.
+    // CP26: header_background style override takes precedence over surface
+    // so consumers can lift the header band (e.g. a one-stop-lighter shade
+    // for visual hierarchy) without redefining the whole palette.
     const Color fill = hot
         ? p.surface_hover
-        : style_.row_background.value_or(p.surface);
+        : style_.header_background.value_or(
+            style_.row_background.value_or(p.surface));
     fill_rect(cd->hdc, cd->rc, fill);
     RECT divider = cd->rc;
     divider.left = divider.right - 1;
@@ -143,10 +147,32 @@ void ListView::paint_header_item(HWND header, NMCUSTOMDRAW* cd) noexcept {
         dt |= DT_RTLREADING;
     }
 
-    HFONT font = reinterpret_cast<HFONT>(SendMessageW(header, WM_GETFONT, 0, 0));
+    // CP26: caption colour + face. The previous version read the font via
+    // WM_GETFONT — which returned whatever Tahoma-ish face the native header
+    // was holding at create time, *not* the Segoe UI Semibold that
+    // theme_header() installed via WM_SETFONT. The Semibold face is what
+    // gives the header the visual weight that distinguishes it from body
+    // rows; without it the caption reads as "another list row", which was
+    // the user-reported dark-mode "header looks dim" symptom. Pull the
+    // cached Semibold HFONT directly so the chrome paint is the source of
+    // truth, not whatever the native header happens to be holding. If the
+    // FontCache is missing (uncommon — Control::inject_theme wires it
+    // up), fall back to WM_GETFONT.
+    HFONT font = (fonts() != nullptr)
+        ? fonts()->semibold(dpi_of(header), font_pt::ui)
+        : nullptr;
+    if (font == nullptr) {
+        font = reinterpret_cast<HFONT>(SendMessageW(header, WM_GETFONT, 0, 0));
+    }
+    // Caption colour: header_caption override > palette.text. Default to
+    // palette.text (rather than row_foreground, which is the body-row colour
+    // and would make the header indistinguishable from rows). In dark mode
+    // p.text is RGB(237,237,235) on RGB(42,41,39) surface ≈ 12:1 contrast;
+    // in HC it is white-on-dark-grey ≈ 14:1 — both clear WCAG AAA. Sort
+    // glyph inherits the same colour.
     const Color fg = disabled
         ? p.text_secondary
-        : style_.row_foreground.value_or(p.text);
+        : style_.header_caption.value_or(p.text);
     draw_text(cd->hdc, text_rc, text, font, fg, dt);
 
     // Sort triangle on the trailing edge — replaces the native HDF_SORT* glyph

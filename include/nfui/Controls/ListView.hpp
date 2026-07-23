@@ -13,6 +13,14 @@ struct ListViewStyle {
     std::optional<Color> row_foreground;
     std::optional<Color> selected_background;
     std::optional<Color> selected_foreground;
+    // CP26: explicit header caption colour override. The default falls back
+    // to palette.text (which gives WCAG AAA contrast on the surface in
+    // light/dark/HC palettes), but consumers can lift it to palette.accent
+    // for emphasis or pin a custom brand colour. The caption is also drawn
+    // with the Semibold face from FontCache rather than whatever font the
+    // native header was holding — see paint_header_item().
+    std::optional<Color> header_caption;
+    std::optional<Color> header_background;
     std::optional<bool>  full_row_select;
     std::optional<bool>  show_gridlines;
 };
