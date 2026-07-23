@@ -565,13 +565,13 @@ void ShowcaseView::paint(HDC hdc, nfui::FontCache& fonts) const noexcept {
     nfui::draw_text(hdc,
                     layout.brand_title,
                     L"NativeFrame UI",
-                    fetch_font(fonts, dpi(), FontWeight::bold, nfui::nfui::font_pt::xl),
+                    fetch_font(fonts, dpi(), FontWeight::bold, nfui::font_pt::xl),
                     palette.text,
                     DT_LEFT | DT_TOP | DT_SINGLELINE | DT_END_ELLIPSIS | DT_NOPREFIX);
     nfui::draw_text(hdc,
                     layout.brand_tagline,
                     L"Modern Win32 showcase",
-                    fetch_font(fonts, dpi(), FontWeight::regular, nfui::nfui::font_pt::sm),
+                    fetch_font(fonts, dpi(), FontWeight::regular, nfui::font_pt::sm),
                     palette.muted_text,
                     DT_LEFT | DT_TOP | DT_SINGLELINE | DT_END_ELLIPSIS | DT_NOPREFIX);
 
@@ -655,7 +655,7 @@ void ShowcaseView::paint(HDC hdc, nfui::FontCache& fonts) const noexcept {
     {
         RECT hero_title = make_rect(layout.command_bar.left + gap,
                                     layout.command_bar.top + gap,
-                                    layout.command_bar.right - layout.command_bar.left - toggle_pad - dpi.logical_to_pixels(180) - gap * 2,
+                                    layout.command_bar.right - layout.command_bar.left - toggle_pad - dpi_scale_.logical_to_pixels(180) - gap * 2,
                                     dpi_scale_.logical_to_pixels(32));
         nfui::draw_text(hdc,
                         hero_title,
@@ -739,17 +739,18 @@ void ShowcaseView::paint(HDC hdc, nfui::FontCache& fonts) const noexcept {
         nfui::Color pill_border{};
         nfui::Color pill_text{};
         switch (index) {
-        case 0: // Stable — success.
+        case 0: // Stable — success/green.
             semantic    = palette.success;
             pill_fill   = nfui::alpha_blend(palette.success, palette.surface, 0.18f);
             pill_border = nfui::alpha_blend(palette.success, palette.surface, 0.55f);
             pill_text   = dark ? nfui::lighten(palette.success, 0.10f) : palette.success;
             break;
-        case 1: // Release Ready — info.
-            semantic    = palette.info;
-            pill_fill   = nfui::alpha_blend(palette.info, palette.surface, 0.18f);
-            pill_border = nfui::alpha_blend(palette.info, palette.surface, 0.55f);
-            pill_text   = dark ? nfui::lighten(palette.info, 0.10f) : palette.info;
+        case 1: // Release Ready — success/green (matches the Stable pill so
+                // both read as "ready" — Explicit is the only coral pill).
+            semantic    = palette.success;
+            pill_fill   = nfui::alpha_blend(palette.success, palette.surface, 0.18f);
+            pill_border = nfui::alpha_blend(palette.success, palette.surface, 0.55f);
+            pill_text   = dark ? nfui::lighten(palette.success, 0.10f) : palette.success;
             break;
         case 2: // Explicit — accent/coral.
             semantic    = palette.accent;

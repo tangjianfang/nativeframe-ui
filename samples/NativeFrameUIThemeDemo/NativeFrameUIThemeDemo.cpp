@@ -100,7 +100,7 @@ struct DemoControls {
     std::unique_ptr<nfui::ComboBox>    combobox;
     std::unique_ptr<nfui::ListView>    listview;
     std::unique_ptr<nfui::TreeView>    treeview;
-    std::unique_ptr<nfui::IconView>    iconview;
+    std::array<std::unique_ptr<nfui::IconView>, 4> iconviews;
     std::unique_ptr<nfui::ProgressBar> progress;
     std::unique_ptr<nfui::StatusBar>   status;
     std::unique_ptr<nfui::TabControl>  tabs;
@@ -448,15 +448,26 @@ private:
         TreeView_Expand(g_demo.treeview->hwnd(), root, TVE_EXPAND);
 
         // IconView — 4 small vector icons in a single row.
-        g_demo.iconview = std::make_unique<nfui::IconView>();
         {
             nfui::IconViewStyle style{};
             style.pixel_size = 28;
             style.padding    = 4;
             style.background = nfui::Color{palette_.background.rgb};
-            g_demo.iconview->set_style(style);
+            const nfui::IconKind kinds[4] = {
+                nfui::IconKind::info,
+                nfui::IconKind::gear,
+                nfui::IconKind::search,
+                nfui::IconKind::warning,
+            };
+            for (int i = 0; i < 4; ++i) {
+                g_demo.iconviews[i] = std::make_unique<nfui::IconView>();
+                g_demo.iconviews[i]->set_style(style);
+                if (!create_child(*g_demo.iconviews[i],
+                                  id_iconview + i,
+                                  L"")) return;
+                g_demo.iconviews[i]->set_glyph(kinds[i], palette_.accent);
+            }
         }
-        if (!create_child(*g_demo.iconview, id_iconview, L"")) return;
 
         // ProgressBar.
         g_demo.progress = std::make_unique<nfui::ProgressBar>();
@@ -549,7 +560,10 @@ private:
 
         // Feedback card — IconView, ProgressBar, TabControl, Segmented rows.
         place_row_in_card(cards.feedback, 0, {
-            {id_iconview, 0},
+            {id_iconview + 0, 0},
+            {id_iconview + 1, 0},
+            {id_iconview + 2, 0},
+            {id_iconview + 3, 0},
         });
         place_row_in_card(cards.feedback, 1, {
             {id_progress, 0},
@@ -646,6 +660,9 @@ private:
         set_font(g_demo.edit,            body_font);
         set_font(g_demo.listview,        body_font);
         set_font(g_demo.treeview,        body_font);
+        for (auto& icon : g_demo.iconviews) {
+            set_font(icon, body_font);
+        }
         set_font(g_demo.tabs,            body_font);
         set_font(g_demo.status,          ui_font);
     }
@@ -706,26 +723,6 @@ private:
                             fonts_.semibold(dpi_.dpi(), nfui::font_pt::sm),
                             text_c,
                             DT_CENTER | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX);
-        }
-    }
-
-    void draw_icon_strip(HDC target, const RECT& card, int row_index) noexcept {
-        const RowRect row = row_within(card, row_index);
-        const nfui::IconKind kinds[4] = {
-            nfui::IconKind::info,
-            nfui::IconKind::gear,
-            nfui::IconKind::search,
-            nfui::IconKind::warning,
-        };
-        const int n = 4;
-        const int slot = rect_width(row.area) / n;
-        const int cell = dpi_.logical_to_pixels(28);
-        const int y = row.area.top + (rect_height(row.area) - cell) / 2;
-        const int gap = (slot - cell) / 2;
-        for (int i = 0; i < n; ++i) {
-            const int x = row.area.left + i * slot + gap;
-            const RECT bounds = make_rect(x, y, cell, cell);
-            nfui::draw_vector_icon(target, kinds[i], bounds, palette_.accent, card_border());
         }
     }
 
@@ -806,9 +803,9 @@ private:
         draw_row_label(target, row_within(cards.layout, 0), kLabelStatic);
         draw_row_label(target, row_within(cards.layout, 1), kLabelSplitter);
 
-        // Segmented control + icon strip (custom-painted, no HWND).
+        // Segmented control (custom-painted, no HWND). Icon strip is owned
+        // by 4 IconView HWNDs placed in layout_demo.
         draw_segmented(target, cards.feedback, 3);
-        draw_icon_strip(target, cards.feedback, 0);
 
         // ProgressBar percent label — small caption above the bar's right edge.
         const RowRect progress_row = row_within(cards.feedback, 1);

@@ -341,7 +341,7 @@ private:
                    editor_top + dpi_.logical_to_pixels(38) + (check_height + s8) * 2,
                    check_width, check_height, TRUE);
 
-        const int chip_width = dpi_.logical_to_pixels(250);
+        const int chip_width = dpi_.logical_to_pixels(280);
         const int chip_height = dpi_.logical_to_pixels(32);
         chip_bounds_ = RECT{client.right - outer - save_width - s12 - chip_width,
                             dpi_.logical_to_pixels(34),

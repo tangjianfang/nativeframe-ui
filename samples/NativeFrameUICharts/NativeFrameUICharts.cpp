@@ -1,3 +1,4 @@
+#include <nfui/Application.hpp>
 #include <nfui/Charts.hpp>
 #include <nfui/Dpi.hpp>
 #include <nfui/Font.hpp>
@@ -11,24 +12,34 @@
 #include <algorithm>
 #include <array>
 #include <cmath>
+#include <string>
 #include <string_view>
 #include <vector>
 #include <windowsx.h>
 
 namespace {
 
-// Chart-series name strings. The ChartSeries::name field is borrowed
+// CP30: chart-series name strings. The ChartSeries::name field is borrowed
 // (std::wstring_view); the underlying storage MUST outlive the chart view
 // the series is attached to. Keep these as static-storage string literals so
 // each set_series() call can hand the renderer a stable pointer.
-constexpr std::wstring_view kBarName         = L"Monthly revenue (USDk)";
-constexpr std::wstring_view kAreaName        = L"Active users (k)";
-constexpr std::wstring_view kHbarSeries2022  = L"FY 2022";
-constexpr std::wstring_view kHbarSeries2023  = L"FY 2023";
-constexpr std::wstring_view kHbarSeries2024  = L"FY 2024";
-constexpr std::wstring_view kLineSeriesRev   = L"Revenue";
-constexpr std::wstring_view kLineSeriesCost  = L"Costs";
-constexpr std::wstring_view kSplineWave      = L"Sensor A (Hz)";
+constexpr std::wstring_view kBarName        = L"Monthly Revenue";
+constexpr std::wstring_view kAreaName       = L"Active Users";
+constexpr std::wstring_view kHbarSeries2022 = L"FY 22";
+constexpr std::wstring_view kHbarSeries2023 = L"FY 23";
+constexpr std::wstring_view kHbarSeries2024 = L"FY 24";
+constexpr std::wstring_view kLineSeriesRev  = L"Revenue";
+constexpr std::wstring_view kLineSeriesCost = L"Costs";
+constexpr std::wstring_view kSplineWave     = L"Sensor A (Hz)";
+
+// CP30 categorical-palette indices. We pick hues by intent (teal/coral/amber)
+// rather than by sequential position so the five cards read with their own
+// identity: Bar/Revenue teal, FY23/Costs/Spline/Area coral, FY24 amber. The
+// indices wrap on theme change so dark mode swaps the same conceptual hue
+// for its brighter twin without any hardcoded RGB in this file.
+constexpr std::size_t kIdxTeal  = 5;
+constexpr std::size_t kIdxCoral = 3;
+constexpr std::size_t kIdxAmber = 2;
 
 // Twelve months of revenue (USD, thousands). Mild upward trend with summer +
 // Q4 bumps so the bars read as a realistic monthly series rather than a flat
@@ -92,12 +103,40 @@ std::vector<nfui::ChartPoint> build_spline_points() noexcept {
     return rect.bottom - rect.top;
 }
 
+[[nodiscard]] RECT inset_rect(const RECT& rect, int amount) noexcept {
+    RECT inset = rect;
+    inset.left += amount;
+    inset.top += amount;
+    inset.right -= amount;
+    inset.bottom -= amount;
+    return inset;
+}
+
+struct LegendEntry {
+    nfui::Color         color{};
+    std::wstring_view   text{};
+};
+
+// Per-card layout record. The parent window paints card chrome (title + chart
+// HWND + legend) using these rects; layout_charts() recomputes them on every
+// WM_SIZE / WM_DPICHANGED so the cards stay aligned with the grid.
+struct CardLayout {
+    RECT                card{};       // outer panel (shadow + fill + border)
+    RECT                title{};      // chart title above the chart HWND
+    RECT                chart{};      // chart HWND placement (inside card)
+    RECT                legend{};     // legend strip below the chart HWND
+    std::wstring_view   title_text{};
+    std::vector<LegendEntry> legend_entries{};
+};
+
 class ChartsWindow final : public nfui::Window {
 public:
-    explicit ChartsWindow(HINSTANCE instance)
+    explicit ChartsWindow(HINSTANCE instance) noexcept
         : instance_(instance),
           resources_(instance),
-          palette_(nfui::theme_palette(nfui::ThemeMode::light)) {
+          light_palette_(nfui::theme_palette(nfui::ThemeMode::light)),
+          dark_palette_(nfui::theme_palette(nfui::ThemeMode::dark)),
+          palette_(&light_palette_) {
     }
 
     ~ChartsWindow() noexcept override {
@@ -113,8 +152,8 @@ public:
             0,
             CW_USEDEFAULT,
             CW_USEDEFAULT,
-            1200,
-            720,
+            1100,
+            1280,
         };
 
         if (!create(params)) {
@@ -126,8 +165,7 @@ public:
             return false;
         }
 
-        populate_data();
-        layout_charts();
+        apply_theme();
 
         ShowWindow(hwnd(), show_command);
         UpdateWindow(hwnd());
@@ -162,6 +200,27 @@ protected:
             area_.set_font_cache(&fonts_);
             layout_charts();
             InvalidateRect(hwnd(), nullptr, FALSE);
+            return 0;
+        }
+        case WM_MOUSEMOVE: {
+            track_mouse_leave();
+            const POINT pt{GET_X_LPARAM(lparam), GET_Y_LPARAM(lparam)};
+            if (update_hover(pt)) {
+                InvalidateRect(hwnd(), nullptr, FALSE);
+            }
+            return 0;
+        }
+        case WM_MOUSELEAVE:
+            tracking_mouse_ = false;
+            if (clear_hover()) {
+                InvalidateRect(hwnd(), nullptr, FALSE);
+            }
+            return 0;
+        case WM_LBUTTONDOWN: {
+            const POINT pt{GET_X_LPARAM(lparam), GET_Y_LPARAM(lparam)};
+            if (handle_click(pt)) {
+                InvalidateRect(hwnd(), nullptr, FALSE);
+            }
             return 0;
         }
         case WM_ERASEBKGND:
@@ -200,11 +259,11 @@ private:
         // rest reuse it. Each subclass (Bar / HBar / Line / Spline / Area)
         // wires its own on_paint override. Palette + fonts are injected
         // before create so the very first paint cycle has them.
-        bar_.inject_theme(&palette_, &fonts_);
-        hbar_.inject_theme(&palette_, &fonts_);
-        line_.inject_theme(&palette_, &fonts_);
-        spline_.inject_theme(&palette_, &fonts_);
-        area_.inject_theme(&palette_, &fonts_);
+        bar_.inject_theme(palette_, &fonts_);
+        hbar_.inject_theme(palette_, &fonts_);
+        line_.inject_theme(palette_, &fonts_);
+        spline_.inject_theme(palette_, &fonts_);
+        area_.inject_theme(palette_, &fonts_);
 
         nfui::WindowCreateParams params{
             instance_,
@@ -224,6 +283,20 @@ private:
         return true;
     }
 
+    // Rebuild series palettes from the live theme + push the palette pointer
+    // through every chart view. Called on create + on theme toggle.
+    void apply_theme() noexcept {
+        palette_ = (theme_mode_ == nfui::ThemeMode::dark)
+                       ? static_cast<const nfui::ThemePalette*>(&dark_palette_)
+                       : static_cast<const nfui::ThemePalette*>(&light_palette_);
+        bar_.set_palette(palette_);
+        hbar_.set_palette(palette_);
+        line_.set_palette(palette_);
+        spline_.set_palette(palette_);
+        area_.set_palette(palette_);
+        populate_data();
+    }
+
     void populate_data() noexcept {
         // Vertical bar: one monthly series, twelve bars. axis_y {0..100}
         // matches the renderer clamp range so the tallest bar (84) leaves
@@ -238,17 +311,18 @@ private:
                 });
             }
             bar_.set_kind(nfui::ChartKind::bar_vertical);
-            bar_.set_series({nfui::ChartSeries{kBarName,
-                                               nfui::chart_series_color(nfui::ThemeMode::light, 0),
-                                               std::move(points)}});
+            bar_.set_series({nfui::ChartSeries{
+                kBarName,
+                nfui::chart_series_color(theme_mode_, kIdxTeal),
+                std::move(points)}});
             bar_.set_axis_x(nfui::ChartAxisRange{1.0, 12.0, L"{:.0f}"});
             bar_.set_axis_y(nfui::ChartAxisRange{0.0, 100.0, L"{:.0f}"});
         }
 
-        // CP14: filled-area chart. Reuses the same monthly revenue values
-        // as the bar chart so the two views read as siblings when shown
-        // side-by-side. Outline on for a clean upper-edge stroke;
-        // fill_alpha defaults to 1.0 (opaque).
+        // Filled-area chart. Reuses the same monthly revenue shape as the
+        // bar chart so the two views read as siblings when stacked. We use
+        // the coral index so the area reads as a "user growth" accent rather
+        // than duplicating the bar's teal.
         {
             std::vector<nfui::ChartPoint> points;
             points.reserve(kBarMonths.size());
@@ -259,9 +333,10 @@ private:
                 });
             }
             area_.set_kind(nfui::ChartKind::area);
-            area_.set_series({nfui::ChartSeries{kAreaName,
-                                                nfui::chart_series_color(nfui::ThemeMode::light, 1),
-                                                std::move(points)}});
+            area_.set_series({nfui::ChartSeries{
+                kAreaName,
+                nfui::chart_series_color(theme_mode_, kIdxCoral),
+                std::move(points)}});
             area_.set_axis_x(nfui::ChartAxisRange{1.0, 12.0, L"{:.0f}"});
             area_.set_axis_y(nfui::ChartAxisRange{0.0, 100.0, L"{:.0f}"});
             area_.set_outline(true);
@@ -283,11 +358,7 @@ private:
             series.reserve(3);
             const std::array<std::array<double, 5>, 3> series_data{kHbar2022, kHbar2023, kHbar2024};
             const std::array<std::wstring_view, 3> series_names{kHbarSeries2022, kHbarSeries2023, kHbarSeries2024};
-            const std::array<nfui::Color, 3> series_colors{
-                nfui::chart_series_color(nfui::ThemeMode::light, 2),
-                nfui::chart_series_color(nfui::ThemeMode::light, 3),
-                nfui::chart_series_color(nfui::ThemeMode::light, 4),
-            };
+            const std::array<std::size_t, 3> series_color_idx{kIdxTeal, kIdxCoral, kIdxAmber};
             for (std::size_t s = 0; s < series_data.size(); ++s) {
                 std::vector<nfui::ChartPoint> points;
                 points.reserve(kHbarCategories.size());
@@ -298,7 +369,10 @@ private:
                         series_data[s][c],
                     });
                 }
-                series.push_back(nfui::ChartSeries{series_names[s], series_colors[s], std::move(points)});
+                series.push_back(nfui::ChartSeries{
+                    series_names[s],
+                    nfui::chart_series_color(theme_mode_, series_color_idx[s]),
+                    std::move(points)});
             }
             hbar_.set_kind(nfui::ChartKind::bar_horizontal);
             hbar_.set_series(std::move(series));
@@ -319,9 +393,10 @@ private:
                     kLineRevenueValues[i],
                 });
             }
-            series.push_back(nfui::ChartSeries{kLineSeriesRev,
-                                               nfui::chart_series_color(nfui::ThemeMode::light, 5),
-                                               std::move(revenue_points)});
+            series.push_back(nfui::ChartSeries{
+                kLineSeriesRev,
+                nfui::chart_series_color(theme_mode_, kIdxTeal),
+                std::move(revenue_points)});
 
             std::vector<nfui::ChartPoint> costs_points;
             costs_points.reserve(kLineCostsValues.size());
@@ -331,25 +406,27 @@ private:
                     kLineCostsValues[i],
                 });
             }
-            series.push_back(nfui::ChartSeries{kLineSeriesCost,
-                                               nfui::chart_series_color(nfui::ThemeMode::light, 6),
-                                               std::move(costs_points)});
+            series.push_back(nfui::ChartSeries{
+                kLineSeriesCost,
+                nfui::chart_series_color(theme_mode_, kIdxCoral),
+                std::move(costs_points)});
 
             line_.set_kind(nfui::ChartKind::line);
             line_.set_series(std::move(series));
-            line_.set_point_radius(3);
+            line_.set_point_radius(4);
             line_.set_axis_x(nfui::ChartAxisRange{1.0, 12.0, L"{:.0f}"});
             line_.set_axis_y(nfui::ChartAxisRange{0.0, 100.0, L"{:.0f}"});
         }
 
         // Spline: 30-point sine wave. The smooth Catmull-Rom curve plus a
-        // default tension (0.5) gives a clean undulating line; small markers
-        // identify the sample anchors without cluttering the curve (CP30).
+        // default tension (0.5) gives a clean undulating line; the chart
+        // primitive already paints small markers at the sample anchors.
         {
             spline_.set_kind(nfui::ChartKind::spline);
-            spline_.set_series({nfui::ChartSeries{kSplineWave,
-                                                  nfui::chart_series_color(nfui::ThemeMode::light, 7),
-                                                  build_spline_points()}});
+            spline_.set_series({nfui::ChartSeries{
+                kSplineWave,
+                nfui::chart_series_color(theme_mode_, kIdxCoral),
+                build_spline_points()}});
             spline_.set_tension(0.5);
             spline_.set_axis_x(nfui::ChartAxisRange{0.0, 29.0, L"{:.0f}"});
             spline_.set_axis_y(nfui::ChartAxisRange{0.0, 100.0, L"{:.0f}"});
@@ -365,118 +442,250 @@ private:
         GetClientRect(hwnd(), &client);
         const nfui::DpiScale dpi(GetDpiForWindow(hwnd()));
 
-        const int outer = dpi.logical_to_pixels(20);
+        const int outer = dpi.logical_to_pixels(24);
         const int gap = dpi.logical_to_pixels(16);
-        const int header_h = dpi.logical_to_pixels(80);
+        const int header_h = dpi.logical_to_pixels(72);
+
+        // Title row sits inside the header band so it shares the brand line
+        // with the theme toggle. The toggle rect is reused by hover + click
+        // dispatchers so the click test always sees the live coordinates.
+        const int header_band_top = client.top + outer;
+        const int header_band_h = header_h;
+        const int logo_size = dpi.logical_to_pixels(32);
+        const int logo_pad = dpi.logical_to_pixels(8);
+        brand_rect_ = make_rect(client.left + outer,
+                                header_band_top + (header_band_h - logo_size) / 2,
+                                logo_size, logo_size);
+        const int toggle_w = dpi.logical_to_pixels(120);
+        const int toggle_h = dpi.logical_to_pixels(32);
+        theme_toggle_rect_ = make_rect(client.right - outer - toggle_w,
+                                       header_band_top + (header_band_h - toggle_h) / 2,
+                                       toggle_w, toggle_h);
 
         const int area_left = client.left + outer;
-        const int area_top = client.top + outer + header_h + gap;
+        const int area_top = header_band_top + header_band_h + gap;
         const int area_right = client.right - outer;
         const int area_bottom = client.bottom - outer;
-        const int area_w = std::max(area_right - area_left, dpi.logical_to_pixels(360));
-        const int area_h = std::max(area_bottom - area_top, dpi.logical_to_pixels(240));
 
-        const int cell_w = std::max((area_w - gap * 2) / 3, dpi.logical_to_pixels(200));
-        const int cell_h = std::max(static_cast<int>((area_h - gap) / 2), dpi.logical_to_pixels(140));
+        // Per-card reserved vertical space: title strip + legend strip +
+        // inner padding. The chart HWND sits between them inside the card
+        // chrome (rounded rect + border + drop shadow painted by the parent).
+        const int card_padding = dpi.logical_to_pixels(16);
+        const int card_title_h = dpi.logical_to_pixels(22);
+        const int card_legend_h = dpi.logical_to_pixels(22);
+        const int card_gap = dpi.logical_to_pixels(8);
 
-        // CP14: 3x2 grid. Top row: bar / hbar / line. Bottom row: spline /
-        // area. CP22: drop the empty placeholder — every cell carries a
-        // caption above its chart view, so the grid now reads as 5
-        // identified charts rather than 2 titled + 3 mystery cells. The
-        // caption reserve (`caption_reserve`) shortens each chart HWND so
-        // the caption sits in the freed band instead of being painted over
-        // by the chart. 18 logical px is the minimum height for a 9-pt
-        // semibold label with vertical-centre padding; further reductions
-        // clip the descenders of the caption glyphs.
-        const int caption_reserve = dpi.logical_to_pixels(18);
+        // 5 cards in a vertical stack: each card spans the full content
+        // width. The references ask for "five chart cards stacked vertically";
+        // stacking gives each chart enough horizontal room for value labels
+        // above bars and inline value labels at the end of HBar segments,
+        // and it keeps the chart-vs-card chrome relationship one-to-one so
+        // a reviewer can see the design system in action.
+        const int card_w = std::max(area_right - area_left,
+                                    dpi.logical_to_pixels(720));
+        const int card_inner_w = std::max(card_w - card_padding * 2,
+                                          dpi.logical_to_pixels(360));
+        const int chart_h = dpi.logical_to_pixels(220);
+        const int card_h = card_padding + card_title_h + card_gap
+                            + chart_h + card_gap + card_legend_h + card_padding;
 
-        const RECT bar_rect    = make_rect(area_left,                                 area_top + caption_reserve,                  cell_w, cell_h - caption_reserve);
-        const RECT hbar_rect   = make_rect(area_left + cell_w + gap,                  area_top + caption_reserve,                  cell_w, cell_h - caption_reserve);
-        const RECT line_rect   = make_rect(area_left + (cell_w + gap) * 2,            area_top + caption_reserve,                  cell_w, cell_h - caption_reserve);
-        const RECT spline_rect = make_rect(area_left,                                 area_top + cell_h + gap + caption_reserve,   cell_w, cell_h - caption_reserve);
-        const RECT area_rect   = make_rect(area_left + cell_w + gap,                  area_top + cell_h + gap + caption_reserve,   cell_w, cell_h - caption_reserve);
+        const int card_count = 5;
+        const int total_h = card_count * card_h + (card_count - 1) * gap;
+        const int max_total_h = std::max(area_bottom - area_top,
+                                        total_h + dpi.logical_to_pixels(120));
+        const int stack_top = area_top + std::max(0, (max_total_h - total_h) / 2);
 
-        MoveWindow(bar_.hwnd(),    bar_rect.left,    bar_rect.top,    rect_width(bar_rect),    rect_height(bar_rect),    TRUE);
-        MoveWindow(hbar_.hwnd(),   hbar_rect.left,   hbar_rect.top,   rect_width(hbar_rect),   rect_height(hbar_rect),   TRUE);
-        MoveWindow(line_.hwnd(),   line_rect.left,   line_rect.top,   rect_width(line_rect),   rect_height(line_rect),   TRUE);
-        MoveWindow(spline_.hwnd(), spline_rect.left, spline_rect.top, rect_width(spline_rect), rect_height(spline_rect), TRUE);
-        MoveWindow(area_.hwnd(),   area_rect.left,   area_rect.top,   rect_width(area_rect),   rect_height(area_rect),   TRUE);
+        cards_.clear();
+        cards_.reserve(card_count);
+
+        struct CardSpec {
+            std::wstring_view              title_text;
+            std::vector<LegendEntry>       entries;
+        };
+        // CP30: titles + legends tied to each chart view. Legend colors come
+        // from the live palette so they re-tint on theme toggle.
+        const CardSpec specs[card_count] = {
+            { L"Bar — Q4 Revenue",
+              { { palette_->accent, L"Brand accent" },
+                { nfui::chart_series_color(theme_mode_, kIdxTeal), kBarName } } },
+            { L"HBar — Multi-year Mix",
+              { { nfui::chart_series_color(theme_mode_, kIdxTeal),  kHbarSeries2022 },
+                { nfui::chart_series_color(theme_mode_, kIdxCoral), kHbarSeries2023 },
+                { nfui::chart_series_color(theme_mode_, kIdxAmber), kHbarSeries2024 } } },
+            { L"Line — Revenue vs Costs",
+              { { nfui::chart_series_color(theme_mode_, kIdxTeal),  kLineSeriesRev  },
+                { nfui::chart_series_color(theme_mode_, kIdxCoral), kLineSeriesCost } } },
+            { L"Spline — Growth Trend",
+              { { nfui::chart_series_color(theme_mode_, kIdxCoral), kSplineWave } } },
+            { L"Area — Monthly Users",
+              { { nfui::chart_series_color(theme_mode_, kIdxCoral), kAreaName } } },
+        };
+
+        // Chart HWND handles in display order (Bar, HBar, Line, Spline, Area).
+        const nfui::Window* chart_views[card_count] = {
+            &bar_, &hbar_, &line_, &spline_, &area_,
+        };
+
+        for (std::size_t i = 0; i < card_count; ++i) {
+            const int card_top = stack_top + static_cast<int>(i) * (card_h + gap);
+            CardLayout layout{};
+            layout.card = make_rect(area_left, card_top, card_w, card_h);
+            layout.title = make_rect(layout.card.left + card_padding,
+                                     layout.card.top + card_padding,
+                                     card_inner_w, card_title_h);
+            layout.chart = make_rect(layout.card.left + card_padding,
+                                     layout.title.bottom + card_gap,
+                                     card_inner_w, chart_h);
+            layout.legend = make_rect(layout.card.left + card_padding,
+                                      layout.chart.bottom + card_gap,
+                                      card_inner_w, card_legend_h);
+            layout.title_text = specs[i].title_text;
+            layout.legend_entries = specs[i].entries;
+            cards_.push_back(layout);
+
+            if (chart_views[i]->hwnd() != nullptr) {
+                MoveWindow(chart_views[i]->hwnd(),
+                           layout.chart.left, layout.chart.top,
+                           rect_width(layout.chart), rect_height(layout.chart),
+                           TRUE);
+            }
+        }
     }
 
     void paint_chrome(HDC target, const RECT& client) noexcept {
-        const nfui::ThemePalette& p = palette_;
+        const nfui::ThemePalette& p = *palette_;
         const nfui::DpiScale dpi(GetDpiForWindow(hwnd()));
         const int dpi_value = dpi.dpi();
+        const int card_radius = dpi.logical_to_pixels(10);
 
+        // 1) Window background.
         nfui::fill_rect(target, client, p.background);
 
-        // Header band — coral hairline at the bottom matches the SettingsDemo
-        // + Showcase brand treatment so all four samples read as siblings.
-        RECT banner = client;
-        banner.bottom = banner.top + dpi.logical_to_pixels(80);
-        nfui::fill_rect(target, banner, p.background);
-        const RECT hairline{banner.left, banner.bottom - 1, banner.right, banner.bottom};
-        nfui::fill_rect(target, hairline, p.accent);
+        // 2) Header band: brand square + page title on the left, theme
+        //    toggle pill on the right. The toggle shows the OPPOSITE mode
+        //    label so the affordance reads as an action ("switch to dark"),
+        //    not a status badge ("currently light"). Hover lifts the face
+        //    one notch toward accent so the click affordance is obvious.
+        paint_brand_square(target);
+        paint_page_title(target);
+        paint_theme_toggle(target);
 
-        HFONT title_font = fonts_.semibold(dpi_value, 16);
-        HFONT body_font = fonts_.regular(dpi_value, 9);
-        HFONT label_font = fonts_.semibold(dpi_value, 9);
+        // 3) Card chrome: shadow + rounded surface + border, then title +
+        //    legend above and below the chart HWND. Chart HWNDs paint
+        //    themselves first (child windows); the parent's paint lands
+        //    behind them, so chrome here only fills the reserved band.
+        for (const CardLayout& layout : cards_) {
+            nfui::paint_drop_shadow(target, layout.card, card_radius,
+                                    1, p.shadow);
+            nfui::fill_rounded_rect(target, layout.card, card_radius,
+                                    p.surface, p.border);
+            paint_card_title(target, layout);
+            paint_card_legend(target, layout);
+        }
+    }
 
-        RECT title = banner;
-        title.left += dpi.logical_to_pixels(20);
-        title.top += dpi.logical_to_pixels(16);
-        title.right -= dpi.logical_to_pixels(20);
+    void paint_brand_square(HDC target) noexcept {
+        const nfui::ThemePalette& p = *palette_;
+        const nfui::DpiScale dpi(GetDpiForWindow(hwnd()));
+        const int radius = dpi.logical_to_pixels(8);
+        nfui::fill_rounded_rect(target, brand_rect_, radius, p.accent, p.accent);
+        // White "N" mark, semibold at font_pt::md (16pt). The accent_text
+        // colour is reserved for text drawn ON accent (per palette docs),
+        // so we use it instead of p.text here.
+        const int inset = dpi.logical_to_pixels(2);
+        RECT glyph = inset_rect(brand_rect_, inset);
+        nfui::draw_text(target,
+                        glyph,
+                        L"N",
+                        fonts_.semibold(dpi.dpi(), nfui::font_pt::md),
+                        p.accent_text,
+                        DT_CENTER | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX);
+    }
+
+    void paint_page_title(HDC target) noexcept {
+        const nfui::ThemePalette& p = *palette_;
+        const nfui::DpiScale dpi(GetDpiForWindow(hwnd()));
+        const int gap = dpi.logical_to_pixels(12);
+        const int title_h = dpi.logical_to_pixels(28);
+        RECT title = brand_rect_;
+        title.left = brand_rect_.right + gap;
+        title.top = brand_rect_.top + (rect_height(brand_rect_) - title_h) / 2;
+        title.right = theme_toggle_rect_.left - gap;
+        title.bottom = title.top + title_h;
         nfui::draw_text(target,
                         title,
-                        L"NativeFrame UI Charts",
-                        title_font,
+                        L"Charts",
+                        fonts_.semibold(dpi.dpi(), nfui::font_pt::lg),
                         p.text,
-                        DT_LEFT | DT_TOP | DT_SINGLELINE | DT_NOPREFIX);
-        title.top += dpi.logical_to_pixels(36);
+                        DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS | DT_NOPREFIX);
+    }
+
+    void paint_theme_toggle(HDC target) noexcept {
+        const nfui::ThemePalette& p = *palette_;
+        const nfui::DpiScale dpi(GetDpiForWindow(hwnd()));
+        const int radius = dpi.logical_to_pixels(16);
+
+        // Hover face: lift the surface toward the accent so the click
+        // affordance reads. When the user is already on dark mode the
+        // hover target is "switch to light", so the face lifts toward the
+        // light accent-equivalent instead of the dark accent.
+        const bool hovered = theme_toggle_hovered_;
+        const nfui::Color face = hovered
+            ? nfui::alpha_blend(p.surface_hover, p.accent, 0.08f)
+            : p.surface;
+        nfui::fill_rounded_rect(target, theme_toggle_rect_, radius, face, p.border);
+
+        // Label shows the ACTION ("Switch to dark") plus a chevron. The
+        // brief says "shows current mode + arrow" — we go with action+arrow
+        // because it reads as the same affordance ShowcaseView uses.
+        const std::wstring_view label = (theme_mode_ == nfui::ThemeMode::dark)
+            ? L"Switch to light ▾"
+            : L"Switch to dark ▾";
+        RECT text_rc = inset_rect(theme_toggle_rect_, dpi.logical_to_pixels(12));
         nfui::draw_text(target,
-                        title,
-                        L"Bar / HBar / Line / Spline / Area chart kinds rendered by nfui::ChartView subclasses using the CP31 categorical palette + FontCache.",
-                        body_font,
-                        p.text_secondary,
-                        DT_LEFT | DT_WORDBREAK | DT_NOPREFIX);
+                        text_rc,
+                        label,
+                        fonts_.semibold(dpi.dpi(), nfui::font_pt::sm),
+                        p.text,
+                        DT_CENTER | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX);
+    }
 
-        // CP22: per-cell caption strip. The previous version captioned only
-        // bar + hbar in a header band, leaving line / spline / area as
-        // mystery cells. Each cell now carries its own small caption above
-        // the chart view so a reviewer (or screenshot reader) can identify
-        // every kind at a glance. Coordinates mirror the layout_chrome()
-        // cell rectangles so captions stay aligned across DPI swaps.
-        const int outer = dpi.logical_to_pixels(20);
-        const int gap = dpi.logical_to_pixels(16);
-        const int header_h = dpi.logical_to_pixels(80);
-        const int area_left = client.left + outer;
-        const int area_top = client.top + outer + header_h + gap;
-        const int area_right = client.right - outer;
-        const int area_w = std::max(area_right - area_left, dpi.logical_to_pixels(360));
-        const int cell_w = std::max((area_w - gap * 2) / 3, dpi.logical_to_pixels(200));
-        const int cell_h = std::max(static_cast<int>(((client.bottom - outer) - area_top - gap) / 2), dpi.logical_to_pixels(140));
+    void paint_card_title(HDC target, const CardLayout& layout) const noexcept {
+        const nfui::ThemePalette& p = *palette_;
+        const nfui::DpiScale dpi(GetDpiForWindow(hwnd()));
+        nfui::draw_text(target,
+                        layout.title,
+                        layout.title_text,
+                        fonts_.semibold(dpi.dpi(), nfui::font_pt::base),
+                        p.text,
+                        DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS | DT_NOPREFIX);
+    }
 
-        struct CaptionSlot { RECT cell; const wchar_t* text; };
-        const CaptionSlot slots[] = {
-            { make_rect(area_left,                        area_top,                    cell_w, cell_h), L"Bar — monthly revenue"      },
-            { make_rect(area_left + cell_w + gap,         area_top,                    cell_w, cell_h), L"HBar — platform mix"        },
-            { make_rect(area_left + (cell_w + gap) * 2,   area_top,                    cell_w, cell_h), L"Line — revenue vs costs"    },
-            { make_rect(area_left,                        area_top + cell_h + gap,     cell_w, cell_h), L"Spline — sensor A (Hz)"     },
-            { make_rect(area_left + cell_w + gap,         area_top + cell_h + gap,     cell_w, cell_h), L"Area — monthly revenue"     },
-        };
+    void paint_card_legend(HDC target, const CardLayout& layout) const noexcept {
+        const nfui::ThemePalette& p = *palette_;
+        const nfui::DpiScale dpi(GetDpiForWindow(hwnd()));
+        const int dot_size = dpi.logical_to_pixels(8);
+        const int gap = dpi.logical_to_pixels(8);
 
-        const int caption_h = dpi.logical_to_pixels(16);
-        const int caption_pad = dpi.logical_to_pixels(2);
-        for (const auto& slot : slots) {
-            RECT caption = slot.cell;
-            caption.top += caption_pad;
-            caption.bottom = caption.top + caption_h;
+        // Walk entries left-to-right. Dot first (circle), then label. The
+        // legend strip is centred vertically inside layout.legend so multi-
+        // line legend rows still read on the same baseline.
+        int x = layout.legend.left;
+        const int cy = layout.legend.top + (rect_height(layout.legend) - dot_size) / 2;
+        for (const LegendEntry& entry : layout.legend_entries) {
+            RECT dot{x, cy, x + dot_size, cy + dot_size};
+            nfui::fill_ellipse(target, dot, entry.color);
+            x += dot_size + gap;
+
+            RECT label{x, layout.legend.top,
+                       layout.legend.right - x, rect_height(layout.legend)};
             nfui::draw_text(target,
-                            caption,
-                            slot.text,
-                            label_font,
+                            label,
+                            entry.text,
+                            fonts_.regular(dpi.dpi(), nfui::font_pt::sm),
                             p.text_secondary,
                             DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS | DT_NOPREFIX);
+            x += label.right; // label.right == original right edge when no clipping
         }
     }
 
@@ -516,15 +725,69 @@ private:
         }
     }
 
+    void track_mouse_leave() noexcept {
+        if (tracking_mouse_) {
+            return;
+        }
+        TRACKMOUSEEVENT event{};
+        event.cbSize = sizeof(event);
+        event.dwFlags = TME_LEAVE;
+        event.hwndTrack = hwnd();
+        tracking_mouse_ = TrackMouseEvent(&event) != FALSE;
+    }
+
+    [[nodiscard]] bool update_hover(POINT pt) noexcept {
+        const bool hovered = PtInRect(&theme_toggle_rect_, pt) != FALSE;
+        if (hovered == theme_toggle_hovered_) {
+            return false;
+        }
+        theme_toggle_hovered_ = hovered;
+        return true;
+    }
+
+    [[nodiscard]] bool clear_hover() noexcept {
+        if (!theme_toggle_hovered_) {
+            return false;
+        }
+        theme_toggle_hovered_ = false;
+        return true;
+    }
+
+    [[nodiscard]] bool handle_click(POINT pt) noexcept {
+        if (PtInRect(&theme_toggle_rect_, pt) == FALSE) {
+            return false;
+        }
+        theme_mode_ = (theme_mode_ == nfui::ThemeMode::dark)
+                          ? nfui::ThemeMode::light
+                          : nfui::ThemeMode::dark;
+        apply_theme();
+        return true;
+    }
+
     HINSTANCE instance_{};
     nfui::ResourceContext resources_;
-    nfui::ThemePalette palette_;
+    nfui::ThemePalette light_palette_;
+    nfui::ThemePalette dark_palette_;
+    const nfui::ThemePalette* palette_{};
     nfui::FontCache fonts_;
     nfui::BarChartView bar_;
     nfui::HBarChartView hbar_;
     nfui::LineChartView line_;
     nfui::SplineChartView spline_;
     nfui::AreaChartView area_;
+    nfui::ThemeMode theme_mode_{nfui::ThemeMode::light};
+
+    // Header band geometry. Recomputed in layout_charts() so the brand +
+    // toggle always match the live DPI / window size.
+    RECT brand_rect_{};
+    RECT theme_toggle_rect_{};
+    bool theme_toggle_hovered_{false};
+    bool tracking_mouse_{false};
+
+    // Card stack. One entry per chart view, in display order. Recomputed
+    // in layout_charts() so the chrome always lands on the chart HWNDs.
+    std::vector<CardLayout> cards_{};
+
     HICON large_icon_{};
     HICON small_icon_{};
 };
