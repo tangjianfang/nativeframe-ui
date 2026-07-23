@@ -3,3 +3,7 @@ build/
 .vs/
 .vscode/
 CMakeUserPresets.json
+
+# CP27 visual-audit intermediates (BMP is the raw PrintWindow capture;
+# PNG is the readable artifact and is committed alongside AUDIT.md).
+docs/VISUAL_AUDIT/*.bmp
