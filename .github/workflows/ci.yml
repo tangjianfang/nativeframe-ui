@@ -10,7 +10,7 @@ permissions:
 jobs:
   boundary:
     name: Boundary and source-quality checks
-    runs-on: windows-latest
+    runs-on: windows-2022
     steps:
       - name: Check out source
         uses: actions/checkout@v4
@@ -28,16 +28,16 @@ jobs:
       matrix:
         include:
           - preset: x64-debug
-            os: windows-latest
+            os: windows-2022
             experimental: false
           - preset: x64-release
-            os: windows-latest
+            os: windows-2022
             experimental: false
           - preset: arm64-debug
             os: windows-11-arm
             experimental: true
           - preset: clangcl-debug
-            os: windows-latest
+            os: windows-2022
             cc: clangcl
             experimental: false
     runs-on: ${{ matrix.os }}
