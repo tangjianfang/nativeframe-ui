@@ -37,20 +37,30 @@ constexpr int id_inspector_panel = 109;
 // CP31: logical layout constants in DIPs. All on-screen geometry is derived
 // from these values through DpiScale::logical_to_pixels() so the workbench
 // keeps the same proportions at 96, 144, and 192 DPI.
-constexpr int base_margin          = 8;
-constexpr int base_toolbar_height  = 44;   // icon strip beneath the menu
-constexpr int base_top             = 56;   // top of left/centre content
-constexpr int base_left_width      = 250;
-constexpr int base_right_width     = 240;
-constexpr int base_splitter_width  = 4;
-constexpr int base_search_height   = 28;
-constexpr int base_tabs_height     = 28;
-constexpr int base_zoom_label_h    = 20;
-constexpr int base_slider_height   = 28;
-constexpr int base_build_panel_h   = 92;   // rounded card under the slider
-constexpr int base_toolbar_button  = 28;
-constexpr int base_toolbar_gap     = 4;
-constexpr int base_toolbar_group   = 12;
+//
+// Layout (top → down):
+//   menu bar (OS)   y = 0..~20
+//   toolbar strip   y = base_toolbar_top..base_toolbar_top + base_toolbar_height
+//   PROJECT label   y = base_top..base_top + base_project_label_h
+//   search row      y = base_search_top..base_search_top + base_search_height
+//   tree            y = base_search_top + base_search_height + base_margin..bottom
+//   right pane      y = base_search_top..bottom (synchronized with the search row)
+constexpr int base_margin           = 8;
+constexpr int base_toolbar_top      = 8;    // top of icon strip (just under menu)
+constexpr int base_toolbar_height   = 36;   // icon strip beneath the menu
+constexpr int base_top              = 56;   // top of PROJECT label / left-pane content
+constexpr int base_project_label_h  = 24;   // PROJECT header strip
+constexpr int base_left_width       = 250;
+constexpr int base_right_width      = 240;
+constexpr int base_splitter_width   = 4;
+constexpr int base_search_height    = 28;
+constexpr int base_tabs_height      = 28;
+constexpr int base_zoom_label_h     = 20;
+constexpr int base_slider_height    = 28;
+constexpr int base_build_panel_h    = 92;   // rounded card under the slider
+constexpr int base_toolbar_button   = 28;
+constexpr int base_toolbar_gap      = 4;
+constexpr int base_toolbar_group    = 12;
 
 // CP28: status dot text codes used to colour the dot rendered before each
 // list row's status column. The leading "● " glyph is plain text — the colour
@@ -135,6 +145,31 @@ public:
         }
         case WM_NCDESTROY: {
             RemoveWindowSubclass(hwnd, &WorkbenchWindow::search_subclass_proc, id);
+            return DefSubclassProc(hwnd, msg, w, l);
+        }
+        default:
+            break;
+        }
+        return DefSubclassProc(hwnd, msg, w, l);
+    }
+
+    // CP32: inspector-panel subclass. The Panel paints its own surface, so
+    // any overlay drawn on the parent DC is overwritten when the child
+    // repaints. Subclass so we draw the magnifier + caption INSIDE the
+    // panel's WM_PAINT cycle (after Panel::on_paint fills the rounded card).
+    static LRESULT CALLBACK inspector_subclass_proc(HWND hwnd, UINT msg, WPARAM w,
+                                                     LPARAM l, UINT_PTR id, DWORD_PTR ref) {
+        auto* self = reinterpret_cast<WorkbenchWindow*>(ref);
+        switch (msg) {
+        case WM_PAINT: {
+            const LRESULT res = DefSubclassProc(hwnd, msg, w, l);
+            if (self != nullptr) {
+                self->paint_inspector_overlay(hwnd);
+            }
+            return res;
+        }
+        case WM_NCDESTROY: {
+            RemoveWindowSubclass(hwnd, &WorkbenchWindow::inspector_subclass_proc, id);
             return DefSubclassProc(hwnd, msg, w, l);
         }
         default:
@@ -336,6 +371,9 @@ private:
         // CP31: all geometry used at creation time is scaled by the live DPI.
         const int margin       = dpi_.logical_to_pixels(base_margin);
         const int top          = dpi_.logical_to_pixels(base_top);
+        const int project_h    = dpi_.logical_to_pixels(base_project_label_h);
+        // CP32: search/tree/tabs/slider all start below the PROJECT label.
+        const int search_top   = top + project_h + margin;
         const int left_width   = dpi_.logical_to_pixels(base_left_width);
         const int right_width  = dpi_.logical_to_pixels(base_right_width);
 
@@ -350,7 +388,7 @@ private:
             id_search,
             L"",
             margin,
-            top,
+            search_top,
             left_width - margin * 2,
             dpi_.logical_to_pixels(base_search_height),
         };
@@ -414,7 +452,7 @@ private:
         params.control_id = id_slider;
         params.text = L"";
         params.x = right_left + margin;
-        params.y = top;
+        params.y = search_top + dpi_.logical_to_pixels(base_zoom_label_h) + margin;
         params.width = right_width - margin * 2;
         params.height = dpi_.logical_to_pixels(base_slider_height);
         static_cast<void>(slider_.create(params));
@@ -425,7 +463,7 @@ private:
         params.text = L"";
         // CP28: place the inspector card under the build panel so the right
         // pane reads top-to-bottom as Zoom slider > Build progress > Inspector.
-        const int build_y = top + dpi_.logical_to_pixels(base_zoom_label_h)
+        const int build_y = search_top + dpi_.logical_to_pixels(base_zoom_label_h)
                              + dpi_.logical_to_pixels(base_slider_height) + margin * 2;
         const int inspector_y = build_y + dpi_.logical_to_pixels(base_build_panel_h) + margin;
         params.x = right_left + margin;
@@ -440,6 +478,17 @@ private:
             style.elevation = 2;
             inspector_panel_.set_style(style);
         }
+        // CP32: install an inspector subclass so we paint the magnifier
+        // glyph + caption INSIDE the panel's own WM_PAINT cycle (after
+        // Panel::on_paint fills the surface). Painting on the parent DC
+        // leaves the overlay invisible — the child repaints its background
+        // and erases the chrome-layer text. Subclass runs after the
+        // framework's chrome subclass so it chains through DefSubclassProc
+        // (which triggers on_paint via WM_PAINT), then overlays icon + text.
+        SetWindowSubclass(inspector_panel_.hwnd(),
+                          &WorkbenchWindow::inspector_subclass_proc,
+                          reinterpret_cast<UINT_PTR>(this),
+                          reinterpret_cast<DWORD_PTR>(this));
 
         params.control_id = id_splitter_left;
         static_cast<void>(left_splitter_.create(params));
@@ -590,6 +639,11 @@ private:
 
         const int margin          = dpi_.logical_to_pixels(base_margin);
         const int top             = dpi_.logical_to_pixels(base_top);
+        const int project_h       = dpi_.logical_to_pixels(base_project_label_h);
+        // CP32: search/tabs/slider sit directly under the PROJECT strip so
+        // the toolbar above the strip and the search row below it never
+        // overlap. `top + project_h + margin` is the new origin.
+        const int search_top      = top + project_h + margin;
         const int left_width      = dpi_.logical_to_pixels(base_left_width);
         const int right_width     = dpi_.logical_to_pixels(base_right_width);
         const int splitter_width  = dpi_.logical_to_pixels(base_splitter_width);
@@ -602,18 +656,20 @@ private:
         int width = client.right - client.left;
         int height = client.bottom - client.top - status_height;
 
-        // Left pane: search bar at top, tree fills below.
-        MoveWindow(search_.hwnd(), margin, top, left_width - margin * 2, search_height, TRUE);
-        MoveWindow(tree_.hwnd(), margin, top + search_height + margin, left_width - margin * 2,
-                   height - search_height - margin * 3, TRUE);
+        // Left pane: search bar at top (below PROJECT), tree fills below.
+        MoveWindow(search_.hwnd(), margin, search_top,
+                   left_width - margin * 2, search_height, TRUE);
+        MoveWindow(tree_.hwnd(), margin, search_top + search_height + margin,
+                   left_width - margin * 2,
+                   std::max(0, height - (search_top + search_height + margin) - margin), TRUE);
         MoveWindow(left_splitter_.hwnd(), left_width, 0, splitter_width, height, TRUE);
 
-        // Centre pane: tabs across the top, list below.
+        // Centre pane: tabs across the top (aligned with search), list below.
         int center_left = left_width + splitter_width + margin;
         int center_width = width - left_width - right_width - splitter_width * 2 - margin * 2;
-        MoveWindow(tabs_.hwnd(), center_left, top, center_width, tabs_height, TRUE);
-        MoveWindow(list_.hwnd(), center_left, top + tabs_height + margin, center_width,
-                   std::max(0, height - tabs_height - margin * 2), TRUE);
+        MoveWindow(tabs_.hwnd(), center_left, search_top, center_width, tabs_height, TRUE);
+        MoveWindow(list_.hwnd(), center_left, search_top + tabs_height + margin, center_width,
+                   std::max(0, height - (search_top + tabs_height + margin) - margin), TRUE);
 
         int right_left = width - right_width;
         MoveWindow(right_splitter_.hwnd(), right_left - splitter_width, 0, splitter_width, height, TRUE);
@@ -622,11 +678,11 @@ private:
         // inspector card at the bottom.
         MoveWindow(slider_.hwnd(),
                    right_left + margin,
-                   top + zoom_label_h + margin,
+                   search_top + zoom_label_h + margin,
                    right_width - margin * 2,
                    slider_height, TRUE);
 
-        int inspector_y = top + zoom_label_h + margin * 2 + slider_height
+        int inspector_y = search_top + zoom_label_h + margin * 2 + slider_height
                           + build_panel_h + margin;
         int inspector_x = right_left + margin;
         int inspector_w = right_width - margin * 2;
@@ -699,8 +755,11 @@ private:
     }
 
     void paint_toolbar(HDC target, const RECT& client) noexcept {
-        const int toolbar_y      = dpi_.logical_to_pixels(base_top - 8);
-        const int toolbar_height = dpi_.logical_to_pixels(base_toolbar_height - 8);
+        // CP32: toolbar lives at the top of the content area, directly under
+        // the OS menu bar — it must be fully visible (the prior layout
+        // overlapped it with the search bar so only an 8px sliver showed).
+        const int toolbar_y      = dpi_.logical_to_pixels(base_toolbar_top);
+        const int toolbar_height = dpi_.logical_to_pixels(base_toolbar_height);
         const int button_size    = dpi_.logical_to_pixels(base_toolbar_button);
         const int gap            = dpi_.logical_to_pixels(base_toolbar_gap);
         const int group_gap      = dpi_.logical_to_pixels(base_toolbar_group);
@@ -802,22 +861,24 @@ private:
     }
 
     void paint_project_header(HDC target, const RECT& client) noexcept {
-        // CP28: the "PROJECT" header sits in the top-left of the left pane,
-        // above the search bar. The chevron-down glyph signals the tree is
-        // expanded; matching palette.text_secondary keeps it muted against
-        // the surrounding chrome.
+        // CP32: PROJECT sits in its own strip directly below the toolbar and
+        // above the search bar, so neither the toolbar buttons nor the search
+        // overlay can collide with the label. The chevron-down glyph signals
+        // the tree is expanded; matching palette.text_secondary keeps it
+        // muted against the surrounding chrome.
         const int margin = dpi_.logical_to_pixels(base_margin);
-        const int project_y = dpi_.logical_to_pixels(base_top - base_search_height - 4);
+        const int project_y = dpi_.logical_to_pixels(base_top);
+        const int project_h = dpi_.logical_to_pixels(base_project_label_h);
         HFONT header_font = fonts_.semibold(dpi_.dpi(), nfui::font_pt::lg);
 
         RECT text{margin, project_y, margin + dpi_.logical_to_pixels(180),
-                  project_y + dpi_.logical_to_pixels(24)};
+                  project_y + project_h};
         nfui::draw_text(target, text, L"PROJECT", header_font, palette_.text_secondary,
                         DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX);
 
         // Chevron next to the label: drawn at the right edge of the text
         // block so the icon never collides with subsequent layout (the
-        // search box uses the same margin and starts 24 logical px below).
+        // search box uses the same margin and starts 32 logical px below).
         const int chevron_size = dpi_.logical_to_pixels(12);
         const int chevron_x    = text.right + dpi_.logical_to_pixels(4);
         const int chevron_y    = text.top + (text.bottom - text.top - chevron_size) / 2;
@@ -830,7 +891,9 @@ private:
 
     void paint_right_pane(HDC target, const RECT& client) noexcept {
         const int margin       = dpi_.logical_to_pixels(base_margin);
-        const int top          = dpi_.logical_to_pixels(base_top);
+        const int top          = dpi_.logical_to_pixels(base_top)
+                                 + dpi_.logical_to_pixels(base_project_label_h)
+                                 + dpi_.logical_to_pixels(base_margin);
         const int right_width  = dpi_.logical_to_pixels(base_right_width);
         const int zoom_label_h = dpi_.logical_to_pixels(base_zoom_label_h);
         const int slider_h     = dpi_.logical_to_pixels(base_slider_height);
@@ -843,14 +906,20 @@ private:
         HFONT label_font  = fonts_.regular(dpi_.dpi(), nfui::font_pt::sm);
         HFONT header_font = fonts_.semibold(dpi_.dpi(), nfui::font_pt::lg);
 
-        RECT zoom_label{right_left + margin, top, right_left + margin + dpi_.logical_to_pixels(64),
+        // CP32: give the lg-font "Zoom" word as much room as the right pane
+        // allows — cap at percent_label.left so the two never collide. The
+        // prior 64-px width truncated "Zoom" to "Zoo" because Segoe UI
+        // Semibold at 20pt measures wider than the legacy estimate.
+        const int percent_w = dpi_.logical_to_pixels(40);
+        const int zoom_label_w = (right_width - margin - percent_w - margin) - margin;
+        RECT zoom_label{right_left + margin, top,
+                        right_left + margin + zoom_label_w,
                         top + zoom_label_h};
         nfui::draw_text(target, zoom_label, L"Zoom", header_font, palette_.text,
-                        DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX);
+                        DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX | DT_NOCLIP);
 
         wchar_t percent_text[16]{};
         (void)swprintf_s(percent_text, L"%d%%", slider_.pos());
-        const int percent_w = dpi_.logical_to_pixels(40);
         RECT percent_label{right_left + right_width - margin - percent_w, top,
                            right_left + right_width - margin, top + zoom_label_h};
         nfui::draw_text(target, percent_label, percent_text, label_font,
@@ -922,38 +991,9 @@ private:
             RestoreDC(target, saved);
         }
 
-        // Inspector overlay: magnifier glyph + caption, centred on the
-        // inspector panel's client area. The Panel's chrome paints the
-        // rounded surface; this layer adds the icon + text on top.
-        if (inspector_panel_.hwnd() != nullptr) {
-            RECT inspector{};
-            GetClientRect(inspector_panel_.hwnd(), &inspector);
-            const int icon_size = dpi_.logical_to_pixels(40);
-            const int icon_x = inspector.left + (inspector.right - inspector.left - icon_size) / 2;
-            const int icon_y = inspector.top + dpi_.logical_to_pixels(28);
-            RECT icon{icon_x, icon_y, icon_x + icon_size, icon_y + icon_size};
-            nfui::draw_vector_icon(target, nfui::IconKind::search, icon,
-                                   palette_.text_secondary, dpi_.logical_to_pixels(2));
-
-            HFONT caption_font = fonts_.regular(dpi_.dpi(), nfui::font_pt::base);
-            RECT caption{inspector.left + dpi_.logical_to_pixels(16),
-                         icon.bottom + dpi_.logical_to_pixels(12),
-                         inspector.right - dpi_.logical_to_pixels(16),
-                         icon.bottom + dpi_.logical_to_pixels(12)
-                            + dpi_.logical_to_pixels(40)};
-            // Two-line caption — the reference breaks "Inspector — select an
-            // item to inspect its properties." into two lines.
-            nfui::draw_text(target, caption,
-                            L"Inspector \x2014 select an item to",
-                            caption_font, palette_.text_secondary,
-                            DT_CENTER | DT_TOP | DT_SINGLELINE | DT_NOPREFIX);
-            RECT caption2 = caption;
-            caption2.top += dpi_.logical_to_pixels(20);
-            nfui::draw_text(target, caption2,
-                            L"inspect its properties.",
-                            caption_font, palette_.text_secondary,
-                            DT_CENTER | DT_TOP | DT_SINGLELINE | DT_NOPREFIX);
-        }
+        // Inspector overlay (magnifier glyph + caption) is drawn by
+        // inspector_subclass_proc inside the panel's WM_PAINT cycle so the
+        // panel's surface fill does not erase it. See paint_inspector_overlay.
     }
 
     void paint_search_overlay(HWND edit_hwnd) noexcept {
@@ -975,6 +1015,53 @@ private:
         nfui::draw_vector_icon(dc, nfui::IconKind::search, glyph,
                                palette_.text_secondary, dpi_.logical_to_pixels(2));
         ReleaseDC(edit_hwnd, dc);
+    }
+
+    void paint_inspector_overlay(HWND panel_hwnd) noexcept {
+        // CP32: draw the inspector placeholder (magnifier + caption) inside
+        // the panel's WM_PAINT cycle. GetDC on the panel returns a DC in
+        // CLIENT coords, so icon + text are positioned relative to the
+        // panel's client origin (no window-to-parent mapping needed here).
+        HDC dc = GetDC(panel_hwnd);
+        if (dc == nullptr) {
+            return;
+        }
+        RECT rc{};
+        GetClientRect(panel_hwnd, &rc);
+        const int inspector_w = rc.right - rc.left;
+        const int inspector_h = rc.bottom - rc.top;
+        // Vertical centering: stack icon (40 logical) + 12 gap + two lines
+        // of base-size caption (20 logical each) and centre the stack.
+        const int icon_size   = dpi_.logical_to_pixels(40);
+        const int cap_gap     = dpi_.logical_to_pixels(12);
+        const int cap_line_h  = dpi_.logical_to_pixels(20);
+        const int stack_h     = icon_size + cap_gap + cap_line_h * 2;
+        const int stack_top   = rc.top + std::max(0, (inspector_h - stack_h) / 2);
+        const int icon_x      = rc.left + (inspector_w - icon_size) / 2;
+        RECT icon{icon_x, stack_top, icon_x + icon_size, stack_top + icon_size};
+        nfui::draw_vector_icon(dc, nfui::IconKind::search, icon,
+                               palette_.text_secondary, dpi_.logical_to_pixels(2));
+
+        HFONT caption_font = fonts_.regular(dpi_.dpi(), nfui::font_pt::sm);
+        const int cap_pad = dpi_.logical_to_pixels(10);
+        const int cap_x = rc.left + cap_pad;
+        const int cap_w = inspector_w - cap_pad * 2;
+        const int cap_y = icon.bottom + cap_gap;
+        RECT caption{cap_x, cap_y, cap_x + cap_w, cap_y + cap_line_h};
+        // Two-line caption — the reference breaks "Inspector — select an
+        // item to inspect its properties." into two lines.
+        nfui::draw_text(dc, caption,
+                        L"Inspector \x2014 select an item to",
+                        caption_font, palette_.text_secondary,
+                        DT_CENTER | DT_TOP | DT_SINGLELINE | DT_NOPREFIX | DT_NOCLIP);
+        RECT caption2 = caption;
+        caption2.top += cap_line_h;
+        caption2.bottom += cap_line_h;
+        nfui::draw_text(dc, caption2,
+                        L"inspect its properties.",
+                        caption_font, palette_.text_secondary,
+                        DT_CENTER | DT_TOP | DT_SINGLELINE | DT_NOPREFIX | DT_NOCLIP);
+        ReleaseDC(panel_hwnd, dc);
     }
 
     // CP28: ListView subclass. We install AFTER the framework's chrome
