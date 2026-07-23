@@ -22,4 +22,5 @@
 #include <nfui/Controls/Tooltip.hpp>
 #include <nfui/Controls/ProgressBar.hpp>
 #include <nfui/Controls/Panel.hpp>
+#include <nfui/Controls/Slider.hpp>
 #include <nfui/Controls/Splitter.hpp>

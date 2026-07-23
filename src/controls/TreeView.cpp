@@ -82,12 +82,26 @@ LRESULT TreeView::handle_custom_draw(NMTVCUSTOMDRAW* cd) noexcept {
         // draws on top of the system-rendered chrome without overwriting
         // it. (Found and fixed by the CP20 adversarial review — see
         // docs/KNOWLEDGE/polish/2026-07-23-cp20-listview-treeview-tab-chrome.md.)
+        //
+        // P0-1 (CP25 user bug report): do NOT use CLR_NONE for the idle state.
+        // CLR_NONE is unreliable on Win10/11 modern-themed TreeView — the
+        // V6 common-controls double-buffered custom-draw path resolves
+        // CLR_NONE against the live TreeView_SetBkColor (which we set to
+        // palette.surface, looking fine), but the hover transition path
+        // resolves CLR_NONE as "transparent" and lets the unmodified
+        // background leak through. Under modern themes that background is
+        // black, so the row under the cursor appears with a solid black
+        // rect — exactly the bug the user reported. The ListView sibling
+        // (which never uses CLR_NONE — see src/controls/ListView.cpp:219)
+        // renders correctly; mirror its strategy here: always supply a
+        // concrete palette colour.
         cd->clrText = selected
             ? style_.selected_foreground.value_or(p.selection_text).rgb
             : style_.row_foreground.value_or(p.text).rgb;
         cd->clrTextBk = selected
             ? style_.selected_background.value_or(p.selection).rgb
-            : (hot ? p.surface_hover.rgb : CLR_NONE);
+            : (hot ? p.surface_hover
+                   : style_.row_background.value_or(p.surface)).rgb;
         return CDRF_DODEFAULT;
     }
     case CDDS_ITEMPOSTPAINT: {

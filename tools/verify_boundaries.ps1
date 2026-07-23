@@ -151,6 +151,7 @@ $allowedModuleDependencies = @{
     nfui_iconview     = @('nfui_core', 'nfui_theme', 'nfui_control_base')
     nfui_frame        = @('nfui_core', 'nfui_theme', 'nfui_control_base')
     nfui_menu         = @('nfui_core', 'nfui_theme')
+    nfui_slider       = @('nfui_core', 'nfui_theme', 'nfui_control_base')
     nfui_charts       = @('nfui_core', 'nfui_theme', 'nfui_window')
     nfui_charts_aa    = @('nfui_charts')
 }
