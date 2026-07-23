@@ -190,21 +190,22 @@ HWND findDescendantByCaption(HWND window, std::wstring_view caption) noexcept {
     return search.match;
 }
 
-// Synthesise a left-button click on a menu-item HWND by posting the
-// matching pair of mouse messages. Sends via PostMessageW so the menu's
-// internal state machine drives the actual pop-down/up sequencing; a
-// synchronous SendMessage path can race against MN_SELECT/MN_BUTTONDOWN
-// pairs on the parent menu and end with the menu closed.
+// Synthesise a left-button click on a menu-item HWND by injecting a real
+// cursor move + mouse-down/up pair. The menu-bar host expects its
+// WM_MENUSELECT / WM_ENTERMENULOOP pump to come from a thread that owns
+// the foreground window, and synthesised PostMessageW mouse events do
+// not always cross that pump boundary on Win11. Driving the click via
+// the input subsystem gives the host a real MN_SELECT transition and
+// opens the popup deterministically.
 void clickMenuItem(HWND menuItem) noexcept {
     if (menuItem == nullptr) return;
     RECT rc{};
     GetWindowRect(menuItem, &rc);
     const int x = (rc.left + rc.right) / 2;
     const int y = (rc.top + rc.bottom) / 2;
-    PostMessageW(menuItem, WM_LBUTTONDOWN,
-                 MK_LBUTTON, MAKELPARAM(x - rc.left, y - rc.top));
-    PostMessageW(menuItem, WM_LBUTTONUP, 0,
-                 MAKELPARAM(x - rc.left, y - rc.top));
+    SetCursorPos(x, y);
+    mouse_event(MOUSEEVENTF_LEFTDOWN, 0, 0, 0, 0);
+    mouse_event(MOUSEEVENTF_LEFTUP, 0, 0, 0, 0);
 }
 
 bool requestInSampleTheme(HWND window, std::wstring_view theme) {
@@ -371,13 +372,14 @@ bool savePng(HWND window, const fs::path& output, std::wstring& error) {
 
 void printUsage() {
     std::wcerr << L"Usage: NativeFrameUIVisualAudit.exe <sample.exe> "
-                  L"<light|dark|high_contrast> <output.png>\n";
+                  L"<light|dark|high_contrast> <output.png> "
+                  L"[--expand-menu <caption>]\n";
 }
 
 } // namespace
 
 int wmain(int argc, wchar_t* argv[]) {
-    if (argc != 4) {
+    if (argc != 4 && argc != 6) {
         printUsage();
         return 1;
     }
@@ -385,6 +387,14 @@ int wmain(int argc, wchar_t* argv[]) {
     const fs::path executable = fs::absolute(argv[1]);
     const std::wstring theme = argv[2];
     const fs::path output = fs::absolute(argv[3]);
+    std::wstring expandMenu;
+    if (argc == 6) {
+        if (std::wstring_view(argv[4]) != L"--expand-menu") {
+            printUsage();
+            return 1;
+        }
+        expandMenu = argv[5];
+    }
     if (!fs::is_regular_file(executable)) {
         std::wcerr << L"Sample executable not found: " << executable << L'\n';
         return 2;
@@ -441,6 +451,11 @@ int wmain(int argc, wchar_t* argv[]) {
     }
 
     ShowWindow(process.window, SW_RESTORE);
+    // CP28-B: AllowSetForegroundWindow lets the captured sample take
+    // foreground when --expand-menu later injects a real mouse click on
+    // a menu-bar item — without this the menu host doesn't enter its
+    // WM_MENUSELECT pump and the popup never opens.
+    AllowSetForegroundWindow(processInfo.dwProcessId);
     SetForegroundWindow(process.window);
     const bool sampleHandledTheme = requestInSampleTheme(process.window, theme);
     if (!sampleHandledTheme) {
@@ -448,8 +463,97 @@ int wmain(int argc, wchar_t* argv[]) {
     }
     std::this_thread::sleep_for(std::chrono::milliseconds(1'000));
 
+    HWND captureTarget = process.window;
+    if (!expandMenu.empty()) {
+        // CP28-B: drop a top-level menu open before capturing so the
+        // screenshot proves the palette.surface brush that
+        // Menu::apply_to_bar() attaches to the bar HMENU actually paints
+        // the popup submenu. Menu-bar items live as HWNDs of class
+        // "#32768" under the menu-bar host window, but the host is a
+        // non-client child of the top-level and GetMenuBarInfo/Enum
+        // ChildWindows miss it when the window is not foreground-active
+        // (which the visual-audit process can't grant from another PID).
+        // Workaround: look up the item's screen rect via GetMenuItemRect
+        // (which uses the host internally) and inject a real mouse click
+        // at that location. The menu's WM_MENUSELECT pump takes over
+        // from the input thread regardless of process boundary.
+        HMENU menu = GetMenu(process.window);
+        int itemCount = (menu != nullptr) ? GetMenuItemCount(menu) : 0;
+        int menuIndex = -1;
+        for (int i = 0; i < itemCount; ++i) {
+            wchar_t text[128]{};
+            if (GetMenuStringW(menu, i, text,
+                static_cast<int>(std::size(text)), MF_BYPOSITION) == 0) {
+                continue;
+            }
+            // Strip mnemonic '&' before comparing.
+            std::wstring_view sv{text};
+            if (sv.starts_with(L"&")) sv.remove_prefix(1);
+            if (sv == expandMenu) {
+                menuIndex = i;
+                break;
+            }
+        }
+        if (menuIndex < 0) {
+            std::wcerr << L"expand-menu: no menu item with caption \""
+                       << expandMenu << L"\"\n";
+        } else {
+            RECT itemRect{};
+            if (GetMenuItemRect(process.window, menu, menuIndex,
+                                &itemRect) == FALSE) {
+                std::wcerr << L"expand-menu: GetMenuItemRect failed\n";
+            } else {
+                const int x = (itemRect.left + itemRect.right) / 2;
+                const int y = (itemRect.top + itemRect.bottom) / 2;
+                SetForegroundWindow(process.window);
+                SetCursorPos(x, y);
+                std::this_thread::sleep_for(
+                    std::chrono::milliseconds(50));
+                mouse_event(MOUSEEVENTF_LEFTDOWN, 0, 0, 0, 0);
+                mouse_event(MOUSEEVENTF_LEFTUP, 0, 0, 0, 0);
+                std::this_thread::sleep_for(
+                    std::chrono::milliseconds(500));
+                // The popup lives as a top-level MENUCLASS window.
+                // Enumerate thread windows and pick the most recently
+                // visible one that isn't the host.
+                struct PopupSearch {
+                    DWORD threadId;
+                    HWND host{};
+                    HWND match{};
+                } search{GetWindowThreadProcessId(process.window, nullptr),
+                         process.window, nullptr};
+                EnumThreadWindows(search.threadId,
+                    [](HWND w, LPARAM p) -> BOOL {
+                        auto* s = reinterpret_cast<PopupSearch*>(p);
+                        if (w == s->host || IsWindowVisible(w) == FALSE) {
+                            return TRUE;
+                        }
+                        wchar_t cls[16]{};
+                        if (GetClassNameW(w, cls,
+                            static_cast<int>(std::size(cls))) == 0) {
+                            return TRUE;
+                        }
+                        if (_wcsicmp(cls, L"#32768") == 0) {
+                            s->match = w;
+                            return FALSE;
+                        }
+                        return TRUE;
+                    }, reinterpret_cast<LPARAM>(&search));
+                if (search.match == nullptr) {
+                    std::wcerr << L"expand-menu: no popup window appeared\n";
+                } else {
+                    captureTarget = search.match;
+                    std::wcerr << L"expand-menu: captured popup HWND="
+                               << captureTarget << L"\n";
+                    std::this_thread::sleep_for(
+                        std::chrono::milliseconds(250));
+                }
+            }
+        }
+    }
+
     std::wstring error;
-    const bool saved = savePng(process.window, output, error);
+    const bool saved = savePng(captureTarget, output, error);
     if (!saved) {
         std::wcerr << L"Capture failed: " << error << L'\n';
         CoUninitialize();
