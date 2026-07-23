@@ -153,7 +153,7 @@ public:
             CW_USEDEFAULT,
             CW_USEDEFAULT,
             1100,
-            1280,
+            1500,
         };
 
         if (!create(params)) {
@@ -455,7 +455,6 @@ private:
         const int header_band_top = client.top + outer;
         const int header_band_h = header_h;
         const int logo_size = dpi.logical_to_pixels(32);
-        const int logo_pad = dpi.logical_to_pixels(8);
         brand_rect_ = make_rect(client.left + outer,
                                 header_band_top + (header_band_h - logo_size) / 2,
                                 logo_size, logo_size);
