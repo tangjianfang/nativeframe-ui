@@ -136,6 +136,56 @@ HWND waitForWindow(HANDLE process, DWORD processId, const std::wstring& titleFra
     return nullptr;
 }
 
+struct CaptionSearch {
+    std::wstring_view caption;
+    HWND match{};
+};
+
+BOOL CALLBACK findChildByCaption(HWND child, LPARAM parameter) noexcept {
+    wchar_t className[32]{};
+    if (GetClassNameW(child, className, static_cast<int>(std::size(className))) == 0 ||
+        _wcsicmp(className, L"Button") != 0) {
+        return TRUE;
+    }
+
+    auto* search = reinterpret_cast<CaptionSearch*>(parameter);
+    const int length = GetWindowTextLengthW(child);
+    if (length <= 0) {
+        return TRUE;
+    }
+    std::wstring text(static_cast<std::size_t>(length) + 1, L'\0');
+    GetWindowTextW(child, text.data(), static_cast<int>(text.size()));
+    text.resize(static_cast<std::size_t>(length));
+    if (text == search->caption) {
+        search->match = child;
+        return FALSE;
+    }
+    return TRUE;
+}
+
+bool requestInSampleTheme(HWND window, std::wstring_view theme) {
+    const std::wstring_view caption = theme == L"dark" ? L"Dark" :
+                                      theme == L"high_contrast" ? L"High Contrast" : L"Light";
+    CaptionSearch search{caption};
+    EnumChildWindows(window, findChildByCaption, reinterpret_cast<LPARAM>(&search));
+    if (search.match == nullptr) {
+        return false;
+    }
+
+    DWORD_PTR clickResult = 0;
+    if (SendMessageTimeoutW(search.match, BM_CLICK, 0, 0, SMTO_ABORTIFHUNG,
+                            1'000, &clickResult) == 0) {
+        return false;
+    }
+    // BM_CLICK is synchronous: SendMessageTimeoutW returns only after the
+    // target window has processed the click and posted any queued
+    // InvalidateRect. A 250 ms settle here did no useful work and lengthened
+    // every capture where an exact-caption child existed (at least all three
+    // ThemeDemo modes, plus any sample with a "Light/Dark/HC" affordance);
+    // PrintWindow issues its own WM_PAINT and flushes whatever was queued.
+    return true;
+}
+
 BOOL CALLBACK applyThemeToChild(HWND child, LPARAM parameter) noexcept {
     const auto theme = static_cast<std::wstring_view*>(reinterpret_cast<void*>(parameter));
     if (*theme == L"dark") {
@@ -344,7 +394,10 @@ int wmain(int argc, wchar_t* argv[]) {
 
     ShowWindow(process.window, SW_RESTORE);
     SetForegroundWindow(process.window);
-    applyRequestedTheme(process.window, theme);
+    const bool sampleHandledTheme = requestInSampleTheme(process.window, theme);
+    if (!sampleHandledTheme) {
+        applyRequestedTheme(process.window, theme);
+    }
     std::this_thread::sleep_for(std::chrono::milliseconds(1'000));
 
     std::wstring error;
