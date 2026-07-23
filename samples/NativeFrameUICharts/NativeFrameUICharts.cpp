@@ -557,7 +557,6 @@ private:
     void paint_chrome(HDC target, const RECT& client) noexcept {
         const nfui::ThemePalette& p = *palette_;
         const nfui::DpiScale dpi(GetDpiForWindow(hwnd()));
-        const int dpi_value = dpi.dpi();
         const int card_radius = dpi.logical_to_pixels(10);
 
         // 1) Window background.
@@ -652,7 +651,7 @@ private:
                         DT_CENTER | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX);
     }
 
-    void paint_card_title(HDC target, const CardLayout& layout) const noexcept {
+    void paint_card_title(HDC target, const CardLayout& layout) noexcept {
         const nfui::ThemePalette& p = *palette_;
         const nfui::DpiScale dpi(GetDpiForWindow(hwnd()));
         nfui::draw_text(target,
@@ -663,7 +662,7 @@ private:
                         DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS | DT_NOPREFIX);
     }
 
-    void paint_card_legend(HDC target, const CardLayout& layout) const noexcept {
+    void paint_card_legend(HDC target, const CardLayout& layout) noexcept {
         const nfui::ThemePalette& p = *palette_;
         const nfui::DpiScale dpi(GetDpiForWindow(hwnd()));
         const int dot_size = dpi.logical_to_pixels(8);
