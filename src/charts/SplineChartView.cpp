@@ -23,6 +23,10 @@ constexpr int kAxisLabelGutter = 18;
 // Spline uses a thinner stroke than the polyline renderer — a heavy stroke
 // fights the smoothness of the curve and produces a muddy line.
 constexpr int kSplineLineWidthPx = 3;
+// CP30: data-point marker radius. Drawn over the spline so readers can
+// see where the samples actually sit on the curve. Kept small (3 px) so
+// the marker dots decorate without dominating the line.
+constexpr int kSplineMarkerRadiusPx = 3;
 
 // (Tick labels are formatted inline via nfui::format_axis_tick so callers can
 // pick the precision per axis via ChartAxisRange::label_format.)
@@ -143,6 +147,14 @@ void SplineChartView::on_paint(HDC hdc, const RECT& bounds) {
         // so the spline always renders even when GDI+ cannot bind.
         charts_internal::draw_beziers_aa(
             hdc, bez.data(), bez_count, series.color, kSplineLineWidthPx);
+        // CP30: marker dots at every sample so readers can see where the
+        // curve actually anchors. Drawn after the stroke so the dot sits
+        // on top of the line; fill_circles_aa goes through the same
+        // GDI+->GDI overdraw fallback as the line, so the markers always
+        // appear even on memory DCs where Graphics::FillEllipse no-ops.
+        charts_internal::fill_circles_aa(
+            hdc, pts.data(), static_cast<int>(pts.size()),
+            kSplineMarkerRadiusPx, series.color);
     }
 
     const int dpi = (hwnd() != nullptr) ? dpi_of(hwnd()) : 96;
