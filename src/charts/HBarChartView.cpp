@@ -18,7 +18,7 @@ namespace {
 // shared font_pt token (font_pt::chart_tick). Legend constants live in
 // internal/ChartsPaint.cpp.
 constexpr int kTickCount = 5;
-constexpr int kAxisLabelGutter = 18;
+constexpr int kAxisLabelGutter = 28;
 // Half-width of the tick-label text rect on the value axis (centered under
 // the tick position). Mirrors BarChartView's constant — see the comment
 // there for the rationale (dense numeric ticks need elbow room).
@@ -52,9 +52,9 @@ void draw_value_axis_ticks_h(HDC hdc,
                              t * (axis_x_reinterpreted.max - axis_x_reinterpreted.min);
         const int px = pb.left + static_cast<int>(t * static_cast<double>(plot_w) + 0.5);
         const std::wstring text = format_axis_tick(value, axis_x_reinterpreted.label_format);
-        RECT label{px - 16, pb.bottom + 4, px + 16, pb.bottom + kAxisLabelGutter};
+        RECT label{px - 24, pb.bottom + 4, px + 24, pb.bottom + kAxisLabelGutter};
         draw_text(hdc, label, text, font, pal.text_secondary,
-                  DT_CENTER | DT_TOP | DT_SINGLELINE | DT_NOPREFIX);
+                  DT_CENTER | DT_TOP | DT_SINGLELINE | DT_END_ELLIPSIS | DT_NOPREFIX);
 
         draw_line(hdc, POINT{px, pb.bottom}, POINT{px, pb.bottom + 3}, pal.border, 1);
     }
@@ -75,7 +75,7 @@ void draw_category_axis_ticks_h(HDC hdc,
         std::swprintf(buf, std::size(buf), L"%zu", i + 1);
         RECT label{pb.left - kAxisLabelGutter - 4, py - 8, pb.left - 4, py + 8};
         draw_text(hdc, label, buf, font, pal.text_secondary,
-                  DT_RIGHT | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX);
+                  DT_RIGHT | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS | DT_NOPREFIX);
     }
 }
 
@@ -157,6 +157,12 @@ void HBarChartView::on_paint(HDC hdc, const RECT& bounds) {
             if (rs > max_row_sum) max_row_sum = rs;
         }
     }
+
+    // Vertical grid lines align with the horizontal value axis so bar lengths
+    // read against light guides. Drawn before the frame so the frame edge stays
+    // dominant at the plot boundary.
+    const Color grid_color = charts_internal::derive_grid_color(pal);
+    charts_internal::draw_grid_vlines(hdc, layout.plot_bounds, grid_color, kTickCount);
 
     draw_plot_frame(hdc, layout, pal);
 

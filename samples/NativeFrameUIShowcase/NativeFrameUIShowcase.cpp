@@ -1,4 +1,8 @@
-#include <nfui/NativeFrameUI.hpp>
+#include <nfui/Application.hpp>
+#include <nfui/Dpi.hpp>
+#include <nfui/Font.hpp>
+#include <nfui/ResourceContext.hpp>
+#include <nfui/Window.hpp>
 
 #include "NativeFrameUIResource.h"
 #include "ShowcaseView.hpp"

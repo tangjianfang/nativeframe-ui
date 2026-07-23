@@ -187,8 +187,27 @@ LRESULT CALLBACK Control::subclass_proc(HWND hwnd,
     case WM_LBUTTONUP: {
         if (control != nullptr) {
             control->hover_state_.on_lbutton_up();
+            control->on_subclass_lbutton_up();
         }
         break;
+    }
+    case WM_KEYDOWN: {
+        if (control != nullptr) {
+            control->on_subclass_key_down(static_cast<UINT>(wparam), lparam);
+        }
+        break;
+    }
+    case BM_GETCHECK: {
+        if (control != nullptr) {
+            return control->on_reflected_get_check();
+        }
+        break;
+    }
+    case BM_SETCHECK: {
+        if (control != nullptr) {
+            control->on_reflected_set_check(static_cast<LPARAM>(wparam));
+        }
+        return 0;
     }
     case WM_TIMER: {
         // CP17: per-HWND animation tick. Only our own timer event is dispatched

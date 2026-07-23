@@ -2,6 +2,9 @@
 
 #include <windows.h>
 
+#include <array>
+#include <cstddef>
+
 namespace nfui {
 
 enum class ThemeMode {
@@ -43,6 +46,7 @@ struct ThemePalette {
     Color danger;
     Color success;
     Color warning;
+    Color info;                // CP31: semantic blue/cyan, distinct from brand accent
     Color shadow;              // CP16: tint used by paint_drop_shadow; alpha is overridden by the helper
 };
 
@@ -57,6 +61,12 @@ struct ThemeMetrics {
 [[nodiscard]] ThemeTokens  theme_tokens(ThemeMode mode) noexcept;   // back-compat
 [[nodiscard]] ThemePalette theme_palette(ThemeMode mode) noexcept;
 [[nodiscard]] ThemeMetrics theme_metrics() noexcept;
+
+// CP31: categorical palette for data visualization. Returns 8 colorblind-safe
+// hues that are intentionally independent of the brand accent so series in
+// charts do not collide with UI emphasis. Wraps modulo count for any index.
+[[nodiscard]] const std::array<Color, 8>& chart_series_palette(ThemeMode mode) noexcept;
+[[nodiscard]] Color chart_series_color(ThemeMode mode, std::size_t index) noexcept;
 
 // True when the palette behaves like the WCAG high-contrast profile:
 // a near-black background paired with a near-white foreground and a

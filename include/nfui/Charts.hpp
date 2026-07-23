@@ -226,8 +226,8 @@ private:
 
 // C4: multi-series smooth-curve chart renderer. Each polyline is converted
 // to cubic Bezier control points via catmull_rom_to_bezier and drawn with
-// GDI PolyBezier. Markers are intentionally omitted; the smooth curve and
-// fixed markers fight each other and produce a muddy result.
+// GDI PolyBezier. Small markers are drawn at the sample anchors (CP30) so
+// readers can see where the curve actually interpolates.
 class SplineChartView : public ChartView {
 public:
     SplineChartView() = default;
@@ -252,10 +252,10 @@ private:
 // CP14: filled-area chart renderer. One filled polygon per series spanning
 // the line and the plot baseline (y == y.min). Uses the same data shape as
 // LineChartView (normalized points + axis ranges) so a caller can swap a
-// line view for an area view by changing only the subclass. The fill color
-// is derived from ChartSeries::color by blending 30% toward
+// line view for an area view by changing only the subclass. The fill is a
+// translucent vertical gradient blended from the series color toward
 // palette.surface so stacked area charts stay distinguishable. An optional
-// outline (1-px stroke in the original series color) is drawn on top.
+// outline (stroke in the original series color) is drawn on top.
 class AreaChartView : public ChartView {
 public:
     AreaChartView() = default;
@@ -272,8 +272,9 @@ public:
     // area chart (useful when stacking many series).
     void set_outline(bool enabled) noexcept;
 
-    // Fill alpha in [0, 1]; clamped. 1 is fully opaque; 0 produces an
-    // invisible fill (the outline, if enabled, still draws).
+    // Fill alpha in [0, 1]; clamped. 1 is fully opaque series color; 0
+    // produces an invisible fill (the outline, if enabled, still draws).
+    // Intermediate values fade the gradient toward palette.surface.
     void set_fill_alpha(double alpha) noexcept;
 
 protected:

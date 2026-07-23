@@ -8,6 +8,7 @@
 
 #include "NativeFrameUIResource.h"
 
+#include <algorithm>
 #include <array>
 #include <cmath>
 #include <string_view>
@@ -237,7 +238,9 @@ private:
                 });
             }
             bar_.set_kind(nfui::ChartKind::bar_vertical);
-            bar_.set_series({nfui::ChartSeries{kBarName, palette_.accent, std::move(points)}});
+            bar_.set_series({nfui::ChartSeries{kBarName,
+                                               nfui::chart_series_color(nfui::ThemeMode::light, 0),
+                                               std::move(points)}});
             bar_.set_axis_x(nfui::ChartAxisRange{1.0, 12.0, L"{:.0f}"});
             bar_.set_axis_y(nfui::ChartAxisRange{0.0, 100.0, L"{:.0f}"});
         }
@@ -256,28 +259,42 @@ private:
                 });
             }
             area_.set_kind(nfui::ChartKind::area);
-            area_.set_series({nfui::ChartSeries{kAreaName, palette_.accent, std::move(points)}});
+            area_.set_series({nfui::ChartSeries{kAreaName,
+                                                nfui::chart_series_color(nfui::ThemeMode::light, 1),
+                                                std::move(points)}});
             area_.set_axis_x(nfui::ChartAxisRange{1.0, 12.0, L"{:.0f}"});
             area_.set_axis_y(nfui::ChartAxisRange{0.0, 100.0, L"{:.0f}"});
             area_.set_outline(true);
-            area_.set_fill_alpha(1.0);
+            area_.set_fill_alpha(0.6);
         }
 
         // Horizontal bar: three series, five categories. axis_y carries the
         // value range (HBar renderer reads axis_y even though the value axis
-        // is conceptually x).
+        // is conceptually x). Categories are sorted descending by FY 2024 so
+        // the longest bar is on top.
         {
+            std::array<std::size_t, 5> hbar_order{0, 1, 2, 3, 4};
+            std::sort(hbar_order.begin(), hbar_order.end(),
+                      [](std::size_t a, std::size_t b) noexcept {
+                          return kHbar2024[a] > kHbar2024[b];
+                      });
+
             std::vector<nfui::ChartSeries> series;
             series.reserve(3);
             const std::array<std::array<double, 5>, 3> series_data{kHbar2022, kHbar2023, kHbar2024};
             const std::array<std::wstring_view, 3> series_names{kHbarSeries2022, kHbarSeries2023, kHbarSeries2024};
-            const std::array<nfui::Color, 3> series_colors{palette_.accent, palette_.success, palette_.warning};
+            const std::array<nfui::Color, 3> series_colors{
+                nfui::chart_series_color(nfui::ThemeMode::light, 2),
+                nfui::chart_series_color(nfui::ThemeMode::light, 3),
+                nfui::chart_series_color(nfui::ThemeMode::light, 4),
+            };
             for (std::size_t s = 0; s < series_data.size(); ++s) {
                 std::vector<nfui::ChartPoint> points;
                 points.reserve(kHbarCategories.size());
-                for (std::size_t c = 0; c < kHbarCategories.size(); ++c) {
+                for (std::size_t i = 0; i < kHbarCategories.size(); ++i) {
+                    const std::size_t c = hbar_order[i];
                     points.push_back(nfui::ChartPoint{
-                        static_cast<double>(c + 1),
+                        static_cast<double>(i + 1),
                         series_data[s][c],
                     });
                 }
@@ -302,7 +319,9 @@ private:
                     kLineRevenueValues[i],
                 });
             }
-            series.push_back(nfui::ChartSeries{kLineSeriesRev, palette_.accent, std::move(revenue_points)});
+            series.push_back(nfui::ChartSeries{kLineSeriesRev,
+                                               nfui::chart_series_color(nfui::ThemeMode::light, 5),
+                                               std::move(revenue_points)});
 
             std::vector<nfui::ChartPoint> costs_points;
             costs_points.reserve(kLineCostsValues.size());
@@ -312,7 +331,9 @@ private:
                     kLineCostsValues[i],
                 });
             }
-            series.push_back(nfui::ChartSeries{kLineSeriesCost, palette_.success, std::move(costs_points)});
+            series.push_back(nfui::ChartSeries{kLineSeriesCost,
+                                               nfui::chart_series_color(nfui::ThemeMode::light, 6),
+                                               std::move(costs_points)});
 
             line_.set_kind(nfui::ChartKind::line);
             line_.set_series(std::move(series));
@@ -322,11 +343,13 @@ private:
         }
 
         // Spline: 30-point sine wave. The smooth Catmull-Rom curve plus a
-        // default tension (0.5) gives a clean undulating line; the renderer
-        // intentionally drops markers so the curve stays uncluttered.
+        // default tension (0.5) gives a clean undulating line; small markers
+        // identify the sample anchors without cluttering the curve (CP30).
         {
             spline_.set_kind(nfui::ChartKind::spline);
-            spline_.set_series({nfui::ChartSeries{kSplineWave, palette_.accent, build_spline_points()}});
+            spline_.set_series({nfui::ChartSeries{kSplineWave,
+                                                  nfui::chart_series_color(nfui::ThemeMode::light, 7),
+                                                  build_spline_points()}});
             spline_.set_tension(0.5);
             spline_.set_axis_x(nfui::ChartAxisRange{0.0, 29.0, L"{:.0f}"});
             spline_.set_axis_y(nfui::ChartAxisRange{0.0, 100.0, L"{:.0f}"});
@@ -395,7 +418,7 @@ private:
         const RECT hairline{banner.left, banner.bottom - 1, banner.right, banner.bottom};
         nfui::fill_rect(target, hairline, p.accent);
 
-        HFONT title_font = fonts_.serif(dpi_value, 16);
+        HFONT title_font = fonts_.semibold(dpi_value, 16);
         HFONT body_font = fonts_.regular(dpi_value, 9);
         HFONT label_font = fonts_.semibold(dpi_value, 9);
 
@@ -412,7 +435,7 @@ private:
         title.top += dpi.logical_to_pixels(36);
         nfui::draw_text(target,
                         title,
-                        L"Bar / HBar / Line / Spline / Area chart kinds rendered by nfui::ChartView subclasses on top of a shared Claude Code palette + FontCache.",
+                        L"Bar / HBar / Line / Spline / Area chart kinds rendered by nfui::ChartView subclasses using the CP31 categorical palette + FontCache.",
                         body_font,
                         p.text_secondary,
                         DT_LEFT | DT_WORDBREAK | DT_NOPREFIX);

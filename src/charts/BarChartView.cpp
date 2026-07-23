@@ -18,7 +18,7 @@ namespace {
 // the default placeholder in ChartView::draw_default_placeholder. Legend
 // constants live in internal/ChartsPaint.cpp.
 constexpr int kTickCount = 5;
-constexpr int kAxisLabelGutter = 18;
+constexpr int kAxisLabelGutter = 28;
 // Half-width of the tick-label text rect (centered on the tick position).
 // The category-axis labels are 1..N where N can be > 12 (e.g. 12 monthly
 // bars). With a per-tick spacing of ~33px in a 400px plot, the previous

@@ -23,6 +23,23 @@ bool Button::create(const ControlCreateParams& params) noexcept {
 // paint path used before CP17, factored out so the transition detector and the
 // paint path cannot diverge.
 Color Button::face_for(const PaintState& state, const ThemePalette& p, bool hc) const noexcept {
+    const bool secondary = style_.secondary.value_or(false);
+    if (secondary) {
+        // CP31: secondary face stays on surface tones so the button reads as a
+        // lower-emphasis sibling to the accent primary. Disabled/pressed/hover
+        // are derived from palette border/surface_hover.
+        (void)hc;
+        if (!state.enabled) {
+            return alpha_blend(p.border, p.surface, 0.12f);
+        }
+        if (state.pressed) {
+            return p.border;
+        }
+        if (state.hover) {
+            return p.surface_hover;
+        }
+        return p.surface;
+    }
     if (!state.enabled) {
         // CP10B: HC disabled lifts to surface_hover; standard disabled is a
         // 12% border→surface tint (WCAG AA vs text_secondary).
@@ -49,7 +66,8 @@ void Button::on_paint(HDC dc, const PaintState& state) noexcept {
     // (rest ↔ hover). Pressed / disabled are anchor states that must read
     // at-a-glance (CP3), so they snap. HC and the system "animate controls"
     // setting also suppress the transition.
-    const bool can_anim = !hc && state.enabled && !state.pressed && system_animations_enabled();
+    const bool secondary = style_.secondary.value_or(false);
+    const bool can_anim = !hc && state.enabled && !state.pressed && !secondary && system_animations_enabled();
     const Color target_face = face_for(state, p, hc);
 
     // Seed a cross-fade on a hover transition. The first paint after the flip
@@ -91,12 +109,12 @@ void Button::on_paint(HDC dc, const PaintState& state) noexcept {
     const Color border = state.focused
         ? style_.border_color.value_or(accent_border)
         : style_.border_color.value_or(p.border);
-    // text_color is constant across rest/hover (accent_text); only the anchor
-    // states (disabled, HC-pressed) change it, and those do not animate.
-    Color text_color = p.accent_text;
+    // text_color is constant across rest/hover (accent_text for primary,
+    // text for secondary); only the anchor states change it.
+    Color text_color = secondary ? p.text : p.accent_text;
     if (!state.enabled) {
-        text_color = p.text_secondary;
-    } else if (state.pressed && hc) {
+        text_color = secondary ? p.text_secondary : p.text_secondary;
+    } else if (state.pressed && hc && !secondary) {
         text_color = p.accent;
     }
     const RECT& b = state.bounds;
@@ -114,7 +132,7 @@ void Button::on_paint(HDC dc, const PaintState& state) noexcept {
     // stay flat (CP3 decision record: muted/anchor states need a single
     // tone so they read clearly at small sizes). HC stays flat too. The
     // CP17 interpolated face flows straight into the gradient endpoints.
-    const bool use_gradient = !hc && (state.enabled) && !state.pressed;
+    const bool use_gradient = !secondary && !hc && (state.enabled) && !state.pressed;
     if (use_gradient) {
         const Color top    = lighten(face, 0.08f);
         const Color bottom = darken(face, 0.10f);
@@ -154,7 +172,7 @@ void Button::on_paint(HDC dc, const PaintState& state) noexcept {
         };
         if (ring.right > ring.left && ring.bottom > ring.top) {
             const int ring_radius = radius > inset ? radius - inset : 0;
-            const Color ring_color = style_.focus_ring_color.value_or(p.accent_text);
+            const Color ring_color = style_.focus_ring_color.value_or(secondary ? p.accent : p.accent_text);
             fill_rounded_rect(target, ring, ring_radius, face, ring_color);
         }
     }

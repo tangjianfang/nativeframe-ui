@@ -2,11 +2,12 @@
 //
 // V1.0 capability: live theme transition showcase. The window renders a row
 // of every supported control under the currently-selected ThemePalette. Three
-// buttons at the top (Light / Dark / High Contrast) rebuild the demo row in
-// place so QA can compare palettes without restarting the binary.
+// buttons at the top-right of the toolbar (Light / Dark / High Contrast) rebuild
+// the demo rows in place so QA can compare palettes without restarting the
+// binary.
 //
-// The toggle buttons (Light/Dark/HC) are stable members of the window —
-// only the demo controls are recreated when the palette changes.
+// The toggle buttons are stable members of the window — only the demo controls
+// are recreated when the palette changes.
 
 #include <nfui/NativeFrameUI.hpp>
 
@@ -51,7 +52,21 @@ constexpr int id_tabs           = 220;
 constexpr int id_panel          = 221;
 constexpr int id_splitter       = 222;
 
-// Section header text drawn behind each row.
+// Layout rhythm: logical pixels, scaled to device pixels via DpiScale.
+constexpr int kOuterMargin         = 16;
+constexpr int kGap                 = 12;
+constexpr int kToolbarHeight       = 48;   // dedicated top row for title + toggles
+constexpr int kSectionHeaderHeight = 20;
+constexpr int kRowHeight           = 44;   // uniform across all control rows
+constexpr int kLabelWidth          = 140;  // fixed label column width
+constexpr int kGroupGap            = 16;   // vertical space between sections
+
+// Section group captions.
+constexpr const wchar_t* kGroupButtons  = L"Buttons / Toggles";
+constexpr const wchar_t* kGroupInputs   = L"Inputs / Lists";
+constexpr const wchar_t* kGroupFeedback = L"Feedback";
+
+// Per-row labels drawn to the left of each demonstrator control.
 constexpr const wchar_t* kSectionButton      = L"Button";
 constexpr const wchar_t* kSectionCheckBox    = L"CheckBox";
 constexpr const wchar_t* kSectionRadio       = L"RadioButton";
@@ -61,8 +76,8 @@ constexpr const wchar_t* kSectionListBox     = L"ListBox";
 constexpr const wchar_t* kSectionComboBox    = L"ComboBox";
 constexpr const wchar_t* kSectionListView    = L"ListView";
 constexpr const wchar_t* kSectionTreeView    = L"TreeView";
-constexpr const wchar_t* kSectionIconView    = L"IconView";
-constexpr const wchar_t* kSectionProgressBar = L"ProgressBar";
+constexpr const wchar_t* kSectionIconView    = L"IconView (app icon)";
+constexpr const wchar_t* kSectionProgressBar = L"ProgressBar 40%";
 constexpr const wchar_t* kSectionTabControl  = L"TabControl";
 constexpr const wchar_t* kSectionSplitter    = L"Panel + Splitter";
 
@@ -213,6 +228,48 @@ protected:
     }
 
 private:
+    // DPI-scaled layout helpers. All constants above are logical pixels.
+    [[nodiscard]] int outer_margin() const noexcept { return dpi_.logical_to_pixels(kOuterMargin); }
+    [[nodiscard]] int gap() const noexcept { return dpi_.logical_to_pixels(kGap); }
+    [[nodiscard]] int toolbar_height() const noexcept { return dpi_.logical_to_pixels(kToolbarHeight); }
+    [[nodiscard]] int row_height() const noexcept { return dpi_.logical_to_pixels(kRowHeight); }
+    [[nodiscard]] int label_width() const noexcept { return dpi_.logical_to_pixels(kLabelWidth); }
+    [[nodiscard]] int section_header_height() const noexcept { return dpi_.logical_to_pixels(kSectionHeaderHeight); }
+    [[nodiscard]] int group_gap() const noexcept { return dpi_.logical_to_pixels(kGroupGap); }
+
+    [[nodiscard]] int section_top(const RECT& client) const noexcept {
+        return client.top + outer_margin() + toolbar_height() + gap();
+    }
+
+    [[nodiscard]] int group_header_y(int group, const RECT& client) const noexcept {
+        const int h = section_header_height();
+        const int rh = row_height();
+        const int gg = group_gap();
+        const int st = section_top(client);
+        if (group == 0) return st;
+        if (group == 1) return st + h + 3 * rh + gg;
+        return st + 2 * h + 9 * rh + 2 * gg;
+    }
+
+    [[nodiscard]] int row_y(int row, const RECT& client) const noexcept {
+        const int h = section_header_height();
+        const int rh = row_height();
+        const int gg = group_gap();
+        const int st = section_top(client);
+        int y = st;
+        int group_start = 0;
+        if (row >= 3) {
+            y += h + 3 * rh + gg;
+            group_start = 3;
+        }
+        if (row >= 9) {
+            y += h + 6 * rh + gg;
+            group_start = 9;
+        }
+        y += (row - group_start) * rh;
+        return y;
+    }
+
     [[nodiscard]] bool create_toggle_buttons() noexcept {
         nfui::ControlCreateParams params{
             instance_,
@@ -256,9 +313,14 @@ private:
     void build_demo() {
         clear_demo();
 
-        // Buttons.
+        // Buttons: OK is the primary action; Cancel uses a custom border to
+        // read as the secondary action. (A full ghost/outline fill would need
+        // a surface/text override on the Button wrapper; the current V1 API
+        // exposes border color as the secondary differentiator.)
         g_demo.ok = std::make_unique<nfui::Button>();
+        g_demo.ok->set_style(nfui::ButtonStyle{.use_semibold = true});
         g_demo.cancel = std::make_unique<nfui::Button>();
+        g_demo.cancel->set_style(nfui::ButtonStyle{.secondary = true});
         if (!create_child(*g_demo.ok,     id_ok_button,     L"OK"))     return;
         if (!create_child(*g_demo.cancel, id_cancel_button, L"Cancel")) return;
 
@@ -303,6 +365,10 @@ private:
 
         // ListBox.
         g_demo.listbox = std::make_unique<nfui::ListBox>();
+        g_demo.listbox->set_style(nfui::ListStyle{
+            .selected_background = palette_.selection,
+            .selected_foreground = palette_.selection_text,
+        });
         if (!create_child(*g_demo.listbox, id_listbox, L"")) return;
         ListBox_AddString(g_demo.listbox->hwnd(), L"Alpha");
         ListBox_AddString(g_demo.listbox->hwnd(), L"Bravo");
@@ -323,6 +389,14 @@ private:
 
         // ListView (3 cols x 4 rows).
         g_demo.listview = std::make_unique<nfui::ListView>();
+        g_demo.listview->set_style(nfui::ListViewStyle{
+            .row_background      = palette_.surface,
+            .row_foreground      = palette_.text,
+            .selected_background = palette_.selection,
+            .selected_foreground = palette_.selection_text,
+            .header_caption      = palette_.text,
+            .header_background   = palette_.surface,
+        });
         if (!create_child(*g_demo.listview, id_listview, L"")) return;
         ListView_SetExtendedListViewStyle(g_demo.listview->hwnd(),
                                           LVS_EX_FULLROWSELECT | LVS_EX_GRIDLINES);
@@ -336,6 +410,13 @@ private:
 
         // TreeView — 2 levels, root expanded.
         g_demo.treeview = std::make_unique<nfui::TreeView>();
+        g_demo.treeview->set_style(nfui::TreeViewStyle{
+            .row_background      = palette_.surface,
+            .row_foreground      = palette_.text,
+            .line_color          = palette_.border,
+            .selected_background = palette_.selection,
+            .selected_foreground = palette_.selection_text,
+        });
         if (!create_child(*g_demo.treeview, id_treeview, L"")) return;
         HTREEITEM root = tree_item_insert(g_demo.treeview->hwnd(), TVI_ROOT, TVI_LAST, L"Project");
         tree_item_insert(g_demo.treeview->hwnd(), root, TVI_LAST, L"Source");
@@ -345,6 +426,10 @@ private:
 
         // IconView.
         g_demo.iconview = std::make_unique<nfui::IconView>();
+        g_demo.iconview->set_style(nfui::IconViewStyle{
+            .pixel_size  = 32,
+            .padding     = 4,
+        });
         if (!create_child(*g_demo.iconview, id_iconview, L"")) return;
         if (app_icon_ == nullptr) {
             app_icon_ = nfui::load_scaled_icon(instance_,
@@ -358,12 +443,17 @@ private:
 
         // ProgressBar.
         g_demo.progress = std::make_unique<nfui::ProgressBar>();
+        g_demo.progress->set_style(nfui::FrameStyle{
+            .surface_brush = palette_.surface,
+            .bar_color     = palette_.accent,
+        });
         if (!create_child(*g_demo.progress, id_progress, L"")) return;
         SendMessageW(g_demo.progress->hwnd(), PBM_SETRANGE, 0, MAKELPARAM(0, 100));
-        SendMessageW(g_demo.progress->hwnd(), PBM_SETPOS, 60, 0);
+        SendMessageW(g_demo.progress->hwnd(), PBM_SETPOS, 40, 0);
 
         // StatusBar.
         g_demo.status = std::make_unique<nfui::StatusBar>();
+        g_demo.status->set_style(nfui::FrameStyle{.surface_brush = palette_.surface});
         if (!create_child(*g_demo.status, id_status, L"")) return;
         SendMessageW(g_demo.status->hwnd(),
                      SB_SETTEXTW,
@@ -373,9 +463,6 @@ private:
         // TabControl (3 tabs).
         g_demo.tabs = std::make_unique<nfui::TabControl>();
         if (!create_child(*g_demo.tabs, id_tabs, L"")) return;
-        // CP8A: widen horizontal padding so the three tabs read as deliberate
-        // segments rather than the native default (6, 3). DPI-scaled to the
-        // current monitor.
         static_cast<void>(g_demo.tabs->set_padding(dpi_.logical_to_pixels(12), dpi_.logical_to_pixels(4)));
         insert_tab(g_demo.tabs->hwnd(), 0, L"General");
         insert_tab(g_demo.tabs->hwnd(), 1, L"Layout");
@@ -384,6 +471,10 @@ private:
         // Panel + Splitter (V1.4 chrome demonstration).
         g_demo.panel     = std::make_unique<nfui::Panel>();
         g_demo.splitter  = std::make_unique<nfui::Splitter>();
+        g_demo.panel->set_style(nfui::FrameStyle{
+            .accent        = palette_.border,
+            .surface_brush = palette_.surface,
+        });
         if (!create_child(*g_demo.panel,    id_panel,    L"")) return;
         if (!create_child(*g_demo.splitter, id_splitter, L"")) return;
 
@@ -400,49 +491,49 @@ private:
         GetClientRect(hwnd(), &client);
         SendMessageW(g_demo.status->hwnd(), WM_SIZE, 0, 0);
 
-        RECT status_rect{};
-        GetWindowRect(g_demo.status->hwnd(), &status_rect);
-        const int status_height = status_rect.bottom - status_rect.top;
-        const int outer = dpi_.logical_to_pixels(16);
-        const int gap   = dpi_.logical_to_pixels(12);
-        const int row_h = dpi_.logical_to_pixels(28);
+        const int outer = outer_margin();
+        const int gap_v = gap();
+        const int toolbar_h = toolbar_height();
+        const int row_h = row_height();
+        const int label_w = label_width();
 
-        // The theme toggle bar sits above every section.
-        const int toggle_top = client.top + outer;
-        const int button_w   = dpi_.logical_to_pixels(120);
+        // Theme toggles live on the right side of the top toolbar.
+        const int right = client.right - outer;
+        const int hc_w = dpi_.logical_to_pixels(160);
+        const int btn_w = dpi_.logical_to_pixels(120);
+        const int hc_x = right - hc_w;
+        const int dark_x = hc_x - gap_v - btn_w;
+        const int light_x = dark_x - gap_v - btn_w;
+        const int toolbar_top = client.top + outer;
+
         MoveWindow(theme_light_.hwnd(),
-                   client.left + outer,
-                   toggle_top,
-                   button_w,
-                   row_h,
+                   light_x,
+                   toolbar_top,
+                   btn_w,
+                   toolbar_h,
                    TRUE);
         MoveWindow(theme_dark_.hwnd(),
-                   client.left + outer + (button_w + gap),
-                   toggle_top,
-                   button_w,
-                   row_h,
+                   dark_x,
+                   toolbar_top,
+                   btn_w,
+                   toolbar_h,
                    TRUE);
         MoveWindow(theme_hc_.hwnd(),
-                   client.left + outer + 2 * (button_w + gap),
-                   toggle_top,
-                   dpi_.logical_to_pixels(160),
-                   row_h,
+                   hc_x,
+                   toolbar_top,
+                   hc_w,
+                   toolbar_h,
                    TRUE);
-
-        const int section_top = toggle_top + row_h + gap;
-        const int available_h  = client.bottom - client.top - status_height - section_top - outer;
-        const int section_count = 13;
-        const int section_h = std::max(row_h, available_h / section_count);
 
         auto place_row = [&](int index,
                              std::initializer_list<std::pair<int, int>> sizes) {
-            const int row_top = section_top + index * section_h;
-            int x = client.left + outer + dpi_.logical_to_pixels(120);
+            const int y = row_y(index, client);
+            int x = client.left + outer + label_w;
             for (auto [id, w] : sizes) {
                 HWND child = GetDlgItem(hwnd(), id);
                 if (child != nullptr) {
-                    MoveWindow(child, x, row_top, dpi_.logical_to_pixels(w), row_h, TRUE);
-                    x += dpi_.logical_to_pixels(w) + gap;
+                    MoveWindow(child, x, y, dpi_.logical_to_pixels(w), row_h, TRUE);
+                    x += dpi_.logical_to_pixels(w) + gap_v;
                 }
             }
         };
@@ -460,24 +551,25 @@ private:
         place_row(10, {{id_progress, 380}});
         place_row(11, {{id_tabs, 380}});
 
-        // Panel + Splitter need a taller row to show the chrome.
-        const int splitter_row = section_top + 12 * section_h;
+        // Panel + Splitter share the last row.
+        const int y = row_y(12, client);
+        int x = client.left + outer + label_w;
         HWND panel_h    = GetDlgItem(hwnd(), id_panel);
         HWND splitter_h = GetDlgItem(hwnd(), id_splitter);
         if (panel_h != nullptr) {
             MoveWindow(panel_h,
-                       client.left + outer + dpi_.logical_to_pixels(120),
-                       splitter_row,
+                       x,
+                       y,
                        dpi_.logical_to_pixels(380),
-                       section_h - gap,
+                       row_h,
                        TRUE);
         }
         if (splitter_h != nullptr) {
             MoveWindow(splitter_h,
-                       client.left + outer + dpi_.logical_to_pixels(120) + dpi_.logical_to_pixels(380) + gap,
-                       splitter_row,
+                       x + dpi_.logical_to_pixels(380) + gap_v,
+                       y,
                        dpi_.logical_to_pixels(6),
-                       section_h - gap,
+                       row_h,
                        TRUE);
         }
     }
@@ -485,6 +577,30 @@ private:
     void apply_native_fonts() noexcept {
         const int dpi_value = dpi_.dpi();
         const HFONT ui_font = fonts_.regular(dpi_value, 9);
+        if (g_demo.ok != nullptr) {
+            SendMessageW(g_demo.ok->hwnd(),      WM_SETFONT, reinterpret_cast<WPARAM>(ui_font), TRUE);
+        }
+        if (g_demo.cancel != nullptr) {
+            SendMessageW(g_demo.cancel->hwnd(),  WM_SETFONT, reinterpret_cast<WPARAM>(ui_font), TRUE);
+        }
+        if (g_demo.check_unchecked != nullptr) {
+            SendMessageW(g_demo.check_unchecked->hwnd(), WM_SETFONT, reinterpret_cast<WPARAM>(ui_font), TRUE);
+        }
+        if (g_demo.check_checked != nullptr) {
+            SendMessageW(g_demo.check_checked->hwnd(),   WM_SETFONT, reinterpret_cast<WPARAM>(ui_font), TRUE);
+        }
+        if (g_demo.check_indeterminate != nullptr) {
+            SendMessageW(g_demo.check_indeterminate->hwnd(), WM_SETFONT, reinterpret_cast<WPARAM>(ui_font), TRUE);
+        }
+        if (g_demo.radio_first != nullptr) {
+            SendMessageW(g_demo.radio_first->hwnd(),  WM_SETFONT, reinterpret_cast<WPARAM>(ui_font), TRUE);
+        }
+        if (g_demo.radio_second != nullptr) {
+            SendMessageW(g_demo.radio_second->hwnd(), WM_SETFONT, reinterpret_cast<WPARAM>(ui_font), TRUE);
+        }
+        if (g_demo.radio_third != nullptr) {
+            SendMessageW(g_demo.radio_third->hwnd(),  WM_SETFONT, reinterpret_cast<WPARAM>(ui_font), TRUE);
+        }
         if (g_demo.listbox != nullptr) {
             SendMessageW(g_demo.listbox->hwnd(),    WM_SETFONT, reinterpret_cast<WPARAM>(ui_font), TRUE);
         }
@@ -513,36 +629,70 @@ private:
         nfui::fill_rect(target, client, palette_.background);
 
         const int dpi_value = dpi_.dpi();
-        HFONT header_font  = fonts_.serif(dpi_value, 16);
+        const int outer = outer_margin();
+        const int gap_v = gap();
+        const int toolbar_h = toolbar_height();
+        const int row_h = row_height();
+        const int label_w = label_width();
+        const int header_h = section_header_height();
+
+        HFONT title_font   = fonts_.semibold(dpi_value, 18);
         HFONT section_font = fonts_.semibold(dpi_value, 9);
         HFONT body_font    = fonts_.regular(dpi_value, 9);
 
-        RECT title{client.left + dpi_.logical_to_pixels(16),
-                   client.top + dpi_.logical_to_pixels(8),
-                   client.right - dpi_.logical_to_pixels(360),
-                   client.top + dpi_.logical_to_pixels(28)};
+        // Title on the left of the toolbar, toggles on the right.
+        const int right = client.right - outer;
+        const int hc_w = dpi_.logical_to_pixels(160);
+        const int btn_w = dpi_.logical_to_pixels(120);
+        const int hc_x = right - hc_w;
+        const int dark_x = hc_x - gap_v - btn_w;
+        const int light_x = dark_x - gap_v - btn_w;
+        const int toolbar_top = client.top + outer;
+
+        RECT title{client.left + outer,
+                   toolbar_top,
+                   light_x - gap_v,
+                   toolbar_top + toolbar_h};
         nfui::draw_text(target,
                         title,
                         L"NativeFrame UI ThemeDemo",
-                        header_font,
+                        title_font,
                         palette_.text,
-                        DT_LEFT | DT_TOP | DT_SINGLELINE | DT_NOPREFIX);
+                        DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX);
 
-        // Section labels are drawn to the LEFT of every row. They share the
-        // same y coordinates that layout_demo() used for the children.
-        const int outer = dpi_.logical_to_pixels(16);
-        const int gap   = dpi_.logical_to_pixels(12);
-        const int row_h = dpi_.logical_to_pixels(28);
-        const int section_top = client.top + outer + row_h + gap;
-        const int available_h  = client.bottom - client.top - section_top - outer;
-        const int section_count = 13;
-        const int section_h = std::max(row_h, available_h / section_count);
+        // Subtle hairline under the toolbar to separate it from the content.
+        nfui::draw_line(target,
+                        POINT{client.left + outer, toolbar_top + toolbar_h},
+                        POINT{client.right - outer, toolbar_top + toolbar_h},
+                        palette_.border,
+                        1);
 
-        auto draw_label = [&](int index, const wchar_t* text) {
+        // Section group headers.
+        auto draw_section_header = [&](int group, const wchar_t* text) {
+            const int y = group_header_y(group, client);
+            RECT header{client.left + outer,
+                        y,
+                        client.left + outer + label_w,
+                        y + header_h};
+            nfui::draw_text(target,
+                            header,
+                            text,
+                            section_font,
+                            palette_.text,
+                            DT_LEFT | DT_BOTTOM | DT_SINGLELINE | DT_NOPREFIX);
+        };
+
+        draw_section_header(0, kGroupButtons);
+        draw_section_header(1, kGroupInputs);
+        draw_section_header(2, kGroupFeedback);
+
+        // Per-row labels to the left of each demonstrator control.
+        auto draw_label = [&](int row, const wchar_t* text) {
+            const int y = row_y(row, client);
             RECT label{client.left + outer,
-                       section_top + index * section_h,
-                       client.left + outer + dpi_.logical_to_pixels(110),
-                       section_top + index * section_h + row_h};
+                       y,
+                       client.left + outer + label_w - gap_v,
+                       y + row_h};
             nfui::draw_text(target,
                             label,
                             text,
@@ -565,11 +715,17 @@ private:
         draw_label(11, kSectionTabControl);
         draw_label(12, kSectionSplitter);
 
-        // Footer line shows the active mode.
-        RECT footer{client.left + dpi_.logical_to_pixels(440),
-                    client.top + dpi_.logical_to_pixels(10),
-                    client.right - dpi_.logical_to_pixels(16),
-                    client.top + dpi_.logical_to_pixels(28)};
+        // Active mode footer anchored to the bottom-right, above the status bar.
+        int status_height = 0;
+        if (g_demo.status != nullptr) {
+            RECT status_rect{};
+            GetWindowRect(g_demo.status->hwnd(), &status_rect);
+            status_height = status_rect.bottom - status_rect.top;
+        }
+        RECT footer{client.left + label_w + outer,
+                    client.bottom - status_height - outer - row_h,
+                    client.right - outer,
+                    client.bottom - status_height - outer};
         const wchar_t* mode_text =
             (mode_ == nfui::ThemeMode::high_contrast) ? L"Active mode: High Contrast"
             : (mode_ == nfui::ThemeMode::dark)       ? L"Active mode: Dark"

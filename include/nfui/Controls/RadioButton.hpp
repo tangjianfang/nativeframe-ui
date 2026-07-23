@@ -13,14 +13,22 @@ namespace nfui {
 class RadioButton : public Control {
 public:
     [[nodiscard]] bool create(const ControlCreateParams& params) noexcept;
+
+    void set_checked(bool checked) noexcept;
+    [[nodiscard]] bool checked() const noexcept { return checked_; }
+
+protected:
+    // CP31: owner-draw paint. BS_OWNERDRAW replaces the native glyph; the
+    // selected state is managed manually in the subclass-proc overrides so
+    // BM_GETCHECK / BM_SETCHECK and click / space still work.
+    void on_paint(HDC dc, const PaintState& state) noexcept override;
+    [[nodiscard]] LRESULT on_reflected_get_check() const noexcept override;
+    void on_reflected_set_check(LPARAM state) noexcept override;
+    void on_subclass_lbutton_up() noexcept override;
+    void on_subclass_key_down(UINT vk, LPARAM lparam) noexcept override;
+
 private:
-    // CP19: palette-accent focus ring — same approach as CheckBox. Suppresses
-    // the native dotted focus rect and draws a 2px accent border on the post-
-    // paint pass when focused.
-    static LRESULT CALLBACK visual_subclass_proc(HWND hwnd, UINT message,
-                                                 WPARAM wparam, LPARAM lparam,
-                                                 UINT_PTR subclass_id,
-                                                 DWORD_PTR ref_data) noexcept;
+    bool checked_{false};
 };
 
 } // namespace nfui

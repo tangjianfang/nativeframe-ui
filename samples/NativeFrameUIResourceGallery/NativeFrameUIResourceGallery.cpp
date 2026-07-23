@@ -378,18 +378,80 @@ private:
                    button_width,
                    button_height,
                    TRUE);
-        MoveWindow(reload_assets_.hwnd(),
-                   client.left + outer + button_width + gap,
-                   client.top + outer,
-                   button_width,
-                   button_height,
-                   TRUE);
 
         content_rect_ = client;
         content_rect_.top += button_height + outer + gap;
         content_rect_.left += outer;
         content_rect_.right -= outer;
         content_rect_.bottom -= status_height + outer;
+
+        compute_card_rects(gap);
+
+        // CP31: keep the Reload assets button inside the Preview card so it
+        // sits next to the descriptive text that mentions it. This turns the
+        // action and its explanation into a single visual pair.
+        MoveWindow(reload_assets_.hwnd(),
+                   preview_rect_.left + outer,
+                   preview_rect_.bottom - button_height - outer,
+                   button_width,
+                   button_height,
+                   TRUE);
+    }
+
+    void compute_card_rects(int gap) noexcept {
+        const int summary_height = dpi_.logical_to_pixels(120);
+        RECT summary = make_rect(content_rect_.left,
+                                 content_rect_.top,
+                                 rect_width(content_rect_),
+                                 summary_height);
+        assets_rect_ = make_rect(content_rect_.left,
+                                 summary.bottom + gap,
+                                 (rect_width(content_rect_) - gap) / 2,
+                                 rect_height(content_rect_) - rect_height(summary) - gap);
+        preview_rect_ = make_rect(assets_rect_.right + gap,
+                                  assets_rect_.top,
+                                  rect_width(content_rect_) - rect_width(assets_rect_) - gap,
+                                  rect_height(assets_rect_));
+    }
+
+    void paint_status_row(HDC target,
+                          const RECT& row,
+                          const wchar_t* name,
+                          bool present,
+                          bool optional,
+                          const nfui::ThemePalette& p,
+                          HFONT name_font,
+                          HFONT status_font) noexcept {
+        const int dot_size = dpi_.logical_to_pixels(8);
+        const int text_gap = dpi_.logical_to_pixels(8);
+        const int status_col_left = row.left + (rect_width(row) * 55 / 100);
+
+        RECT label_rect = row;
+        label_rect.right = status_col_left - text_gap;
+        nfui::draw_text(target,
+                        label_rect,
+                        name,
+                        name_font,
+                        p.text,
+                        DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX);
+
+        const nfui::Color dot_colour = present ? p.success : (optional ? p.warning : p.danger);
+        const wchar_t* status_label = present ? L"Loaded" : (optional ? L"Optional" : L"Missing");
+
+        RECT dot_rect = make_rect(status_col_left,
+                                  row.top + (rect_height(row) - dot_size) / 2,
+                                  dot_size,
+                                  dot_size);
+        nfui::fill_ellipse(target, dot_rect, dot_colour);
+
+        RECT status_rect = row;
+        status_rect.left = status_col_left + dot_size + text_gap;
+        nfui::draw_text(target,
+                        status_rect,
+                        status_label,
+                        status_font,
+                        p.text_secondary,
+                        DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX);
     }
 
     void update_status(const wchar_t* text) noexcept {
@@ -419,6 +481,7 @@ private:
     void paint_gallery(HDC target) {
         const nfui::ThemePalette& p = palette_;
         const int gap = dpi_.logical_to_pixels(16);
+        const int small_gap = dpi_.logical_to_pixels(8);
         const int card_radius = dpi_.logical_to_pixels(nfui::theme_metrics().corner_radius_card);
         const int small_radius = dpi_.logical_to_pixels(nfui::theme_metrics().corner_radius_control);
 
@@ -426,27 +489,27 @@ private:
         GetClientRect(hwnd(), &client);
         nfui::fill_rect(target, client, p.background);
 
+        // Card rectangles are computed in layout_controls and stored so the
+        // Reload assets button can be placed inside the Preview card.
         RECT summary = make_rect(content_rect_.left,
                                  content_rect_.top,
                                  rect_width(content_rect_),
-                                 dpi_.logical_to_pixels(104));
-        RECT assets = make_rect(content_rect_.left,
-                                summary.bottom + gap,
-                                (rect_width(content_rect_) - gap) / 2,
-                                rect_height(content_rect_) - rect_height(summary) - gap);
-        RECT preview = make_rect(assets.right + gap,
-                                 assets.top,
-                                 rect_width(content_rect_) - rect_width(assets) - gap,
-                                 rect_height(assets));
+                                 dpi_.logical_to_pixels(120));
+        const RECT& assets = assets_rect_;
+        const RECT& preview = preview_rect_;
 
         nfui::fill_rounded_rect(target, summary, card_radius, p.surface, p.border);
         nfui::fill_rounded_rect(target, assets, card_radius, p.surface, p.border);
         nfui::fill_rounded_rect(target, preview, card_radius, p.surface, p.border);
 
         const int dpi_value = dpi_.dpi();
-        HFONT title_font = fonts_.serif(dpi_value, 16);
-        HFONT section_font = fonts_.semibold(dpi_value, 11);
-        HFONT body_font = fonts_.regular(dpi_value, 9);
+        // CP31: three explicit text tiers — heading (semibold 22), body
+        // (regular 13), helper (secondary 12). All headings use the shared
+        // sans-semibold face instead of the Georgia serif fallback.
+        HFONT heading_font = fonts_.semibold(dpi_value, 22);
+        HFONT card_title_font = fonts_.semibold(dpi_value, 20);
+        HFONT body_font = fonts_.regular(dpi_value, 13);
+        HFONT helper_font = fonts_.regular(dpi_value, 12);
 
         RECT text = summary;
         text.left += gap;
@@ -455,10 +518,10 @@ private:
         nfui::draw_text(target,
                         text,
                         L"ResourceGallery",
-                        title_font,
+                        heading_font,
                         p.text,
                         DT_LEFT | DT_TOP | DT_SINGLELINE | DT_NOPREFIX);
-        text.top += dpi_.logical_to_pixels(34);
+        text.top += dpi_.logical_to_pixels(38);
         nfui::draw_text(target,
                         text,
                         L"Everything in this demo loads through an explicit resource module handle: strings, menus, dialogs, icons, bitmaps, and the toolbar resource marker.",
@@ -466,33 +529,56 @@ private:
                         p.text_secondary,
                         DT_LEFT | DT_WORDBREAK | DT_NOPREFIX);
 
-        RECT left_text = assets;
-        left_text.left += gap;
-        left_text.top += gap;
-        left_text.right -= gap;
+        // Asset checklist as a two-column Resource / Status table with
+        // coloured dots instead of plain text labels.
+        RECT assets_title = assets;
+        assets_title.left += gap;
+        assets_title.top += gap;
+        assets_title.right -= gap;
+        assets_title.bottom = assets_title.top + dpi_.logical_to_pixels(30);
         nfui::draw_text(target,
-                        left_text,
+                        assets_title,
                         L"Asset checklist",
-                        section_font,
+                        card_title_font,
                         p.text,
                         DT_LEFT | DT_TOP | DT_SINGLELINE | DT_NOPREFIX);
-        left_text.top += dpi_.logical_to_pixels(32);
 
-        const std::wstring summary_text =
-            L"String: " + std::wstring(has_string_ ? L"loaded" : L"missing") + L"\n" +
-            L"Menu: " + std::wstring(has_menu_ ? L"loaded" : L"missing") + L"\n" +
-            L"Dialog: " + std::wstring(has_dialog_ ? L"loaded" : L"missing") + L"\n" +
-            L"Icon: " + std::wstring(has_icon_ ? L"loaded" : L"missing") + L"\n" +
-            L"Bitmap: " + std::wstring(has_bitmap_ ? L"loaded" : L"missing") + L"\n" +
-            L"Toolbar marker: " + std::wstring(has_toolbar_ ? L"present" : L"missing") + L"\n" +
-            L"Loaded title: " + title_;
+        const int row_height = dpi_.logical_to_pixels(24);
+        RECT row = assets;
+        row.left += gap;
+        row.right -= gap;
+        row.top = assets_title.bottom + dpi_.logical_to_pixels(6);
+        row.bottom = row.top + row_height;
+
+        paint_status_row(target, row, L"String", has_string_, false, p, body_font, helper_font);
+        row.top += row_height;
+        row.bottom += row_height;
+        paint_status_row(target, row, L"Menu", has_menu_, false, p, body_font, helper_font);
+        row.top += row_height;
+        row.bottom += row_height;
+        paint_status_row(target, row, L"Dialog", has_dialog_, false, p, body_font, helper_font);
+        row.top += row_height;
+        row.bottom += row_height;
+        paint_status_row(target, row, L"Icon", has_icon_, false, p, body_font, helper_font);
+        row.top += row_height;
+        row.bottom += row_height;
+        paint_status_row(target, row, L"Bitmap", has_bitmap_, false, p, body_font, helper_font);
+        row.top += row_height;
+        row.bottom += row_height;
+        paint_status_row(target, row, L"Toolbar marker", has_toolbar_, true, p, body_font, helper_font);
+        row.top += row_height + small_gap;
+        row.bottom = row.top + row_height;
+
+        RECT loaded_title_rect = row;
+        std::wstring loaded_title = L"Loaded title: " + title_;
         nfui::draw_text(target,
-                        left_text,
-                        summary_text,
-                        body_font,
+                        loaded_title_rect,
+                        loaded_title,
+                        helper_font,
                         p.text_secondary,
-                        DT_LEFT | DT_WORDBREAK | DT_NOPREFIX);
+                        DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX);
 
+        // Preview card.
         RECT preview_title = preview;
         preview_title.left += gap;
         preview_title.top += gap;
@@ -500,12 +586,13 @@ private:
         nfui::draw_text(target,
                         preview_title,
                         L"Preview",
-                        section_font,
+                        card_title_font,
                         p.text,
                         DT_LEFT | DT_TOP | DT_SINGLELINE | DT_NOPREFIX);
 
+        const int preview_items_top = preview.top + dpi_.logical_to_pixels(56);
         RECT icon_rect = make_rect(preview.left + gap,
-                                   preview.top + dpi_.logical_to_pixels(54),
+                                   preview_items_top,
                                    dpi_.logical_to_pixels(72),
                                    dpi_.logical_to_pixels(72));
         nfui::fill_rounded_rect(target, icon_rect, small_radius, p.surface, p.border);
@@ -524,7 +611,7 @@ private:
         RECT bitmap_rect = make_rect(icon_rect.right + gap,
                                      icon_rect.top,
                                      rect_width(preview) - dpi_.logical_to_pixels(120),
-                                     dpi_.logical_to_pixels(180));
+                                     dpi_.logical_to_pixels(160));
         nfui::fill_rounded_rect(target, bitmap_rect, small_radius, p.surface, p.border);
         if (bitmap_ != nullptr) {
             BITMAP info{};
@@ -546,13 +633,51 @@ private:
             DeleteDC(memory_dc);
         }
 
-        RECT preview_copy = make_rect(preview.left + gap,
-                                      bitmap_rect.bottom + gap,
+        // Small swatch labels under each preview block.
+        RECT icon_label = icon_rect;
+        icon_label.top = icon_rect.bottom + small_gap;
+        icon_label.bottom = icon_label.top + dpi_.logical_to_pixels(18);
+        nfui::draw_text(target,
+                        icon_label,
+                        L"App icon",
+                        helper_font,
+                        p.text_secondary,
+                        DT_CENTER | DT_TOP | DT_SINGLELINE | DT_NOPREFIX);
+
+        RECT bitmap_label = bitmap_rect;
+        bitmap_label.top = bitmap_rect.bottom + small_gap;
+        bitmap_label.bottom = bitmap_label.top + dpi_.logical_to_pixels(18);
+        nfui::draw_text(target,
+                        bitmap_label,
+                        L"Bitmap mark",
+                        helper_font,
+                        p.text_secondary,
+                        DT_CENTER | DT_TOP | DT_SINGLELINE | DT_NOPREFIX);
+
+        // Caption under the preview blocks so the swatches read as a curated
+        // set rather than unexplained coloured rectangles.
+        RECT caption_rect = make_rect(preview.left + gap,
+                                      std::max(icon_label.bottom, bitmap_label.bottom) + small_gap,
                                       rect_width(preview) - gap * 2,
-                                      rect_height(preview) - rect_height(bitmap_rect) - gap * 3);
+                                      dpi_.logical_to_pixels(18));
+        nfui::draw_text(target,
+                        caption_rect,
+                        L"Resource preview: light theme toolbar",
+                        helper_font,
+                        p.text_secondary,
+                        DT_LEFT | DT_TOP | DT_SINGLELINE | DT_NOPREFIX);
+
+        // Leave room for the Reload assets button parked at the bottom of the
+        // Preview card; the descriptive text sits just above it.
+        const int button_height = dpi_.logical_to_pixels(34);
+        const int outer = dpi_.logical_to_pixels(20);
+        RECT preview_copy = make_rect(preview.left + gap,
+                                      caption_rect.bottom + gap,
+                                      rect_width(preview) - gap * 2,
+                                      preview.bottom - button_height - outer - gap - caption_rect.bottom - gap);
         nfui::draw_text(target,
                         preview_copy,
-                        L"Use the File menu to route the shared Exit command, the button to open the resource dialog, and Reload assets to confirm the gallery rebinds raw Win32 resource handles without hidden globals.",
+                        L"Use the File menu to route the shared Exit command, the button above to open the resource dialog, and Reload assets to confirm the gallery rebinds raw Win32 resource handles without hidden globals.",
                         body_font,
                         p.text_secondary,
                         DT_LEFT | DT_WORDBREAK | DT_NOPREFIX);
@@ -569,6 +694,8 @@ private:
     nfui::StatusBar status_bar_;
     nfui::DpiScale dpi_{96};
     RECT content_rect_{};
+    RECT assets_rect_{};
+    RECT preview_rect_{};
     std::wstring title_;
     bool has_dialog_{};
     bool has_menu_{};

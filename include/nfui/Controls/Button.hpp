@@ -16,6 +16,9 @@ struct ButtonStyle {
     std::optional<int>   horizontal_padding;
     std::optional<int>   vertical_padding;
     std::optional<bool>  use_semibold;
+    // CP31: secondary button style. When true the face uses surface tones and the
+    // caption uses palette.text, giving a muted alternative to the accent face.
+    std::optional<bool>  secondary;
     // CP18: optional leading vector glyph drawn to the left of the caption.
     // Defaults to accent_text (same as the caption) so an icon button reads
     // against the accent face; override for semantic glyphs (search, gear).

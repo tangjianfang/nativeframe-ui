@@ -14,7 +14,7 @@ namespace nfui {
 namespace {
 
 constexpr int kTickCount = 5;
-constexpr int kAxisLabelGutter = 18;
+constexpr int kAxisLabelGutter = 28;
 constexpr int kLineWidthPx = 2;
 
 // CP14: shared with LineChartView. Could be lifted into internal/ChartsPaint
@@ -43,7 +43,7 @@ void draw_value_axis_ticks_v(HDC hdc,
         const std::wstring text = format_axis_tick(value, axis_y.label_format);
         RECT label{pb.left - kAxisLabelGutter - 4, py - 8, pb.left - 4, py + 8};
         draw_text(hdc, label, text, font, pal.text_secondary,
-                  DT_RIGHT | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX);
+                  DT_RIGHT | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS | DT_NOPREFIX);
         draw_line(hdc, POINT{pb.left - 3, py}, POINT{pb.left, py}, pal.border, 1);
     }
 }
@@ -64,9 +64,9 @@ void draw_index_axis_ticks_v(HDC hdc,
         const int px = pb.left + static_cast<int>(t * static_cast<double>(plot_w) + 0.5);
         std::swprintf(buf, std::size(buf), L"%zu",
                       1 + i * (point_count - 1) / std::max<std::size_t>(1, n - 1));
-        RECT label{px - 16, pb.bottom + 4, px + 16, pb.bottom + kAxisLabelGutter};
+        RECT label{px - 24, pb.bottom + 4, px + 24, pb.bottom + kAxisLabelGutter};
         draw_text(hdc, label, buf, font, pal.text_secondary,
-                  DT_CENTER | DT_TOP | DT_SINGLELINE | DT_NOPREFIX);
+                  DT_CENTER | DT_TOP | DT_SINGLELINE | DT_END_ELLIPSIS | DT_NOPREFIX);
         draw_line(hdc, POINT{px, pb.bottom}, POINT{px, pb.bottom + 3}, pal.border, 1);
     }
 }
@@ -100,6 +100,12 @@ void AreaChartView::on_paint(HDC hdc, const RECT& bounds) {
     for (const auto& s : series_) {
         point_count = std::max(point_count, s.points.size());
     }
+
+    // Inner grid behind the filled area so the polygon reads against light
+    // alignment guides; frame is drawn on top so the grid endpoints vanish.
+    const Color grid_color = charts_internal::derive_grid_color(pal);
+    charts_internal::draw_grid_hlines(hdc, layout.plot_bounds, grid_color, kTickCount);
+    charts_internal::draw_grid_vlines(hdc, layout.plot_bounds, grid_color, kTickCount);
 
     draw_plot_frame(hdc, layout, pal);
 
@@ -135,23 +141,35 @@ void AreaChartView::on_paint(HDC hdc, const RECT& bounds) {
         poly.push_back(POINT{pts.back().x,  baseline_y});
         poly.push_back(POINT{pts.front().x, baseline_y});
 
-        // Fill color = series.color blended toward palette.surface by
-        // (1 - fill_alpha_) so a configurable alpha reads as a lighter
-        // tint; alpha == 1 returns the original color. The blend is
-        // palette-aware so the fill always tracks the surface tint.
-        Color fill = (fill_alpha_ >= 1.0)
-            ? series.color
-            : alpha_blend(series.color, pal.surface, static_cast<float>(1.0 - fill_alpha_));
-        // When multiple series overlap, draw back-to-front so the upper
-        // series wins visually. Single series still draws correctly.
-        const HBRUSH brush = CreateSolidBrush(fill.rgb);
-        if (brush != nullptr) {
-            const HPEN old_pen = static_cast<HPEN>(SelectObject(hdc, GetStockObject(NULL_PEN)));
-            const HBRUSH old_brush = static_cast<HBRUSH>(SelectObject(hdc, brush));
-            Polygon(hdc, poly.data(), static_cast<int>(poly.size()));
-            SelectObject(hdc, old_brush);
-            SelectObject(hdc, old_pen);
-            DeleteObject(brush);
+        // Translucent vertical gradient fill clipped to the area polygon.
+        // The top keeps more of the series hue so the upper boundary reads
+        // against the grid; the bottom fades toward the surface so the fill
+        // does not dominate the plot. fill_alpha_ is the series weight:
+        // 1.0 = opaque series color, lower values fade toward the surface.
+        // The polygon region prevents the rect-based gradient helper from
+        // leaking below the data line.
+        const float top_weight = (fill_alpha_ >= 1.0f)
+            ? 1.0f
+            : static_cast<float>(1.0 - fill_alpha_);
+        const Color fill_top = alpha_blend(series.color, pal.surface, top_weight);
+        const Color fill_bottom = alpha_blend(series.color, pal.surface, top_weight * 0.4f);
+        RECT grad_bounds{
+            pts.front().x,
+            layout.plot_bounds.top,
+            pts.back().x,
+            baseline_y,
+        };
+        if (grad_bounds.right > grad_bounds.left) {
+            HRGN region = CreatePolygonRgn(poly.data(),
+                                         static_cast<int>(poly.size()),
+                                         ALTERNATE);
+            if (region != nullptr) {
+                const int dc_state = SaveDC(hdc);
+                SelectClipRgn(hdc, region);
+                paint_linear_gradient(hdc, grad_bounds, 0, fill_top, fill_bottom);
+                RestoreDC(hdc, dc_state);
+                DeleteObject(region);
+            }
         }
 
         if (outline_) {

@@ -4,6 +4,7 @@
 
 #include <algorithm>
 #include <array>
+#include <cstdio>
 #include <string_view>
 #include <windowsx.h>
 
@@ -163,13 +164,17 @@ private:
     }
 
     void apply_native_fonts() noexcept {
-        if (status_.hwnd() == nullptr) {
+        if (status_.hwnd() == nullptr || fonts() == nullptr) {
             return;
         }
         SendMessageW(status_.hwnd(),
                      WM_SETFONT,
-                     reinterpret_cast<WPARAM>(fonts_.regular(dpi_.dpi(), 9)),
+                     reinterpret_cast<WPARAM>(fonts()->regular(dpi_.dpi(), 9)),
                      TRUE);
+    }
+
+    [[nodiscard]] nfui::FontCache* fonts() noexcept {
+        return &fonts_;
     }
 
     void apply_window_icon() noexcept {
@@ -272,7 +277,7 @@ private:
         }
     }
 
-    void paint_shell(HDC hdc) {
+    void paint_shell(HDC hdc) noexcept {
         const nfui::ThemePalette& p = palette_;
         const RECT content = content_rect();
         const int outer = dpi_.logical_to_pixels(20);
@@ -293,11 +298,6 @@ private:
         const nfui::Color rail_fill = nfui::darken(p.background, 0.18f);
         const nfui::Color chrome = p.surface;
         const nfui::Color panel = p.surface;
-        const nfui::Color surface_alt = p.surface_hover;
-        const nfui::Color selection_fill = p.selection;
-        const nfui::Color accent_border = p.accent;
-        const nfui::Color canvas_fill = nfui::alpha_blend(p.accent, p.background, 0.88f);
-        const nfui::Color canvas_border = p.accent;
         const nfui::Color muted = p.text_secondary;
         const nfui::Color body = p.text;
 
@@ -330,10 +330,11 @@ private:
         nfui::fill_rounded_rect(target, metric_one, card_radius, chrome, p.border);
         nfui::fill_rounded_rect(target, metric_two, card_radius, chrome, p.border);
 
-        HFONT title_font = fonts_.serif(dpi_value, 20);
-        HFONT section_font = fonts_.semibold(dpi_value, 12);
-        HFONT body_font = fonts_.regular(dpi_value, 9);
-        HFONT metric_font = fonts_.mono(dpi_value, 16);
+        HFONT title_font = fonts()->semibold(dpi_value, 20);
+        HFONT section_font = fonts()->semibold(dpi_value, 12);
+        HFONT label_font = fonts()->bold(dpi_value, 12);
+        HFONT body_font = fonts()->regular(dpi_value, 9);
+        HFONT value_font = fonts()->mono(dpi_value, 28);
 
         RECT rail_title = make_rect(rail.left + gap,
                                     rail.top + gap,
@@ -353,17 +354,25 @@ private:
                         muted,
                         DT_LEFT | DT_WORDBREAK | DT_NOPREFIX);
 
+        const int indicator = dpi_.logical_to_pixels(2);
+        const int icon_pad = dpi_.logical_to_pixels(8);
         for (std::size_t index = 0; index < navigation_items.size(); ++index) {
             RECT item = navigation_rect(index);
             const bool selected = selected_navigation_ == static_cast<int>(index);
             if (selected) {
-                nfui::fill_rounded_rect(target, item, pill_radius, selection_fill, accent_border);
+                nfui::fill_rounded_rect(target, item, pill_radius, p.selection, p.border);
+                RECT accent = make_rect(item.left + indicator,
+                                        item.top + dpi_.logical_to_pixels(10),
+                                        indicator,
+                                        rect_height(item) - dpi_.logical_to_pixels(20));
+                nfui::fill_rounded_rect(target, accent, indicator / 2, p.accent_hover, p.accent_hover);
             }
             RECT label = inset_rect(item, dpi_.logical_to_pixels(12));
+            label.left += icon_pad;
             nfui::draw_text(target,
                             label,
                             navigation_items[index],
-                            section_font,
+                            selected ? label_font : section_font,
                             selected ? p.text : muted,
                             DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX);
         }
@@ -391,75 +400,130 @@ private:
                         p.text,
                         DT_LEFT | DT_TOP | DT_SINGLELINE | DT_NOPREFIX);
 
-        RECT canvas = make_rect(preview.left + gap,
-                                preview.top + dpi_.logical_to_pixels(56),
-                                rect_width(preview) - gap * 2,
-                                preview_height - dpi_.logical_to_pixels(76));
-        nfui::fill_rounded_rect(target, canvas, card_radius, canvas_fill, canvas_border);
+        // Colour-token swatch grid: small dots with labels instead of a giant
+        // accent slab, so the preview area stays informative and subtle.
+        struct Swatch { const wchar_t* name; nfui::Color color; };
+        const std::array<Swatch, 5> swatches{{
+            {L"background", p.background},
+            {L"surface", p.surface},
+            {L"accent", p.accent},
+            {L"success", p.success},
+            {L"info", p.info},
+        }};
 
-        RECT strip = make_rect(canvas.left + dpi_.logical_to_pixels(18),
-                               canvas.top + dpi_.logical_to_pixels(18),
-                               rect_width(canvas) - dpi_.logical_to_pixels(36),
-                               dpi_.logical_to_pixels(46));
-        nfui::fill_rounded_rect(target, strip, pill_radius, surface_alt, p.border);
-        RECT strip_text = inset_rect(strip, dpi_.logical_to_pixels(10));
+        const int swatch = dpi_.logical_to_pixels(16);
+        const int swatch_col = dpi_.logical_to_pixels(96);
+        const int swatch_row = dpi_.logical_to_pixels(30);
+        const int swatch_left = preview.left + gap;
+        const int swatch_top = preview.top + dpi_.logical_to_pixels(56);
+        constexpr int swatch_cols = 2;
+
+        for (std::size_t i = 0; i < swatches.size(); ++i) {
+            const int col = static_cast<int>(i) % swatch_cols;
+            const int row = static_cast<int>(i) / swatch_cols;
+            const int x = swatch_left + col * swatch_col;
+            const int y = swatch_top + row * swatch_row;
+            RECT dot = make_rect(x, y, swatch, swatch);
+            nfui::fill_ellipse(target, dot, swatches[i].color);
+            nfui::draw_ellipse(target, dot, p.border, 1);
+            RECT label = make_rect(x + swatch + dpi_.logical_to_pixels(8),
+                                   y,
+                                   swatch_col - swatch - dpi_.logical_to_pixels(8),
+                                   swatch);
+            nfui::draw_text(target,
+                            label,
+                            swatches[i].name,
+                            body_font,
+                            body,
+                            DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX);
+        }
+
+        // Subtle code-block hint reinforces the canvas metaphor without
+        // competing with the token grid.
+        RECT hint = make_rect(preview.left + gap,
+                              preview.bottom - dpi_.logical_to_pixels(44),
+                              rect_width(preview) - gap * 2,
+                              dpi_.logical_to_pixels(24));
         nfui::draw_text(target,
-                        strip_text,
-                        L"Live preview • navigation updates the shell without leaving native Win32 controls behind.",
-                        body_font,
-                        body,
+                        hint,
+                        L"// preview canvas",
+                        fonts()->mono(dpi_value, 9),
+                        muted,
                         DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX);
 
-        RECT canvas_caption = make_rect(canvas.left + dpi_.logical_to_pixels(18),
-                                        strip.bottom + dpi_.logical_to_pixels(18),
-                                        rect_width(canvas) - dpi_.logical_to_pixels(36),
-                                        dpi_.logical_to_pixels(100));
-        nfui::draw_text(target,
-                        canvas_caption,
-                        L"DarkStudio is intentionally self-contained. It proves that product-level dark shells can live in a sample executable without forcing framework consumers to adopt new core rendering APIs.",
-                        body_font,
-                        muted,
-                        DT_LEFT | DT_WORDBREAK | DT_NOPREFIX);
-
+        // Metric card 1: Native shell.
         RECT metric_text = inset_rect(metric_one, gap);
+        RECT dot = make_rect(metric_text.left,
+                             metric_text.top + dpi_.logical_to_pixels(6),
+                             dpi_.logical_to_pixels(8),
+                             dpi_.logical_to_pixels(8));
+        nfui::fill_ellipse(target, dot, p.success);
+        RECT label = make_rect(dot.right + dpi_.logical_to_pixels(8),
+                               metric_text.top,
+                               rect_width(metric_text) - dpi_.logical_to_pixels(16),
+                               dpi_.logical_to_pixels(20));
         nfui::draw_text(target,
-                        metric_text,
-                        L"Native shell",
-                        body_font,
+                        label,
+                        L"NATIVE SHELL",
+                        section_font,
                         muted,
                         DT_LEFT | DT_TOP | DT_SINGLELINE | DT_NOPREFIX);
-        metric_text.top += dpi_.logical_to_pixels(28);
+        RECT value = make_rect(metric_text.left,
+                               metric_text.top + dpi_.logical_to_pixels(26),
+                               rect_width(metric_text),
+                               dpi_.logical_to_pixels(40));
         nfui::draw_text(target,
-                        metric_text,
+                        value,
                         L"100%",
-                        metric_font,
+                        value_font,
                         p.text,
                         DT_LEFT | DT_TOP | DT_SINGLELINE | DT_NOPREFIX);
-        metric_text.top += dpi_.logical_to_pixels(42);
+        RECT helper = make_rect(metric_text.left,
+                                value.bottom + dpi_.logical_to_pixels(6),
+                                rect_width(metric_text),
+                                dpi_.logical_to_pixels(40));
         nfui::draw_text(target,
-                        metric_text,
+                        helper,
                         L"Sample-local painting with a standard status bar.",
                         body_font,
                         muted,
                         DT_LEFT | DT_WORDBREAK | DT_NOPREFIX);
 
+        // Metric card 2: Per-monitor DPI layout.
         metric_text = inset_rect(metric_two, gap);
+        dot = make_rect(metric_text.left,
+                        metric_text.top + dpi_.logical_to_pixels(6),
+                        dpi_.logical_to_pixels(8),
+                        dpi_.logical_to_pixels(8));
+        nfui::fill_ellipse(target, dot, p.info);
+        label = make_rect(dot.right + dpi_.logical_to_pixels(8),
+                          metric_text.top,
+                          rect_width(metric_text) - dpi_.logical_to_pixels(16),
+                          dpi_.logical_to_pixels(20));
         nfui::draw_text(target,
-                        metric_text,
-                        L"DPI layout",
-                        body_font,
+                        label,
+                        L"DPI LAYOUT",
+                        section_font,
                         muted,
                         DT_LEFT | DT_TOP | DT_SINGLELINE | DT_NOPREFIX);
-        metric_text.top += dpi_.logical_to_pixels(28);
+        value = make_rect(metric_text.left,
+                          metric_text.top + dpi_.logical_to_pixels(26),
+                          rect_width(metric_text),
+                          dpi_.logical_to_pixels(40));
+        wchar_t dpi_str[32]{};
+        swprintf_s(dpi_str, L"%d DPI", dpi_value);
         nfui::draw_text(target,
-                        metric_text,
-                        L"Per-monitor",
-                        metric_font,
+                        value,
+                        dpi_str,
+                        value_font,
                         p.text,
                         DT_LEFT | DT_TOP | DT_SINGLELINE | DT_NOPREFIX);
-        metric_text.top += dpi_.logical_to_pixels(42);
+        helper = make_rect(metric_text.left,
+                           value.bottom + dpi_.logical_to_pixels(6),
+                           rect_width(metric_text),
+                           dpi_.logical_to_pixels(40));
         nfui::draw_text(target,
-                        metric_text,
+                        helper,
                         L"All shell measurements scale through nfui::DpiScale.",
                         body_font,
                         muted,
