@@ -26,6 +26,7 @@ include(cmake/nfui_frame.cmake)
 include(cmake/nfui_charts.cmake)
 include(cmake/nfui_charts_aa.cmake)
 include(cmake/nfui_menu.cmake)
+include(cmake/nfui_slider.cmake)
 
 add_library(NativeFrameUI INTERFACE)
 add_library(NativeFrameUI::NativeFrameUI ALIAS NativeFrameUI)
@@ -54,6 +55,7 @@ target_link_libraries(NativeFrameUI
         NativeFrameUI::nfui_frame
         NativeFrameUI::nfui_charts
         NativeFrameUI::nfui_menu
+        NativeFrameUI::nfui_slider
 )
 
 add_executable(NativeFrameUIWorkbench WIN32

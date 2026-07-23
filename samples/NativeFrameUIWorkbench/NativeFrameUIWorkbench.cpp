@@ -20,6 +20,7 @@ constexpr int id_status = 106;
 constexpr int id_progress = 107;
 constexpr int id_splitter_left = 108;
 constexpr int id_splitter_right = 109;
+constexpr int id_slider = 110;
 
 class WorkbenchWindow final : public nfui::Window {
 public:
@@ -201,6 +202,7 @@ private:
         inspector_.inject_theme(&palette_, &fonts_);
         status_.inject_theme(&palette_, &fonts_);
         progress_.inject_theme(&palette_, &fonts_);
+        slider_.inject_theme(&palette_, &fonts_);
         left_splitter_.inject_theme(&palette_, &fonts_);
         right_splitter_.inject_theme(&palette_, &fonts_);
 
@@ -252,6 +254,18 @@ private:
 
         params.control_id = id_splitter_right;
         static_cast<void>(right_splitter_.create(params));
+
+        // CP25: themed Slider demonstrates the chrome subclass — track +
+        // filled rail + thumb disc + focus ring all come from palette.
+        params.control_id = id_slider;
+        // Slider chrome needs a real height/width to render properly;
+        // honor the existing ControlCreateParams (set by caller) and
+        // explicitly set a sensible default for the workbench.
+        params.width = 264;  // 280 (right panel) - 8*2 (margin) = 264
+        params.height = 28;
+        static_cast<void>(slider_.create(params));
+        slider_.set_range(0, 100);
+        slider_.set_pos(35);
 
         params.control_id = id_status;
         static_cast<void>(status_.create(params));
@@ -337,7 +351,12 @@ private:
 
         int right_left = width - right_width;
         MoveWindow(right_splitter_.hwnd(), right_left - splitter_width, 0, splitter_width, height, TRUE);
-        MoveWindow(inspector_.hwnd(), right_left + margin, top, right_width - margin * 2, height - margin * 2, TRUE);
+        // CP25: themed Slider sits above the inspector so its accent-filled
+        // rail + thumb disc are immediately visible alongside the inspector
+        // caption — proving the chrome contract holds in the workbench.
+        MoveWindow(slider_.hwnd(), right_left + margin, top, right_width - margin * 2, 28, TRUE);
+        MoveWindow(inspector_.hwnd(), right_left + margin, top + 36,
+                   right_width - margin * 2, height - margin * 2 - 36, TRUE);
     }
 
     void show_context_menu(int x, int y) {
@@ -370,6 +389,7 @@ private:
     nfui::StaticText inspector_;
     nfui::StatusBar status_;
     nfui::ProgressBar progress_;
+    nfui::Slider slider_;
     nfui::Splitter left_splitter_;
     nfui::Splitter right_splitter_;
     nfui::DpiScale dpi_{96};
