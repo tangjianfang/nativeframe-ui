@@ -105,6 +105,11 @@ public:
                                  &WorkbenchWindow::search_subclass_proc,
                                  reinterpret_cast<UINT_PTR>(this));
         }
+        if (tabs_.hwnd() != nullptr) {
+            RemoveWindowSubclass(tabs_.hwnd(),
+                                 &WorkbenchWindow::tabs_subclass_proc,
+                                 reinterpret_cast<UINT_PTR>(this));
+        }
     }
 
     static INT_PTR CALLBACK about_dlg_proc(HWND dlg, UINT msg, WPARAM wp, LPARAM lp) {
@@ -170,6 +175,32 @@ public:
         }
         case WM_NCDESTROY: {
             RemoveWindowSubclass(hwnd, &WorkbenchWindow::inspector_subclass_proc, id);
+            return DefSubclassProc(hwnd, msg, w, l);
+        }
+        default:
+            break;
+        }
+        return DefSubclassProc(hwnd, msg, w, l);
+    }
+
+    // CP32: tabs subclass. After the native TabControl paints, query the
+    // currently selected tab and overlay a 2 device-px coral bar at the
+    // bottom of its rect (matches the reference design — the coral stripe
+    // signals the active tab). Coords from TabCtrl_GetItemRect are in the
+    // tabs HWND's client space, so a GetDC on that HWND lines up directly.
+    static LRESULT CALLBACK tabs_subclass_proc(HWND hwnd, UINT msg, WPARAM w,
+                                                LPARAM l, UINT_PTR id, DWORD_PTR ref) {
+        auto* self = reinterpret_cast<WorkbenchWindow*>(ref);
+        switch (msg) {
+        case WM_PAINT: {
+            const LRESULT res = DefSubclassProc(hwnd, msg, w, l);
+            if (self != nullptr) {
+                self->paint_tabs_highlight(hwnd);
+            }
+            return res;
+        }
+        case WM_NCDESTROY: {
+            RemoveWindowSubclass(hwnd, &WorkbenchWindow::tabs_subclass_proc, id);
             return DefSubclassProc(hwnd, msg, w, l);
         }
         default:
@@ -432,6 +463,15 @@ private:
         static_cast<void>(tabs_.set_padding(dpi_.logical_to_pixels(12), dpi_.logical_to_pixels(4)));
         insert_tab(0, L"Workspace");
         insert_tab(1, L"Output");
+        // CP32: install a paint subclass so we can overlay a 2 device-px
+        // coral bar at the bottom of the currently selected tab. Subclass
+        // AFTER the framework's chrome subclass so we chain through
+        // DefSubclassProc (which triggers the framework's tab paint) and
+        // then draw the accent stripe on top.
+        SetWindowSubclass(tabs_.hwnd(),
+                          &WorkbenchWindow::tabs_subclass_proc,
+                          reinterpret_cast<UINT_PTR>(this),
+                          reinterpret_cast<DWORD_PTR>(this));
 
         params.control_id = id_list;
         static_cast<void>(list_.create(params));
@@ -1062,6 +1102,29 @@ private:
                         caption_font, palette_.text_secondary,
                         DT_CENTER | DT_TOP | DT_SINGLELINE | DT_NOPREFIX | DT_NOCLIP);
         ReleaseDC(panel_hwnd, dc);
+    }
+
+    void paint_tabs_highlight(HWND tabs_hwnd) noexcept {
+        // CP32: query the selected tab and overlay a 2 device-px coral bar
+        // at the bottom of its rect. TabCtrl_GetItemRect returns coords in
+        // the tab control's client space, which matches a GetDC on the
+        // tabs HWND — no MapWindowPoints needed. A negative index (no
+        // selection) or a failed rect query short-circuits cleanly.
+        const int sel = TabCtrl_GetCurSel(tabs_hwnd);
+        if (sel < 0) {
+            return;
+        }
+        RECT item{};
+        if (TabCtrl_GetItemRect(tabs_hwnd, sel, &item) == FALSE) {
+            return;
+        }
+        HDC dc = GetDC(tabs_hwnd);
+        if (dc == nullptr) {
+            return;
+        }
+        RECT highlight{item.left, item.bottom - 2, item.right, item.bottom};
+        nfui::fill_rect(dc, highlight, palette_.accent);
+        ReleaseDC(tabs_hwnd, dc);
     }
 
     // CP28: ListView subclass. We install AFTER the framework's chrome

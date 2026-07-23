@@ -280,7 +280,7 @@ void draw_nav_glyph(HDC hdc, std::size_t index, const RECT& cell, nfui::Color co
     ShowcaseLayout layout{};
     const int outer = dpi.logical_to_pixels(24);
     const int gap = dpi.logical_to_pixels(16);
-    const int sidebar_width = dpi.logical_to_pixels(240);
+    const int sidebar_width = dpi.logical_to_pixels(336);
     const int inspector_width = dpi.logical_to_pixels(320);
     const int command_height = dpi.logical_to_pixels(116);
     const int nav_height = dpi.logical_to_pixels(40);
