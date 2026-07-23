@@ -7,8 +7,8 @@
 #include <wincodec.h>
 #include <wrl/client.h>
 
-#include <algorithm>
 #include <chrono>
+#include <cwchar>
 #include <filesystem>
 #include <iostream>
 #include <string>
@@ -103,16 +103,10 @@ BOOL CALLBACK findTopLevelWindow(HWND window, LPARAM parameter) noexcept {
         search->fallback = window;
     }
 
-    const int length = GetWindowTextLengthW(window);
-    std::wstring title(static_cast<std::size_t>(std::max(length, 0)) + 1, L'\0');
-    if (length > 0) {
-        GetWindowTextW(window, title.data(), static_cast<int>(title.size()));
-        title.resize(static_cast<std::size_t>(length));
-    } else {
-        title.clear();
-    }
-
-    if (search->titleFragment.empty() || title.find(search->titleFragment) != std::wstring::npos) {
+    wchar_t title[512]{};
+    GetWindowTextW(window, title, static_cast<int>(std::size(title)));
+    if (search->titleFragment.empty() ||
+        wcsstr(title, search->titleFragment.c_str()) != nullptr) {
         search->match = window;
         return FALSE;
     }
@@ -149,31 +143,38 @@ BOOL CALLBACK findChildByCaption(HWND child, LPARAM parameter) noexcept {
     }
 
     auto* search = reinterpret_cast<CaptionSearch*>(parameter);
-    const int length = GetWindowTextLengthW(child);
-    if (length <= 0) {
+    wchar_t text[128]{};
+    if (GetWindowTextW(child, text, static_cast<int>(std::size(text))) == 0) {
         return TRUE;
     }
-    std::wstring text(static_cast<std::size_t>(length) + 1, L'\0');
-    GetWindowTextW(child, text.data(), static_cast<int>(text.size()));
-    text.resize(static_cast<std::size_t>(length));
-    if (text == search->caption) {
+    if (std::wstring_view{text} == search->caption) {
         search->match = child;
         return FALSE;
     }
     return TRUE;
 }
 
-bool requestInSampleTheme(HWND window, std::wstring_view theme) {
-    const std::wstring_view caption = theme == L"dark" ? L"Dark" :
-                                      theme == L"high_contrast" ? L"High Contrast" : L"Light";
+HWND findButtonByCaption(HWND window, std::wstring_view caption) noexcept {
     CaptionSearch search{caption};
     EnumChildWindows(window, findChildByCaption, reinterpret_cast<LPARAM>(&search));
-    if (search.match == nullptr) {
+    return search.match;
+}
+
+bool requestInSampleTheme(HWND window, std::wstring_view theme) {
+    // Treat captions as an in-sample theme contract only when the complete
+    // Light/Dark/High Contrast selector is present. This avoids clicking an
+    // unrelated button that happens to be named "Dark".
+    const HWND lightButton = findButtonByCaption(window, L"Light");
+    const HWND darkButton = findButtonByCaption(window, L"Dark");
+    const HWND highContrastButton = findButtonByCaption(window, L"High Contrast");
+    if (lightButton == nullptr || darkButton == nullptr || highContrastButton == nullptr) {
         return false;
     }
 
+    const HWND target = theme == L"dark" ? darkButton :
+                        theme == L"high_contrast" ? highContrastButton : lightButton;
     DWORD_PTR clickResult = 0;
-    if (SendMessageTimeoutW(search.match, BM_CLICK, 0, 0, SMTO_ABORTIFHUNG,
+    if (SendMessageTimeoutW(target, BM_CLICK, 0, 0, SMTO_ABORTIFHUNG,
                             1'000, &clickResult) == 0) {
         return false;
     }
