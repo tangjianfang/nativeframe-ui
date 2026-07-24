@@ -832,9 +832,14 @@ private:
         const int grid_inner_right = grid_rect_.right - small_gap;
         const int grid_inner_width = grid_inner_right - grid_inner_left;
 
+        // CP35: step columns by (card_w + card_gap) and centre on the
+        // actual packed-card width so the right-most card stays inside
+        // grid_inner_width. Earlier the code used a `column_w` derived
+        // from grid_cols that pushed the third column ~70 px past the
+        // grid's right edge on a 1220-wide window.
+        const int column_step = card_w + card_gap;
         const int total_w = grid_cols * card_w + (grid_cols - 1) * card_gap;
-        const int column_w = (grid_inner_width + card_gap) / grid_cols;
-        const int first_offset = (grid_inner_width - total_w) / 2;
+        const int first_offset = std::max(0, (grid_inner_width - total_w) / 2);
 
         const int cards_in_group = kGroupCounts[selected_group_].count;
         const int rows_to_render = (cards_in_group + grid_cols - 1) / grid_cols;
@@ -844,7 +849,7 @@ private:
             for (int col_idx = 0; col_idx < grid_cols; ++col_idx) {
                 const int idx = row_idx * grid_cols + col_idx;
                 if (idx >= cards_in_group) break;
-                const int x = grid_inner_left + first_offset + col_idx * column_w;
+                const int x = grid_inner_left + first_offset + col_idx * column_step;
                 const int y = first_row_top + row_idx * row_height_px;
                 if (y + card_h > grid_rect_.bottom) break;
                 RECT card{ x, y, x + card_w, y + card_h };

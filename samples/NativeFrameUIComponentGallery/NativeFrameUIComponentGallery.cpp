@@ -427,10 +427,16 @@ private:
 
         // Page title (xl) + sm subtitle on its own band. The subtitle reads
         // as body copy so the title band does not feel crowded.
+        // CP35: shorten the painted title to "Component Gallery" so the
+        // 28 pt xl headline doesn't crowd the right scrollbar at the 880
+        // default width. The window title bar still carries the full
+        // "NativeFrame UI ComponentGallery" so the framework context
+        // stays intact; the on-canvas headline matches the Resource
+        // Gallery / Theme Demo surface vocabulary.
         RECT title{left, client.top + outer, client.right - outer, client.top + outer + dpi_.logical_to_pixels(40)};
         nfui::draw_text(target,
                         title,
-                        L"NativeFrame UI ComponentGallery",
+                        L"Component Gallery",
                         header_font,
                         palette_.text,
                         DT_LEFT | DT_TOP | DT_SINGLELINE | DT_END_ELLIPSIS | DT_NOPREFIX);
