@@ -46,7 +46,11 @@ void draw_value_axis_ticks_v(HDC hdc,
         const double value = axis_y.min + t * (axis_y.max - axis_y.min);
         const int py = pb.top + static_cast<int>((1.0 - t) * static_cast<double>(plot_h) + 0.5);
         const std::wstring text = format_axis_tick(value, axis_y.label_format);
-        RECT label{pb.left - kAxisLabelGutter - 4, py - 8, pb.left - 4, py + 8};
+        // CP34: span the full y-axis gutter (kAxisGutter=40 in Charts.cpp)
+        // so 3-digit values like "100" fit when right-aligned. The previous
+        // 18-px rect (kAxisLabelGutter + 4) clipped the leading digit and
+        // the rendered label read "00".
+        RECT label{pb.left - 36, py - 8, pb.left - 4, py + 8};
         draw_text(hdc, label, text, font, pal.text_secondary,
                   DT_RIGHT | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX);
 
@@ -119,9 +123,11 @@ void LineChartView::on_paint(HDC hdc, const RECT& bounds) {
 
     if (point_count == 0) {
         const int dpi = (hwnd() != nullptr) ? dpi_of(hwnd()) : 96;
-        charts_internal::draw_legend_column(hdc, layout.plot_bounds,
-                                            layout.legend_width_px, series_,
-                                            palette_, fonts_, dpi);
+        if (show_legend_) {
+            charts_internal::draw_legend_column(hdc, layout.plot_bounds,
+                                                layout.legend_width_px, series_,
+                                                palette_, fonts_, dpi);
+        }
         return;
     }
 
@@ -152,9 +158,11 @@ void LineChartView::on_paint(HDC hdc, const RECT& bounds) {
 
     draw_value_axis_ticks_v(hdc, layout, axis_y_, tick_font, pal);
     draw_index_axis_ticks_v(hdc, layout, point_count, tick_font, pal);
-    charts_internal::draw_legend_column(hdc, layout.plot_bounds,
-                                        layout.legend_width_px, series_,
-                                        palette_, fonts_, dpi);
+    if (show_legend_) {
+        charts_internal::draw_legend_column(hdc, layout.plot_bounds,
+                                            layout.legend_width_px, series_,
+                                            palette_, fonts_, dpi);
+    }
 }
 
 } // namespace nfui

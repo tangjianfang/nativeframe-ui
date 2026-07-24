@@ -166,6 +166,22 @@ LRESULT CALLBACK TabControl::visual_subclass_proc(HWND hwnd, UINT message,
         }
     }
     switch (message) {
+    case WM_ERASEBKGND: {
+        // CP34: tab strip + page area are theme-painted by comctl32 in light
+        // mode, so a dark-themed tab control showed raw white bands next to
+        // the custom-drawn tabs. Paint the whole client rect with the
+        // palette surface so the strip + page area blend into the host
+        // chrome; the individual tabs are then overdrawn by NM_CUSTOMDRAW.
+        HDC dc = reinterpret_cast<HDC>(wparam);
+        if (dc != nullptr) {
+            const ThemePalette& p = effective_palette(tc->palette());
+            RECT rc{};
+            GetClientRect(hwnd, &rc);
+            fill_rect(dc, rc, p.surface);
+            return 1;
+        }
+        return DefSubclassProc(hwnd, message, wparam, lparam);
+    }
     case WM_NCDESTROY:
         RemoveWindowSubclass(hwnd, &TabControl::visual_subclass_proc, subclass_id);
         return DefSubclassProc(hwnd, message, wparam, lparam);

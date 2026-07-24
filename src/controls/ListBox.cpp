@@ -71,6 +71,22 @@ LRESULT CALLBACK ListBox::visual_subclass_proc(HWND hwnd,
                      RDW_INVALIDATE | RDW_FRAME | RDW_UPDATENOW);
         return result;
     }
+    case WM_ERASEBKGND: {
+        // CP34: LBS_OWNERDRAWFIXED only sends OCM_DRAWITEM for visible rows,
+        // so the empty client area below the last item falls back to the
+        // WNDCLASS background brush (COLOR_WINDOW). Override the erase to
+        // paint with the palette surface so the ListBox blends into its
+        // sidebar / panel host instead of leaving a white rectangle.
+        HDC dc = reinterpret_cast<HDC>(wparam);
+        if (dc != nullptr) {
+            const ThemePalette& p = effective_palette(box->palette());
+            RECT rc{};
+            GetClientRect(hwnd, &rc);
+            fill_rect(dc, rc, p.surface);
+            return 1;
+        }
+        return DefSubclassProc(hwnd, message, wparam, lparam);
+    }
     case WM_NCPAINT: {
         LRESULT result = DefSubclassProc(hwnd, message, wparam, lparam);
         box->paint_border();

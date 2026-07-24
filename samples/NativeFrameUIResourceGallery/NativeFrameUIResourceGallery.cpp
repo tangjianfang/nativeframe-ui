@@ -54,7 +54,12 @@ constexpr int kNavW               = 280;
 constexpr int kNavRowH            = 40;
 constexpr int kGridGap            = 16;
 constexpr int kCardW              = 128;
-constexpr int kCardH              = 124;
+// CP34: trimmed card height from 124 → 108 logical px so 4 rows of icons
+// (the largest group is 12) fit inside the grid without the 4th row being
+// clipped against grid_rect_.bottom. The label/tag rows inside each card
+// were also shortened so the swatch + label + tag still fits inside the
+// new card height with comfortable padding.
+constexpr int kCardH              = 108;
 constexpr int kThemeBtnW          = 78;
 constexpr int kThemeBtnH          = 36;
 constexpr int kActionBtnW         = 132;
@@ -986,9 +991,12 @@ private:
         nfui::paint_drop_shadow(target, card, card_radius, 1, p.shadow);
         nfui::fill_rounded_rect(target, card, card_radius, p.surface, p.border);
 
-        // Upper preview swatch: 60% of the card height with the bottom
-        // 40 % reserved for the name + tag.
-        const int swatch_h = static_cast<int>(rect_height(card) * 0.6f);
+        // Upper preview swatch: ~55% of the card height with the bottom
+        // 45 % reserved for the name + tag. CP34: ratio dropped from 0.6 to
+        // 0.55 and the label/tag band heights trimmed from 18 / 16 to
+        // 14 / 14 so all three pieces fit cleanly inside the new shorter
+        // 108-px card height without clipping the tag line.
+        const int swatch_h = static_cast<int>(rect_height(card) * 0.55f);
         RECT swatch{
             card.left + small_gap,
             card.top + small_gap,
@@ -1007,7 +1015,7 @@ private:
             card.left + small_gap,
             swatch.bottom + small_gap / 2,
             card.right - small_gap,
-            swatch.bottom + small_gap / 2 + dpi_.logical_to_pixels(18),
+            swatch.bottom + small_gap / 2 + dpi_.logical_to_pixels(14),
         };
         nfui::draw_text(target, label_rect,
                         card_name(group, index),
@@ -1020,7 +1028,7 @@ private:
             card.left + small_gap,
             label_rect.bottom,
             card.right - small_gap,
-            label_rect.bottom + dpi_.logical_to_pixels(16),
+            label_rect.bottom + dpi_.logical_to_pixels(14),
         };
         nfui::draw_text(target, tag_rect, card_tag(group, index),
                         tag_font, p.text_secondary,

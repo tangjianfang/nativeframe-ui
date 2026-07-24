@@ -434,15 +434,19 @@ private:
                                    GetWindowRect(status_.hwnd(), &status_rect))
                                       ? (status_rect.bottom - status_rect.top)
                                       : dpi_.logical_to_pixels(24);
+        // CP34: footer height bumped from 20 → 24 logical px and DT_TOP
+        // (instead of DT_VCENTER) so descenders on 'g' / 'p' / 'y' have
+        // ~6 px of headroom and don't get clipped by the rect bottom.
+        const int footer_h      = dpi_.logical_to_pixels(24);
         const int footer_bottom = client.bottom - status_height - dpi_.logical_to_pixels(8);
-        const int footer_top    = footer_bottom - dpi_.logical_to_pixels(20);
+        const int footer_top    = footer_bottom - footer_h;
         RECT footer{left, footer_top, client.right - outer, footer_bottom};
         nfui::draw_text(target,
                         footer,
                         L"Every control class in its expected state. Vertical sections stack top to bottom.",
                         body_font,
                         palette_.text_secondary,
-                        DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX);
+                        DT_LEFT | DT_TOP | DT_SINGLELINE | DT_END_ELLIPSIS | DT_NOPREFIX);
 
         // Section labels run down the left margin.
         static constexpr const wchar_t* labels[] = {

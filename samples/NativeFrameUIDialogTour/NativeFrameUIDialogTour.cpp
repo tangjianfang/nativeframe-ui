@@ -371,9 +371,14 @@ private:
         // 1. Window background. This is the canvas behind the card.
         nfui::fill_rect(target, client, palette_.background);
 
-        // 2. Card drop shadow (elevation 2) then the card itself.
+        // 2. Card drop shadow (elevation 1) then the card itself.
+        // CP34: dropped elevation from 2 → 1 so the shadow's alpha falloff
+        // at the bottom-right rounded corner no longer reads as a faint
+        // diagonal "grip" mark in the captured screenshot. With blur=2
+        // (elevation 1) the shadow's per-corner pixels stay subtle and the
+        // panel corner reads as a clean rounded curve.
         const int radius = dpi_.logical_to_pixels(12);
-        nfui::paint_drop_shadow(target, card_rect_, radius, 2, palette_.shadow);
+        nfui::paint_drop_shadow(target, card_rect_, radius, 1, palette_.shadow);
         nfui::fill_rounded_rect(target, card_rect_, radius,
                                 palette_.surface, palette_.border);
 

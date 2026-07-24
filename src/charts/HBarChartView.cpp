@@ -191,9 +191,11 @@ void HBarChartView::on_paint(HDC hdc, const RECT& bounds) {
 
     if (bar_count == 0) {
         draw_plot_frame(hdc, layout, pal);
-        charts_internal::draw_legend_column(hdc, layout.plot_bounds,
-                                            layout.legend_width_px, series_,
-                                            palette_, fonts_, dpi);
+        if (show_legend_) {
+            charts_internal::draw_legend_column(hdc, layout.plot_bounds,
+                                                layout.legend_width_px, series_,
+                                                palette_, fonts_, dpi);
+        }
         return;
     }
 
@@ -348,9 +350,11 @@ void HBarChartView::on_paint(HDC hdc, const RECT& bounds) {
 
     draw_value_axis_ticks_h(hdc, layout, tick_axis, tick_font, pal);
     draw_category_axis_ticks_h(hdc, layout, bar_count, tick_font, pal);
-    charts_internal::draw_legend_column(hdc, layout.plot_bounds,
-                                        layout.legend_width_px, series_,
-                                        palette_, fonts_, dpi);
+    if (show_legend_) {
+        charts_internal::draw_legend_column(hdc, layout.plot_bounds,
+                                            layout.legend_width_px, series_,
+                                            palette_, fonts_, dpi);
+    }
 }
 
 } // namespace nfui

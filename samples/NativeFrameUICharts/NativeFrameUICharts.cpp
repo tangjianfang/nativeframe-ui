@@ -388,6 +388,12 @@ private:
             }
             hbar_.set_kind(nfui::ChartKind::bar_horizontal);
             hbar_.set_stacked(true);
+            // CP34: hide the HBar's internal legend column so the per-card
+            // footer legend (painted by paint_card_legend) is the only one
+            // rendered. Otherwise the HBar draws a duplicate right-side
+            // legend that overlaps with the bar tips and the right-edge
+            // axis label area.
+            hbar_.set_show_legend(false);
             hbar_.set_series(std::move(series));
             hbar_.set_axis_y(nfui::ChartAxisRange{0.0, 100.0, L"{:.0f}"});
         }

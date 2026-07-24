@@ -722,8 +722,18 @@ private:
         int center_left = left_width + splitter_width + margin;
         int center_width = width - left_width - right_width - splitter_width * 2 - margin * 2;
         MoveWindow(tabs_.hwnd(), center_left, search_top, center_width, tabs_height, TRUE);
+        // CP34: cap the ListView height so the 5 populated rows don't get
+        // followed by a stretch of empty gridlines. The freed vertical
+        // space becomes plain background (no gridlines, no chrome) which
+        // reads as intentional padding below the list rather than a broken
+        // table with phantom rows.
+        const int list_header_h = dpi_.logical_to_pixels(22);
+        const int list_row_h    = dpi_.logical_to_pixels(22);
+        const int list_padding  = dpi_.logical_to_pixels(12);
+        const int list_h = list_header_h + 5 * list_row_h + list_padding;
+        const int list_avail = std::max(0, height - (search_top + tabs_height + margin) - margin);
         MoveWindow(list_.hwnd(), center_left, search_top + tabs_height + margin, center_width,
-                   std::max(0, height - (search_top + tabs_height + margin) - margin), TRUE);
+                   std::min(list_h, list_avail), TRUE);
 
         int right_left = width - right_width;
         MoveWindow(right_splitter_.hwnd(), right_left - splitter_width, 0, splitter_width, height, TRUE);

@@ -117,6 +117,11 @@ public:
     void set_axis_y(ChartAxisRange axis) noexcept;
     void set_palette(const ThemePalette* palette) noexcept;
     void set_font_cache(FontCache* fonts) noexcept;
+    // CP34: hide the in-renderer legend column when the host draws its
+    // own (e.g. NativeFrameUICharts paints a per-card footer legend). The
+    // default stays true so existing call sites that don't pass this
+    // continue to get the chart's own legend.
+    void set_show_legend(bool enabled) noexcept { show_legend_ = enabled; }
 
     // Bind both palette + FontCache in one call. Equivalent to:
     //   set_palette(palette);
@@ -143,6 +148,7 @@ protected:
     ChartAxisRange axis_y_{0.0, 1.0};
     const ThemePalette* palette_{nullptr};
     FontCache* fonts_{nullptr};
+    bool show_legend_{true};
 };
 
 // C3: vertical grouped or stacked bar chart renderer. Bars grow upward from the

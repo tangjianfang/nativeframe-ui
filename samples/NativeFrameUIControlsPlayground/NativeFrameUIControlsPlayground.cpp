@@ -681,7 +681,11 @@ private:
         // std::max floor of 300 logical px was too tight once TV indent
         // + scrollbar were subtracted.
         int x3 = x2 + col_w + px(24);
-        const int gcol_w = std::max(px(360), static_cast<int>(client.right - outer - x3));
+        // CP34: raise the gallery column minimum from 360 → 440 logical px so
+        // the TreeView (TVS_HASBUTTONS + indent + scrollbar all subtract from
+        // the visible text band) never clips its longest label and the
+        // TabControl tabs ("Design" / "Preview" / "Log") get enough room.
+        const int gcol_w = std::max(px(440), static_cast<int>(client.right - outer - x3));
         y = body_top;
         MoveWindow(gallery_listview_.hwnd(), x3, y, gcol_w, px(110), TRUE);
         y += px(120);
@@ -710,7 +714,12 @@ private:
         // clipped at the rect bottom. Subtitle rect shares the same right
         // boundary so the two lines stack flush.
         const int outer = px(24);
-        const int title_right = client.right - px(420);
+        // CP34: trim the right reservation from 420 → 260 logical px so the
+        // subtitle line ("Interactive surface: theme switching, dynamic
+        // create/destroy, keyboard navigation, state changes.") no longer
+        // trips DT_END_ELLIPSIS at 96 DPI. The title is much shorter than
+        // the subtitle, so the smaller right reserve doesn't affect it.
+        const int title_right = client.right - px(260);
         RECT title{client.left + outer, client.top + px(8),
                    title_right, client.top + px(60)};
         nfui::draw_text(dc, title, L"Controls Playground", title_font, palette_.text,

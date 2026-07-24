@@ -190,9 +190,11 @@ void BarChartView::on_paint(HDC hdc, const RECT& bounds) {
         charts_internal::draw_grid_hlines(hdc, layout.plot_bounds, grid_color, kTickCount);
         draw_plot_frame(hdc, layout, pal);
         const int dpi = (hwnd() != nullptr) ? dpi_of(hwnd()) : 96;
-        charts_internal::draw_legend_column(hdc, layout.plot_bounds,
-                                            layout.legend_width_px, series_,
-                                            palette_, fonts_, dpi);
+        if (show_legend_) {
+            charts_internal::draw_legend_column(hdc, layout.plot_bounds,
+                                                layout.legend_width_px, series_,
+                                                palette_, fonts_, dpi);
+        }
         return;
     }
 
@@ -341,9 +343,11 @@ void BarChartView::on_paint(HDC hdc, const RECT& bounds) {
 
     draw_value_axis_ticks_v(hdc, layout, tick_axis_y, tick_font, pal);
     draw_category_axis_ticks_v(hdc, layout, bar_count, tick_font, pal);
-    charts_internal::draw_legend_column(hdc, layout.plot_bounds,
-                                        layout.legend_width_px, series_,
-                                        palette_, fonts_, dpi);
+    if (show_legend_) {
+        charts_internal::draw_legend_column(hdc, layout.plot_bounds,
+                                            layout.legend_width_px, series_,
+                                            palette_, fonts_, dpi);
+    }
 }
 
 } // namespace nfui
