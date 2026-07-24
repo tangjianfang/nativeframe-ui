@@ -232,8 +232,11 @@ public:
             0,
             CW_USEDEFAULT,
             CW_USEDEFAULT,
-            1180,
-            760,
+            // CP36: shrink default window from 1180×760 → 940×700 so the
+            // demo fits on a 1080-tall monitor with breathing room and the
+            // sidebar/inspector columns no longer overflow their content.
+            940,
+            700,
         };
 
         if (!create(params)) {

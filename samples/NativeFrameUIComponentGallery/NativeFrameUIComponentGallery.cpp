@@ -68,8 +68,13 @@ public:
             0,
             CW_USEDEFAULT,
             CW_USEDEFAULT,
-            880,
-            1320,
+            // CP36: shrink default window from 880×1320 → 940×700. The
+            // gallery is taller than the new viewport by design — every
+            // control class gets its own labelled band — so WS_VSCROLL is
+            // kept active and the inner content keeps the original
+            // 1320-px height; the user scrolls to see every section.
+            940,
+            700,
         };
 
         if (!create(params)) {

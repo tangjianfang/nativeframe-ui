@@ -332,8 +332,11 @@ public:
             0,
             CW_USEDEFAULT,
             CW_USEDEFAULT,
-            1320,
-            840,
+            // CP36: shrink from 1320×840 → 940×700 so the demo sits in
+            // a compact window consistent with the rest of the
+            // compact-mode suite.
+            940,
+            700,
         };
 
         if (!create(params)) {

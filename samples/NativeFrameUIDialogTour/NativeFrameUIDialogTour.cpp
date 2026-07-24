@@ -47,10 +47,16 @@ HWND g_modeless_dlg = nullptr;
 
 // CP35: card + window layout in logical px. The window is sized so the
 // centered 640x480 card has even margins (~120 left/right, ~60 top/bottom).
-constexpr int kCardW      = 640;
-constexpr int kCardH      = 480;
-constexpr int kWindowW    = 880;
-constexpr int kWindowH    = 600;
+// CP36: trim card dimensions to suit the unified 940×700 compact window.
+// The previous 640×480 ran the buttons almost to the window borders; the
+// smaller 480×360 card sits comfortably centred with breathing room.
+constexpr int kCardW      = 480;
+constexpr int kCardH      = 360;
+// CP36: unified compact demo size — every demo window is 940×700 logical px
+// so the surface fits any 1080-tall monitor with breathing room and the
+// suite presents a consistent silhouette.
+constexpr int kWindowW    = 940;
+constexpr int kWindowH    = 700;
 constexpr int kPadX       = 24;
 constexpr int kPadY       = 24;
 constexpr int kBrandSize  = 32;

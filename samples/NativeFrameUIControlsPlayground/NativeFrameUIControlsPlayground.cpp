@@ -175,7 +175,12 @@ public:
             L"NativeFrame UI — Controls Playground",
             WS_OVERLAPPEDWINDOW | WS_CLIPCHILDREN,
             0,
-            CW_USEDEFAULT, CW_USEDEFAULT, 1200, 860,
+            CW_USEDEFAULT, CW_USEDEFAULT,
+            // CP36: shrink default window from 1200×860 → 940×700 so the
+            // playground fits the unified compact demo silhouette. Inner
+            // gallery strip is computed against the actual client width in
+            // layout(), so the column reflows automatically.
+            940, 700,
         };
         if (!create(params)) {
             return false;
@@ -601,10 +606,19 @@ private:
         GetClientRect(hwnd(), &client);
         SendMessageW(status_bar_.hwnd(), WM_SIZE, 0, 0);
 
-        const int outer = px(16);
-        const int gap = px(12);
-        const int row = px(28);
-        const int col_w = px(360);
+        const int outer = px(12);
+        const int gap = px(8);
+        const int row = px(26);
+        // CP36: trim col_w 360 → 300 logical px so the three-column body
+        // reflows inside the 940-wide compact window. The previous 360 +
+        // 32/24 inter-column gaps left only 132 logical px for the third
+        // (gallery) column, which clipped its 3-tab TabControl against
+        // the right edge. 300 + 24/20 gaps frees ~248 logical px so all
+        // three TabControl tabs render fully.
+        const int col_w = px(300);
+        const int small_w = px(92);
+        const int tile_w = px(56);
+        const int tile_h = px(52);
 
         // Top bar: theme toggles on the right.
         const int top = client.top + outer;
@@ -621,7 +635,8 @@ private:
         // ---- Column 1: dynamic controls ----
         int x1 = client.left + outer;
         int y = body_top;
-        const int small_w = px(108);
+        // CP36: small_w, tile_w, tile_h moved to top of layout() — see comment
+        // on the col_w declaration.
         MoveWindow(add_button_.hwnd(), x1, y, small_w, row, TRUE);
         MoveWindow(remove_button_.hwnd(), x1 + small_w + gap, y, small_w, row, TRUE);
         MoveWindow(clear_button_.hwnd(), x1 + 2 * (small_w + gap), y, small_w, row, TRUE);
@@ -640,12 +655,12 @@ private:
         MoveWindow(log_list_.hwnd(), x1, log_top, col_w, std::max(px(80), col_bottom - log_top), TRUE);
 
         // ---- Column 2: keyboard nav + state ----
-        int x2 = x1 + col_w + px(32);
+        // CP36: tightened inter-column gap 32 → 20 logical px so the three
+        // columns share the 940-wide compact canvas comfortably.
+        int x2 = x1 + col_w + px(20);
         y = body_top;
         MoveWindow(nav_hint_.hwnd(), x2, y, col_w, px(36), TRUE);
         y += px(40);
-        const int tile_w = px(64);
-        const int tile_h = px(52);
         for (int i = 0; i < kNavTileCount; ++i) {
             MoveWindow(tiles_[static_cast<size_t>(i)].hwnd, x2 + i * (tile_w + gap), y, tile_w, tile_h, TRUE);
         }
@@ -671,8 +686,9 @@ private:
         // CP32: the gallery column absorbs all remaining width so the
         // TreeView/LVTabs inside it never clip sub-item text. Previous
         // std::max floor of 300 logical px was too tight once TV indent
-        // + scrollbar were subtracted.
-        int x3 = x2 + col_w + px(24);
+        // + scrollbar were subtracted. CP36: tightens inter-column gap
+        // 24 → 16 logical px to free more room for the gallery list.
+        int x3 = x2 + col_w + px(16);
         // CP35: clamp gcol_w to the available client width. CP34 raised the
         // floor from 360 → 440 logical px so the TreeView never clips its
         // longest label, but std::max(440, available) over-rode the actual

@@ -161,8 +161,12 @@ public:
             0,
             CW_USEDEFAULT,
             CW_USEDEFAULT,
-            1100,
-            1500,
+            // CP36: shrink default window from 1100×1500 → 940×700.
+            // Charts gallery scrolls vertically so the tall content stack
+            // (header + 5 chart cards + footer) stays accessible inside
+            // the compact viewport.
+            940,
+            700,
         };
 
         if (!create(params)) {
