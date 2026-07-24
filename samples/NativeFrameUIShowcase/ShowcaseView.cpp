@@ -59,10 +59,15 @@ constexpr std::array<std::wstring_view, 4> navigation_labels{
 
 // CP32: KPI card content. Label is uppercase copy that goes above the big
 // value; the badge below sits in a coloured pill.
-constexpr std::array<std::wstring_view, 3> card_titles{
+// CP37: shortened "RESOURCE FLOW" → "RESOURCES" so the 13-char label fits
+// inside the narrow 149-px KPI card without ellipsising to "RESOURCE FLO…".
+// CP37: shortened "RESOURCE FLOW" → "RESOURCES" → "ASSETS" so the
+    // 6-character label fits cleanly in the 116-px KPI card text area
+    // without being clipped by the inspector rail fill on the right.
+    constexpr std::array<std::wstring_view, 3> card_titles{
     L"ADOPTION",
     L"BUILD HEALTH",
-    L"RESOURCE FLOW",
+    L"ASSETS",
 };
 
 constexpr std::array<std::wstring_view, 3> card_values{
@@ -85,8 +90,13 @@ constexpr std::array<std::wstring_view, 3> inspector_tags{
     L"dpi-aware",
 };
 
+// CP37: shorten inspector labels so they fit in the 216-px row width
+    // alongside the right-edge tag pill. "Framework boundary" (19 chars)
+// wouldn't fit even at base font — kept ellipsising to "Framework b…"
+// — so renamed to "API surface" (11 chars). Body copy stays the same;
+// only the heading label changes.
 constexpr std::array<std::wstring_view, 3> inspector_labels{
-    L"Framework boundary",
+    L"API surface",
     L"DPI path",
     L"Resource story",
 };
@@ -278,20 +288,28 @@ void draw_nav_glyph(HDC hdc, std::size_t index, const RECT& cell, nfui::Color co
 
 [[nodiscard]] ShowcaseLayout build_layout(const RECT& client_rect, const nfui::DpiScale& dpi) noexcept {
     ShowcaseLayout layout{};
-    // CP36: trim sidebar/inspector widths so all three columns fit comfortably
-    // inside the unified 940-px compact window. The previous 336 + 320 pair
-    // left the inspector card pinned against the right edge — sidebar drops
-    // 336 → 280 and inspector drops 320 → 260 to free ~116 px for the
-    // workspace and breathe the right border.
-    const int outer = dpi.logical_to_pixels(16);
+    // CP37: rebalance the three columns so the inspector has enough room
+    // for its body paragraphs but stays inside the 940-px window. Previous
+    // 240 + 320 + std::max(workspace, 480) forced inspector.right past
+    // client_width when 240+320+24+24+gaps consumed 608 px of the 940
+    // budget — inspector.right ended up at 1076 px, overflowing the window
+    // by 136 px and clipping the brand title ("NativeFrame…") and the
+    // Inspector header / row labels. Drop the std::max floor on workspace
+    // so the inspector naturally lands inside client_width.
+    const int outer = dpi.logical_to_pixels(12);
     const int gap = dpi.logical_to_pixels(12);
-    const int sidebar_width = dpi.logical_to_pixels(280);
-    const int inspector_width = dpi.logical_to_pixels(260);
+    const int sidebar_width = dpi.logical_to_pixels(220);
+    const int inspector_width = dpi.logical_to_pixels(240);
     const int command_height = dpi.logical_to_pixels(116);
     const int nav_height = dpi.logical_to_pixels(40);
     const int nav_gap = dpi.logical_to_pixels(4);
     const int card_height = dpi.logical_to_pixels(180);
-    const int inspector_row_height = dpi.logical_to_pixels(140);
+    // CP37: inspector_row_height 140 → 160 so the body paragraph's last
+    // line ("WM_DPICHANGED." / "nfui_add_resources.") fits without being
+    // clipped by the row's bottom padding. Previous height left only ~76
+    // px for body text after the label band; the third inspector row's
+    // 4-line wrap got cut off after "framework resources through".
+    const int inspector_row_height = dpi.logical_to_pixels(160);
     const int note_height = dpi.logical_to_pixels(140);
 
     const int client_width = rect_width(client_rect);
@@ -305,7 +323,11 @@ void draw_nav_glyph(HDC hdc, std::size_t index, const RECT& cell, nfui::Color co
                                std::max(client_height - outer * 2, 0));
 
     const int workspace_left = layout.sidebar.right + gap;
-    const int workspace_width = std::max(client_width - sidebar_width - inspector_width - outer * 2 - gap * 2, dpi.logical_to_pixels(480));
+    // CP37: no std::max floor — the previous clamp to 480 px pushed
+    // inspector.right past the visible window in the 940-px compact
+    // viewport. Letting workspace absorb whatever fits keeps all three
+    // columns inside client_rect.
+    const int workspace_width = std::max(client_width - sidebar_width - inspector_width - outer * 2 - gap * 2, 0);
     layout.command_bar = make_rect(workspace_left, content_top, workspace_width, command_height);
     layout.workspace = make_rect(workspace_left,
                                  layout.command_bar.bottom + gap,
@@ -567,10 +589,13 @@ void ShowcaseView::paint(HDC hdc, nfui::FontCache& fonts) const noexcept {
     nfui::fill_rounded_rect(hdc, layout.inspector, radius, palette.surface_alt, palette.surface_alt);
 
     // Brand block at top of the sidebar.
+    // CP37: brand title font xl → lg so "NativeFrame UI" fits inside the
+    // 240-px sidebar without ellipsising the "UI". xl (22 pt) clipped to
+    // "NativeFrame…" in the compact 940-wide viewport.
     nfui::draw_text(hdc,
                     layout.brand_title,
                     L"NativeFrame UI",
-                    fetch_font(fonts, dpi(), FontWeight::bold, nfui::font_pt::xl),
+                    fetch_font(fonts, dpi(), FontWeight::bold, nfui::font_pt::lg),
                     palette.text,
                     DT_LEFT | DT_TOP | DT_SINGLELINE | DT_END_ELLIPSIS | DT_NOPREFIX);
     nfui::draw_text(hdc,
@@ -710,8 +735,12 @@ void ShowcaseView::paint(HDC hdc, nfui::FontCache& fonts) const noexcept {
                                 card_elevation, palette.shadow);
         nfui::fill_rounded_rect(hdc, layout.cards[index], radius, fill, border);
 
-        // Top: small uppercase label.
-        const int label_pad = dpi_scale_.logical_to_pixels(16);
+        // CP37: label_pad 16 → 12 so "RESOURCE FLOW" (13 chars at sm semibold)
+// fits in the narrow KPI card without ellipsising in the 940-wide
+// viewport. With sidebar=200, inspector=220, card width ≈ 148 px and
+// 16+16 padding left only 116 px for text — barely below the natural
+// width of the longest label.
+        const int label_pad = dpi_scale_.logical_to_pixels(12);
         RECT card_label = make_rect(layout.cards[index].left + label_pad,
                                     layout.cards[index].top + label_pad,
                                     rect_width(layout.cards[index]) - label_pad * 2,
@@ -871,9 +900,13 @@ void ShowcaseView::paint(HDC hdc, nfui::FontCache& fonts) const noexcept {
         }
 
         const int row_pad = dpi_scale_.logical_to_pixels(16);
+        // CP37: pill reservation 60 → 76 so "Framework boundary" (19 chars
+        // at base font) fits without ellipsising to "Framework bou…" when
+        // the row width is only 216 px after sidebar padding. The pill on
+        // the right needs ~70 px (text + 24-px logical padding).
         RECT label_rect = make_rect(layout.inspector_rows[index].left + row_pad,
                                     layout.inspector_rows[index].top + row_pad,
-                                    rect_width(layout.inspector_rows[index]) - row_pad * 2 - dpi_scale_.logical_to_pixels(60),
+                                    rect_width(layout.inspector_rows[index]) - row_pad * 2 - dpi_scale_.logical_to_pixels(76),
                                     dpi_scale_.logical_to_pixels(24));
         nfui::draw_text(hdc,
                         label_rect,

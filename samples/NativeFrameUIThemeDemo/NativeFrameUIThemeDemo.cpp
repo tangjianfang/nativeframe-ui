@@ -52,33 +52,37 @@ constexpr int id_tabs           = 220;
 constexpr int id_panel          = 221;
 constexpr int id_splitter       = 222;
 
-// Layout rhythm: logical pixels, scaled to device pixels via DpiScale.
-constexpr int kOuterMargin         = 16;
-constexpr int kGap                 = 12;
-constexpr int kToolbarHeight       = 48;   // dedicated top row for title + toggles
-constexpr int kSectionHeaderHeight = 20;
-constexpr int kRowHeight           = 44;   // default row height for single-line controls
-constexpr int kLabelWidth          = 160;  // fixed label column width
-constexpr int kGroupGap            = 16;   // vertical space between sections
+// CP37: tighter layout rhythm for the 940×700 compact window. The previous
+// 16 / 12 / 48 / 20 / 44 / 16 cadence summed to 812 logical px of chrome +
+// 736 of row content = 1548, far over the 700-tall viewport. New values
+// shave ~250 logical px so every section fits inside the window.
+constexpr int kOuterMargin         = 10;
+constexpr int kGap                 = 8;
+constexpr int kToolbarHeight       = 36;   // dedicated top row for title + toggles
+constexpr int kSectionHeaderHeight = 16;
+constexpr int kRowHeight           = 24;   // default row height for single-line controls
+constexpr int kLabelWidth          = 140;  // fixed label column width
+constexpr int kGroupGap            = 10;   // vertical space between sections
 
 // CP32: per-row heights so the ListView / TreeView / Tabs / Panel rows have
 // room for their multi-row content instead of clipping to the single-line
-// 44 logical px default. The array is indexed by the row position used in
-// place_row() / row_y() below; values are logical pixels.
+// 44 logical px default. CP37: trim each row ~36% so the 13-row stack fits
+// inside the 700-tall compact window without the TreeView / Topbar section
+// peeking past the bottom edge.
 constexpr int kRowHeights[] = {
-    44,  // Button
-    44,  // CheckBox
-    44,  // RadioButton
-    44,  // Edit
-    44,  // StaticText
-    120, // ListBox (5 rows × 24)
-    44,  // ComboBox
-    120, // ListView (header + 3 rows × 24)
-    120, // TreeView (root + 3 children × 24)
-    44,  // IconView
-    44,  // ProgressBar
-    84,  // TabControl (3 tabs visible band)
-    72,  // Panel + Splitter
+    24,  // Button
+    24,  // CheckBox
+    24,  // RadioButton
+    24,  // Edit
+    24,  // StaticText
+    64,  // ListBox (5 rows × 13)
+    24,  // ComboBox
+    64,  // ListView (header + 3 rows × 13)
+    64,  // TreeView (root + 3 children × 13)
+    24,  // IconView
+    24,  // ProgressBar
+    48,  // TabControl (3 tabs visible band)
+    40,  // Panel + Splitter
 };
 
 // Section group captions.

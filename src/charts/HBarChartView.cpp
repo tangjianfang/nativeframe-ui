@@ -245,6 +245,15 @@ void HBarChartView::on_paint(HDC hdc, const RECT& bounds) {
         }
     }
 
+    // CP37: stacked HBar segments are too narrow to host their value
+    // labels cleanly in the compact 940×700 viewport (5 categories × 3
+    // series in a ~280-px plot means each segment is 25-100 px wide
+    // depending on the row). Per-segment labels collided ("60"/"62"/"65"
+    // /"80"/"85"/"92" all jumbled together). Suppress per-segment labels
+    // in stacked mode and instead emit one row-total label at the right
+    // edge of each row after the loop below.
+    const bool suppress_segment_labels = stacked_;
+
     // Vertical grid lines align with the horizontal value axis so bar lengths
     // read against light guides. Drawn before the frame so the frame edge stays
     // dominant at the plot boundary.
@@ -287,11 +296,13 @@ void HBarChartView::on_paint(HDC hdc, const RECT& bounds) {
                     RECT bar{bar_left, row_top, bar_right, row_bottom};
                     fill_rounded_rect(hdc, bar, theme_metrics().corner_radius_control,
                                       series.color, series.color);
-                    value_labels.push_back(ValueLabel{
-                        bar,
-                        format_axis_tick(v, axis_y_.label_format),
-                        series.color,
-                    });
+                    if (!suppress_segment_labels) {
+                        value_labels.push_back(ValueLabel{
+                            bar,
+                            format_axis_tick(v, axis_y_.label_format),
+                            series.color,
+                        });
+                    }
                 }
                 cursor = v_end;
                 if (cursor >= eff_max) break;  // row saturated; drop later segments
@@ -337,6 +348,61 @@ void HBarChartView::on_paint(HDC hdc, const RECT& bounds) {
     // narrow segment's outside label.
     for (const ValueLabel& value_label : value_labels) {
         draw_value_label_at_end(hdc, value_label, value_font, pal, dpi_scale);
+    }
+
+    // CP37: stacked-mode row totals — one label per row at the right edge
+    // of the last segment, using the topmost series colour so it reads as
+    // "this is the cumulative value of the stacked row." Replaces the
+    // per-segment labels suppressed above; the row totals give readers
+    // a single number per category without crowding.
+    if (stacked_) {
+        for (std::size_t i = 0; i < bar_count; ++i) {
+            if (row_sums[i] <= 0.0) continue;
+            const int row_top = layout.plot_bounds.top +
+                                static_cast<int>(i) * row_h + row_gap / 2;
+            const int row_bottom = row_top + row_h - row_gap;
+            // Find the rightmost painted segment in this row so the label
+            // sits flush against the bar's right edge (not inside an empty
+            // area beyond plot_bounds.right).
+            int bar_right = layout.plot_bounds.left;
+            nfui::Color top_color = pal.text;
+            for (std::size_t s = 0; s < series_count; ++s) {
+                const ChartSeries& series = series_[s];
+                if (i >= series.points.size()) continue;
+                const double v = std::max(0.0, series.points[i].y);
+                if (v <= 0.0) continue;
+                double cursor = 0.0;
+                for (std::size_t s2 = 0; s2 < s; ++s2) {
+                    if (i < series_[s2].points.size()) {
+                        cursor += std::max(0.0, series_[s2].points[i].y);
+                    }
+                }
+                double eff_min = axis_y_.min;
+                double eff_max = std::max(max_row_sum, axis_y_.max);
+                if (!(eff_max > eff_min)) eff_max = eff_min + 1.0;
+                const double y_range = eff_max - eff_min;
+                const int seg_right = layout.plot_bounds.left +
+                    static_cast<int>(((cursor + v - eff_min) / y_range) *
+                                      static_cast<double>(plot_w) + 0.5);
+                if (seg_right > bar_right) {
+                    bar_right = seg_right;
+                    top_color = series.color;
+                }
+            }
+            if (bar_right <= layout.plot_bounds.left) continue;
+            const int label_h = dpi_scale.logical_to_pixels(16);
+            const int gap_px = dpi_scale.logical_to_pixels(kValueLabelGapLogical);
+            const std::wstring total_text =
+                format_axis_tick(row_sums[i], axis_y_.label_format);
+            RECT label{
+                bar_right + gap_px,
+                row_top + (row_bottom - row_top) / 2 - label_h / 2,
+                bar_right + gap_px + dpi_scale.logical_to_pixels(60),
+                row_top + (row_bottom - row_top) / 2 + label_h / 2,
+            };
+            draw_text(hdc, label, total_text, value_font, top_color,
+                      DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX);
+        }
     }
 
     HFONT tick_font = (fonts_ != nullptr) ? fonts_->mono(dpi, font_pt::chart_tick) : nullptr;

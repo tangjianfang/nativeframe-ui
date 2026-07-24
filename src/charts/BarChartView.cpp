@@ -65,7 +65,13 @@ void draw_value_label_above(HDC hdc,
 
     int label_top = bar.top - gap - label_h;
     if (label_top < bounds.top) {
-        label_top = bounds.top;
+        // CP37: drawing labels above the bar stacked them on the same
+        // baseline when bars are short and dense (12 monthly bars in a
+        // 140-px plot), making adjacent values (42/48/51/47) collide into
+        // a single illegible row. Drop the label instead — the axis ticks
+        // already encode the value, and a missing number is far less noisy
+        // than twelve colliding ones.
+        return;
     }
     RECT label{
         center_x - label_w / 2,
@@ -213,6 +219,21 @@ void BarChartView::on_paint(HDC hdc, const RECT& bounds) {
         ? fonts_->semibold(dpi, font_pt::sm)
         : nullptr;
 
+    // CP37: subsample value labels for dense bar charts. In the compact
+    // 940×700 viewport each chart HWND is ~140 px tall and ~340 px wide,
+    // so 12 monthly bars leave only ~28 px per band — the value-label
+    // (16 px tall + 4 px gap = 20 px above each bar) collides with its
+    // neighbours because adjacent bar tops differ by only a few px.
+    // Show labels for at most every Nth bar (plus the tallest bar) so
+    // the remaining labels are spaced ≥ label_w apart and never overlap.
+    const std::size_t label_step = std::max<std::size_t>(
+        1, (bar_count + 5) / 6);  // 12 → 2, 6 → 2, 4 → 1
+    std::vector<std::size_t> labelled_indices;
+    labelled_indices.reserve(bar_count);
+    for (std::size_t i = 0; i < bar_count; i += label_step) {
+        labelled_indices.push_back(i);
+    }
+
     // In stacked mode the per-column sum governs the column's visual extent, so
     // we pre-compute column sums + the global max once and reuse them for the
     // y-axis range (passed to the tick renderer) and for the per-segment heights.
@@ -326,8 +347,14 @@ void BarChartView::on_paint(HDC hdc, const RECT& bounds) {
                                   series.color, series.color);
                 const std::wstring text =
                     format_axis_tick(p.y, axis_y_.label_format);
-                draw_value_label_above(hdc, bounds, bar, text,
-                                       value_font, series.color, dpi_scale);
+                // CP37: only label the sparse subset selected above.
+                const bool should_label = std::find(labelled_indices.begin(),
+                                                    labelled_indices.end(),
+                                                    i) != labelled_indices.end();
+                if (should_label) {
+                    draw_value_label_above(hdc, bounds, bar, text,
+                                           value_font, series.color, dpi_scale);
+                }
             }
         }
     }

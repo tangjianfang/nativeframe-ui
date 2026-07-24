@@ -617,7 +617,11 @@ private:
         // three TabControl tabs render fully.
         const int col_w = px(300);
         const int small_w = px(92);
-        const int tile_w = px(56);
+        // CP37: tile_w 56 → 48 so the 5-tile strip (5 × 48 + 4 × 8 = 272)
+        // fits inside col_w 300. The previous 5 × 56 + 4 × 8 = 312 overflowed
+        // col_w by 12 px, making the "Disabled" tile clip against the
+        // gallery column's left edge.
+        const int tile_w = px(48);
         const int tile_h = px(52);
 
         // Top bar: theme toggles on the right.
@@ -792,9 +796,12 @@ private:
             {L"Focused",  p.surface,       p.accent, p.text,           true},
             {L"Disabled", p.surface,       p.border, p.text_secondary, false},
         };
-        const int sw = px(60);
+        // CP37: sw 60 → 48 so the 5-state strip (5 × 48 + 4 × 8 = 272) fits inside
+        // col_w 300. The previous 5 × 60 + 4 × 10 = 340 overflowed by 40 px,
+        // visibly clipping the "Disabled" swatch against the gallery column.
+        const int sw = px(48);
         const int sh = px(44);
-        const int gap = px(10);
+        const int gap = px(8);
         int x = state_strip_left_;
         const int radius = nfui::theme_metrics().corner_radius_control;
         for (const Swatch& s : swatches) {
@@ -812,9 +819,14 @@ private:
             x += sw + gap;
         }
         RECT caption{state_strip_left_, state_strip_top_ + sh + px(4),
-                     state_strip_left_ + (sw + gap) * 5, state_strip_top_ + sh + px(24)};
-        nfui::draw_text(dc, caption, L"State reference — repainted from the live palette",
-                        font, palette_.text_secondary, DT_LEFT | DT_TOP | DT_SINGLELINE | DT_NOPREFIX);
+                     state_strip_left_ + px(280), state_strip_top_ + sh + px(24)};
+        // CP37: shorten caption to "Live palette repaint" so it fits inside
+        // the 280-px rect without ellipsising. Previous "State reference —
+        // repainted from the live palette/theme" (47-50 chars) wrapped or
+        // got truncated at "li…" in the 940-wide viewport.
+        nfui::draw_text(dc, caption, L"Live palette repaint",
+                        font, palette_.text_secondary,
+                        DT_LEFT | DT_TOP | DT_SINGLELINE | DT_END_ELLIPSIS | DT_NOPREFIX);
     }
 
     // ---- NavTile window proc ----------------------------------------------
