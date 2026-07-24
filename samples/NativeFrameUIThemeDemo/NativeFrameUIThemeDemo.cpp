@@ -426,7 +426,11 @@ private:
         ListBox_AddString(g_demo.listbox->hwnd(), L"Charlie");
         ListBox_AddString(g_demo.listbox->hwnd(), L"Delta");
         ListBox_AddString(g_demo.listbox->hwnd(), L"Echo");
-        SendMessageW(g_demo.listbox->hwnd(), LB_SETCURSEL, 1, 0);
+        // CP35: drop the LB_SETCURSEL 1 default that pre-highlighted
+        // "Bravo" — the orange fill on a non-focused row read as a
+        // stuck/ghost selection rather than a usable demo of the
+        // selection palette. The list now shows its rows in a neutral
+        // state until the user actually clicks one.
 
         // ComboBox.
         g_demo.combobox = std::make_unique<nfui::ComboBox>();
@@ -706,9 +710,16 @@ private:
                    toolbar_top,
                    light_x - gap_v,
                    toolbar_top + toolbar_h};
+        // CP35: shorten the painted headline from "NativeFrame UI
+        // ThemeDemo" to "Theme Demo" so it matches the "Component
+        // Gallery" / "Resource Gallery" / "Settings" surface vocabulary
+        // and stops crowding the Light/Dark/HC toggle trio on the 980
+        // default width. The window title bar still carries the full
+        // "NativeFrame UI — Theme Demo" so the framework context is
+        // preserved.
         nfui::draw_text(target,
                         title,
-                        L"NativeFrame UI ThemeDemo",
+                        L"Theme Demo",
                         title_font,
                         palette_.text,
                         DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX);

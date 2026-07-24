@@ -1032,36 +1032,21 @@ private:
             RECT fill{bar.left, bar.top, bar.left + fill_w, bar.bottom};
             nfui::fill_rounded_rect(target, fill, bar_radius, palette_.accent, palette_.accent);
         }
-        // Overlay label: semibold text centered over the bar. Two-tone clip
-        // — the text on the filled portion uses palette.accent_text (high
-        // contrast on coral), the text on the empty portion uses
-        // palette.text_secondary (muted on the surface_hover track). CP32:
-        // center within each half so neither half clips the "…" against the
-        // fill boundary; previously DT_CENTER on the full bar put the "…"
-        // right at the boundary and a one-pixel jitter would chop the
-        // character.
+        // Overlay label: semibold text centered over the bar. CP35: drop the
+        // two-tone clip — splitting "Building…" into a filled-half and
+        // empty-half draw stacked two complete labels side-by-side at
+        // 60 % fill and read as redundant "Building… / Building…" noise.
+        // Single draw, centered in the full bar, text_secondary reads
+        // against both the coral fill and the surface_hover track. CP32
+        // had moved to two halves to avoid the "…" clipping against the
+        // fill boundary; with one centered label the boundary never
+        // touches the text because the ellipsis sits at the visual
+        // middle of the bar.
         const std::wstring overlay = L"Building\x2026";
         HFONT bar_font = fonts_.semibold(dpi_.dpi(), nfui::font_pt::sm);
-        if (fill_w > 0) {
-            RECT filled_clip{bar.left, bar.top, bar.left + fill_w, bar.bottom};
-            const int saved = SaveDC(target);
-            IntersectClipRect(target, filled_clip.left, filled_clip.top,
-                              filled_clip.right, filled_clip.bottom);
-            nfui::draw_text(target, filled_clip, overlay, bar_font,
-                            palette_.accent_text,
-                            DT_CENTER | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX);
-            RestoreDC(target, saved);
-        }
-        if (fill_w < bar.right - bar.left) {
-            RECT remaining{bar.left + fill_w, bar.top, bar.right, bar.bottom};
-            const int saved = SaveDC(target);
-            IntersectClipRect(target, remaining.left, remaining.top,
-                              remaining.right, remaining.bottom);
-            nfui::draw_text(target, remaining, overlay, bar_font,
-                            palette_.text_secondary,
-                            DT_CENTER | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX);
-            RestoreDC(target, saved);
-        }
+        nfui::draw_text(target, bar, overlay, bar_font,
+                        palette_.accent_text,
+                        DT_CENTER | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX);
 
         // Inspector overlay (magnifier glyph + caption) is drawn by
         // inspector_subclass_proc inside the panel's WM_PAINT cycle so the

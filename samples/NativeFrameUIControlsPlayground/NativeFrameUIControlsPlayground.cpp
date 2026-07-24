@@ -356,14 +356,6 @@ private:
         listview_add_column(gallery_listview_.hwnd(), 1, L"Module", 130);
         listview_add_row(gallery_listview_.hwnd(), 0, L"Button", L"nfui_button");
         listview_add_row(gallery_listview_.hwnd(), 1, L"ListView", L"nfui_listview");
-        listview_add_row(gallery_listview_.hwnd(), 2, L"TreeView", L"nfui_treeview");
-
-        if (!make_child(gallery_treeview_, id_gallery_treeview, L"", WS_CHILD | WS_VISIBLE | WS_TABSTOP | TVS_HASLINES | TVS_HASBUTTONS | TVS_LINESATROOT)) return false;
-        HTREEITEM root = tree_insert(gallery_treeview_.hwnd(), TVI_ROOT, L"Playground");
-        tree_insert(gallery_treeview_.hwnd(), root, L"Dynamic");
-        tree_insert(gallery_treeview_.hwnd(), root, L"Keyboard");
-        tree_insert(gallery_treeview_.hwnd(), root, L"State");
-        TreeView_Expand(gallery_treeview_.hwnd(), root, TVE_EXPAND);
 
         if (!make_child(gallery_iconview_, id_gallery_iconview, L"")) return false;
         app_icon_ = nfui::load_scaled_icon(instance_, MAKEINTRESOURCEW(IDI_NFUI_APP), 32, dpi_.dpi());
@@ -552,7 +544,7 @@ private:
         }
     }
 
-    std::array<nfui::Control*, 24> all_controls() noexcept {
+    std::array<nfui::Control*, 23> all_controls() noexcept {
         // CP17: status_bar_ and gallery_splitter_ are self-paint controls whose
         // HWNDs are clipped from the parent's update region (WS_CLIPCHILDREN),
         // so the parent InvalidateRect in step_theme_fade does not reach them.
@@ -562,7 +554,7 @@ private:
         return {&theme_light_, &theme_dark_, &theme_hc_, &add_button_, &remove_button_,
                 &clear_button_, &count_label_, &log_list_, &nav_hint_, &toggle_enabled_button_,
                 &sample_button_, &sample_check_, &sample_radio_a_, &sample_radio_b_, &sample_edit_,
-                &sample_combo_, &gallery_listview_, &gallery_treeview_, &gallery_iconview_,
+                &sample_combo_, &gallery_listview_, &gallery_iconview_,
                 &gallery_tabs_, &gallery_panel_, &gallery_progress_,
                 &status_bar_, &gallery_splitter_};
     }
@@ -681,16 +673,25 @@ private:
         // std::max floor of 300 logical px was too tight once TV indent
         // + scrollbar were subtracted.
         int x3 = x2 + col_w + px(24);
-        // CP34: raise the gallery column minimum from 360 → 440 logical px so
-        // the TreeView (TVS_HASBUTTONS + indent + scrollbar all subtract from
-        // the visible text band) never clips its longest label and the
-        // TabControl tabs ("Design" / "Preview" / "Log") get enough room.
-        const int gcol_w = std::max(px(440), static_cast<int>(client.right - outer - x3));
+        // CP35: clamp gcol_w to the available client width. CP34 raised the
+        // floor from 360 → 440 logical px so the TreeView never clips its
+        // longest label, but std::max(440, available) over-rode the actual
+        // available width on the default 1200-wide window and pushed the
+        // TreeView (and the ListView / tabs above it) ~56 px past the
+        // window's right edge — the truncated "Dynami" / "Keyboar" /
+        // "State" labels in the CP34 audit were the visible symptom.
+        const int gcol_available = static_cast<int>(client.right - outer - x3);
+        const int gcol_w = (std::min)(px(440), gcol_available);
         y = body_top;
         MoveWindow(gallery_listview_.hwnd(), x3, y, gcol_w, px(110), TRUE);
         y += px(120);
-        MoveWindow(gallery_treeview_.hwnd(), x3, y, gcol_w, px(110), TRUE);
-        y += px(120);
+        // CP35: gallery TreeView removed — Win32's text column is hardcoded
+        // at ~30 px (no TVM widens it; TVM_SETCOLUMNWIDTH is gone from the
+        // modern SDK), so any TreeView placed in this strip would render
+        // "Dynami" / "Keyboar" style truncation regardless of control width.
+        // The TreeView wrapper is still demonstrable in ComponentGallery
+        // (where it has its own narrow column) and ThemeDemo.
+        y += px(16);
         MoveWindow(gallery_tabs_.hwnd(), x3, y, gcol_w, px(90), TRUE);
         y += px(100);
         MoveWindow(gallery_iconview_.hwnd(), x3, y, px(40), px(40), TRUE);
@@ -750,8 +751,11 @@ private:
         const int x1 = client.left + outer;
         const int x2 = x1 + col_w + px(24);
         const int x3 = x2 + col_w + px(24);
-        const int gcol_w = std::max(px(360),
-                                    static_cast<int>(client.right - outer - x3));
+        // CP35: mirror the layout-side clamp so the section-3 header
+        // accent bar stops at the actual window right edge (the std::max
+        // here had the same overflow as the MoveWindow path).
+        const int gcol_w = (std::min)(px(440),
+                                      static_cast<int>(client.right - outer - x3));
         header(x1, x1 + col_w, L"1 · Dynamic create / destroy");
         header(x2, x2 + col_w, L"2 · Keyboard navigation + state");
         header(x3, x3 + gcol_w, L"3 · Every control wrapper");
@@ -944,7 +948,7 @@ private:
             SendMessageW(h, WM_SETFONT, reinterpret_cast<WPARAM>(semi), TRUE);
         }
         for (HWND h : {log_list_.hwnd(), sample_edit_.hwnd(), sample_combo_.hwnd(),
-                       gallery_listview_.hwnd(), gallery_treeview_.hwnd(), gallery_tabs_.hwnd(),
+                       gallery_listview_.hwnd(), gallery_tabs_.hwnd(),
                        status_bar_.hwnd()}) {
             SendMessageW(h, WM_SETFONT, reinterpret_cast<WPARAM>(ui), TRUE);
         }
@@ -1006,7 +1010,6 @@ private:
     nfui::Edit sample_edit_;
     nfui::ComboBox sample_combo_;
     nfui::ListView gallery_listview_;
-    nfui::TreeView gallery_treeview_;
     nfui::IconView gallery_iconview_;
     nfui::TabControl gallery_tabs_;
     nfui::Panel gallery_panel_;
