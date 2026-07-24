@@ -1,8 +1,8 @@
 # NativeFrameUICharts
 
 The chart-renderer showcase. Drives every chart kind shipped in V1.0
-(`Bar / HBar / Line / Spline`) through a 2 × 2 grid against the shared
-palette + font cache. The four views share a single registered
+(`Bar / HBar / Line / Spline / Area`) through a 3 × 2 grid against the
+shared palette + font cache. The five views share a single registered
 `NativeFrameUIChartView` window class — the first `create()` registers
 it, the rest reuse it.
 
@@ -12,20 +12,22 @@ it, the rest reuse it.
   SettingsDemo + Showcase family) so the sample reads as a sibling of
   the rest of the product-growth demos.
 - **Caption strip** below the header — short caps labels
-  (`Vertical bar — monthly revenue`, `Horizontal bar — platform mix`)
-  so the four charts identify themselves even before the user hovers
+  (`Bar — monthly revenue`, `HBar — platform mix`, etc.)
+  so the five charts identify themselves even before the user hovers
   them.
-- **2 × 2 chart grid** (top-left → bottom-right):
+- **3 × 2 chart grid** (top-left → bottom-right):
   - **`nfui::BarChartView`** — single monthly revenue series, twelve
-    bars (Jan→Dec), `axis_y = 0..100`.
+    bars (Jan→Dec), `axis_y = 0..100`, first CP31 categorical hue.
   - **`nfui::HBarChartView`** — three series (`FY 2022 / FY 2023 /
     FY 2024`) across five categories (`Desktop / Mobile / Tablet /
-    Console / Smart TV`). Coloured `accent / success / warning`.
+    Console / Smart TV`), sorted descending by FY 2024 so the longest
+    bar is on top. Coloured with three distinct CP31 categorical hues.
   - **`nfui::LineChartView`** — revenue vs. costs, twelve monthly
-    samples, markers on (`point_radius = 3`).
+    samples, markers on (`point_radius = 3`), two CP31 categorical hues.
   - **`nfui::SplineChartView`** — 30-point sine wave, `tension = 0.5`,
-    no markers (intentional — the smooth Catmull-Rom curve stays
-    uncluttered).
+    markers on (CP30).
+  - **`nfui::AreaChartView`** — monthly revenue as a translucent
+    gradient-filled area with a crisp top outline, CP31 categorical hue.
 
 Data sets are baked as `constexpr` `std::array<double, N>` literals so
 the sample is reproducible bit-for-bit across runs.
@@ -33,12 +35,15 @@ the sample is reproducible bit-for-bit across runs.
 ## Key controls
 
 - `nfui::BarChartView`, `nfui::HBarChartView`, `nfui::LineChartView`,
-  `nfui::SplineChartView` — all subclasses of `nfui::ChartView`.
+  `nfui::SplineChartView`, `nfui::AreaChartView` — all subclasses of
+  `nfui::ChartView`.
 - `nfui::Window` — host window with `WM_SIZE` / `WM_DPICHANGED` /
   `WM_PAINT` handlers.
 - `nfui::FontCache` — single shared cache injected into all four
   chart views before `create()`.
-- `nfui::ThemePalette` — light cream + coral accent palette.
+- `nfui::ThemePalette` — light cream + coral accent chrome.
+- `nfui::chart_series_color` — CP31 8-hue categorical palette applied
+  per-series so charts do not collapse into a single brand colour.
 - `nfui::DpiScale` — every layout measurement is logical; the grid
   reflows on DPI changes via `set_font_cache` re-binding.
 - `nfui::MemoryDC` — flicker-free offscreen buffer for the header +
@@ -73,7 +78,7 @@ Same recipe works for `x64-release`.
   storage `constexpr` literals. Adding or renaming a series requires
   updating the literal AND keeping the storage alive for the chart
   view's lifetime.
-- The four chart views are uniformly sized; very tall data ranges
+- The five chart views are uniformly sized; very tall data ranges
   may compress axis labels.
 - Chart axes use the documented `ChartAxisRange` `format` field with
   `{:.0f}` — values are rendered without decimal precision, which

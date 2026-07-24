@@ -43,9 +43,12 @@ void draw_polyline_aa(HDC hdc,
 
     // CP28: Gdiplus::Graphics::DrawLines can bind to the visual-audit
     // PrintWindow memory DC and report Status::Ok yet silently produce
-    // no pixels (same failure mode as DrawBeziers). Mirror the bezier
-    // helper: try GDI+ first for a smooth AA stroke, then always
-    // overdraw with the GDI polyline so the line is visible on every DC.
+    // no pixels (same failure mode as DrawBeziers). We always overdraw
+    // with the GDI polyline so the line is visible on every DC, including
+    // the 32bpp memory DCs the visual-audit PrintWindow path produces.
+    // CP28+: revisit once GDI+ is confirmed to render reliably on PrintWindow
+    // memory DCs; then skip the GDI overdraw when GDI+ reports Status::Ok so
+    // windowed renders stay smooth without doubling the stroke.
     if (GdiplusContext::active()) {
         std::unique_ptr<Gdiplus::Graphics> graphics(
             new Gdiplus::Graphics(hdc));
@@ -82,12 +85,13 @@ void draw_beziers_aa(HDC hdc,
 
     // CP28: Gdiplus::Graphics::DrawBeziers binds to the visual-audit
     // PrintWindow memory DC and reports Status::Ok, yet silently produces
-    // no pixels — the empty-spline defect CP27 caught. PolyBezier works
-    // reliably on every DC we've seen (window DC, screen DC, 32bpp memory
-    // DC), so the GDI path is the default. GDI+ is still attempted first
-    // for native HWND owners that want a smooth AA stroke, but its
-    // result is overdrawn with the GDI path so PrintWindow captures and
-    // windowed renders converge on the same visible stroke.
+    // no pixels — the empty-spline defect CP27 caught. GDI+ is still
+    // attempted first for native HWND owners that want a smooth AA stroke,
+    // but its result is always overdrawn with the GDI path so PrintWindow
+    // captures and windowed renders converge on the same visible stroke.
+    // CP28+: revisit once GDI+ is confirmed to paint reliably on PrintWindow
+    // memory DCs; then skip the GDI overdraw when GDI+ reports Status::Ok so
+    // windowed spline renders stay smooth without doubling the stroke.
     if (GdiplusContext::active()) {
         std::unique_ptr<Gdiplus::Graphics> graphics(
             new Gdiplus::Graphics(hdc));
@@ -133,6 +137,9 @@ void fill_circles_aa(HDC hdc,
     // / DrawLines). Try GDI+ first for an AA-soft fill, then always
     // overdraw with a GDI Ellipse loop so the marker dots are visible on
     // every DC the chart views paint to.
+    // CP28+: revisit once GDI+ is confirmed to paint reliably on PrintWindow
+    // memory DCs; then skip the GDI overdraw when GDI+ reports Status::Ok so
+    // windowed marker dots stay smooth without doubling the fill.
     if (GdiplusContext::active()) {
         std::unique_ptr<Gdiplus::Graphics> graphics(
             new Gdiplus::Graphics(hdc));

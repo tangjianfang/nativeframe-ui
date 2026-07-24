@@ -10,6 +10,14 @@ namespace nfui {
 // chart legend. Naming the magic number avoids the scattered "9" literal
 // the codebase had before CP8 and keeps every visual surface in sync when
 // the design system bumps it.
+//
+// CP32: extended to a full 6-step scale (xs/sm/base/md/lg/xl) so samples
+// can pull sizes from one place. The numeric values map to the design
+// scale 12 / 13 / 14 / 16 / 20 / 28. All sizes compose with DpiScale and
+// FontCache so any DPI retains the proportions of the design. Existing
+// `font_pt::ui` callers stay on 9 pt; new sample surfaces should pick the
+// step that fits the design (base for body, lg for KPI values, xl for
+// page titles).
 namespace font_pt {
 constexpr int ui = 9;       // Back-compat: smallest UI chrome (status bar, tiny badges)
 

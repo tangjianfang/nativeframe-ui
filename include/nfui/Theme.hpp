@@ -4,6 +4,9 @@
 #include <cstddef>
 #include <windows.h>
 
+#include <array>
+#include <cstddef>
+
 namespace nfui {
 
 enum class ThemeMode {

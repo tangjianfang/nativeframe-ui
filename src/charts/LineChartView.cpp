@@ -19,7 +19,7 @@ namespace {
 // point size uses the shared font_pt token (font_pt::chart_tick). Legend
 // constants live in internal/ChartsPaint.cpp.
 constexpr int kTickCount = 5;
-constexpr int kAxisLabelGutter = 18;
+constexpr int kAxisLabelGutter = 28;
 constexpr int kLineWidthPx = 2;
 
 // (Tick labels are formatted inline via nfui::format_axis_tick so callers can
@@ -52,7 +52,7 @@ void draw_value_axis_ticks_v(HDC hdc,
         // the rendered label read "00".
         RECT label{pb.left - 36, py - 8, pb.left - 4, py + 8};
         draw_text(hdc, label, text, font, pal.text_secondary,
-                  DT_RIGHT | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX);
+                  DT_RIGHT | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS | DT_NOPREFIX);
 
         draw_line(hdc, POINT{pb.left - 3, py}, POINT{pb.left, py}, pal.border, 1);
     }
@@ -85,7 +85,7 @@ void draw_index_axis_ticks_v(HDC hdc,
         RECT label{px - kTickLabelHalfWidthPx, pb.bottom + 4,
                    px + kTickLabelHalfWidthPx, pb.bottom + kAxisLabelGutter};
         draw_text(hdc, label, buf, font, pal.text_secondary,
-                  DT_CENTER | DT_TOP | DT_SINGLELINE | DT_NOPREFIX);
+                  DT_CENTER | DT_TOP | DT_SINGLELINE | DT_END_ELLIPSIS | DT_NOPREFIX);
         draw_line(hdc, POINT{px, pb.bottom}, POINT{px, pb.bottom + 3}, pal.border, 1);
     }
 }
@@ -118,6 +118,12 @@ void LineChartView::on_paint(HDC hdc, const RECT& bounds) {
     for (const auto& s : series_) {
         point_count = std::max(point_count, s.points.size());
     }
+
+    // Inner grid sits beneath the plot frame and the data strokes so it reads
+    // as a light alignment guide rather than competing with the series lines.
+    const Color grid_color = charts_internal::derive_grid_color(pal);
+    charts_internal::draw_grid_hlines(hdc, layout.plot_bounds, grid_color, kTickCount);
+    charts_internal::draw_grid_vlines(hdc, layout.plot_bounds, grid_color, kTickCount);
 
     draw_plot_frame(hdc, layout, pal);
 

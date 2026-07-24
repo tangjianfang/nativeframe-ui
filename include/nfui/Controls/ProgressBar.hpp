@@ -5,6 +5,16 @@
 
 namespace nfui {
 
+// CP28: semantic fill colour for ProgressBar. `accent` falls back to the
+// injected palette accent (or FrameStyle::bar_color override);
+// success/warning/error map to the palette semantic colours.
+enum class ProgressBarKind {
+    accent,
+    success,
+    warning,
+    error,
+};
+
 class ProgressBar : public Control {
 public:
     [[nodiscard]] bool create(const ControlCreateParams& params) noexcept;
@@ -12,6 +22,16 @@ public:
     // the new tokens. Matches Control::set_palette and StatusBar::set_style.
     void set_style(FrameStyle style) noexcept;
     [[nodiscard]] const FrameStyle& style() const noexcept { return style_; }
+
+    // CP28: semantic fill colour. `accent` uses the injected palette accent or
+    // FrameStyle::bar_color override; success/warning/error use palette
+    // semantic colours. Invalidates the bar so the state is visible immediately.
+    void set_kind(ProgressBarKind kind) noexcept;
+    [[nodiscard]] ProgressBarKind kind() const noexcept { return kind_; }
+    // CP28: overlay the current percentage as centered semibold text.
+    // Disabled by default; call set_show_percentage(true) to enable.
+    void set_show_percentage(bool show) noexcept;
+    [[nodiscard]] bool show_percentage() const noexcept { return show_percentage_; }
 protected:
     // P1.4: ProgressBar paints itself by polling PBM_GETRANGE + PBM_GETPOS.
     // The track uses palette.surface with palette.border hairline and a
@@ -48,6 +68,8 @@ private:
                                                   UINT_PTR subclass_id,
                                                   DWORD_PTR ref_data) noexcept;
     FrameStyle style_{};
+    ProgressBarKind kind_{ProgressBarKind::accent};
+    bool show_percentage_{false};
 };
 
 } // namespace nfui

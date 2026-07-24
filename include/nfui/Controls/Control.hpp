@@ -101,6 +101,17 @@ protected:
     virtual void on_subclass_mouse_move([[maybe_unused]] LPARAM lparam) noexcept {}
     virtual void on_subclass_mouse_leave() noexcept {}
 
+    // CP31: owner-draw checkable controls (CheckBox / RadioButton) need manual
+    // state because BS_OWNERDRAW overlaps the BS_AUTO* type bits in the low
+    // nibble of the BUTTON style. The base routes BM_GETCHECK / BM_SETCHECK
+    // and input messages to leaf overrides so the public SendMessage contract
+    // still works and the control toggles on click/space.
+    [[nodiscard]] virtual LRESULT on_reflected_get_check() const noexcept { return BST_UNCHECKED; }
+    virtual void on_reflected_set_check([[maybe_unused]] LPARAM state) noexcept {}
+    virtual void on_subclass_lbutton_up() noexcept {}
+    virtual void on_subclass_key_down([[maybe_unused]] UINT vk,
+                                     [[maybe_unused]] LPARAM lparam) noexcept {}
+
     // CP17: micro-animation driver. The base owns a per-HWND Win32 timer
     // (SetTimer/KillTimer) dispatched through a WM_TIMER arm in subclass_proc.
     // This sidesteps the scheduler-ownership problem (no singleton, no

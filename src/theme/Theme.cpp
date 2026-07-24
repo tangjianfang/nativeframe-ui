@@ -175,8 +175,49 @@ ThemePalette lerp_palette(const ThemePalette& a, const ThemePalette& b, float t)
     out.danger         = lerp_color(a.danger,         b.danger,         t);
     out.success        = lerp_color(a.success,        b.success,        t);
     out.warning        = lerp_color(a.warning,        b.warning,        t);
+    out.info           = lerp_color(a.info,           b.info,           t);
     out.shadow         = lerp_color(a.shadow,         b.shadow,         t);
     return out;
+}
+
+namespace {
+
+// CP31: 8 categorical colours used for chart series. Hues are independent of
+// the brand accent so data visualisation can communicate category without
+// colliding with the UI's primary emphasis. Each mode is tuned to its
+// background: light uses medium-saturation tones, dark lifts them, and HC
+// uses the brightest available primaries against pure black.
+const std::array<Color, 8> chart_series_light = { Color{RGB(76, 120, 168)}, Color{RGB(84, 162, 75)},
+                                                     Color{RGB(245, 133, 24)}, Color{RGB(228, 87, 86)},
+                                                     Color{RGB(178, 121, 162)}, Color{RGB(114, 183, 178)},
+                                                     Color{RGB(238, 202, 59)},  Color{RGB(157, 117, 93)} };
+const std::array<Color, 8> chart_series_dark = { Color{RGB(91, 143, 249)}, Color{RGB(90, 216, 166)},
+                                                    Color{RGB(255, 157, 77)}, Color{RGB(232, 104, 74)},
+                                                    Color{RGB(146, 112, 202)}, Color{RGB(109, 200, 236)},
+                                                    Color{RGB(246, 189, 22)},  Color{RGB(84, 162, 75)} };
+const std::array<Color, 8> chart_series_hc = { Color{RGB(255, 255, 255)}, Color{RGB(85, 255, 85)},
+                                                  Color{RGB(85, 85, 255)},  Color{RGB(255, 85, 255)},
+                                                  Color{RGB(255, 170, 85)}, Color{RGB(85, 255, 255)},
+                                                  Color{RGB(255, 255, 85)}, Color{RGB(255, 85, 85)} };
+
+} // namespace
+
+const std::array<Color, 8>& chart_series_palette(ThemeMode mode) noexcept {
+    switch (mode) {
+    case ThemeMode::dark:
+        return chart_series_dark;
+    case ThemeMode::high_contrast:
+        return chart_series_hc;
+    case ThemeMode::system:
+    case ThemeMode::light:
+    default:
+        return chart_series_light;
+    }
+}
+
+Color chart_series_color(ThemeMode mode, std::size_t index) noexcept {
+    const auto& palette = chart_series_palette(mode);
+    return palette[index % palette.size()];
 }
 
 } // namespace nfui

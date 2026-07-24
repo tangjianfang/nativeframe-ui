@@ -37,7 +37,14 @@ ChartLayout compute_chart_layout(RECT content_bounds,
     // series does not need a legend box; the title names it.
     layout.legend_width_px = (series_count > 1) ? 120 : 0;
 
-    const int reserved_w = layout.legend_width_px + kAxisGutter;
+    // Single-series vertical charts need extra right margin so the last
+    // x-axis tick label (e.g. "12") does not spill past the client edge.
+    // Multi-series charts already reserve that space for the legend column;
+    // horizontal bars get their width from the height budget via the swap.
+    const bool right_gutter_needed = (series_count <= 1) &
+                                     (kind != ChartKind::bar_horizontal);
+    const int reserved_w = layout.legend_width_px + kAxisGutter +
+                           (right_gutter_needed ? kAxisGutter : 0);
     const int reserved_h = kTopGutter + kBottomGutter + kAxisGutter;
 
     int plot_w = width - reserved_w;

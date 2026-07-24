@@ -35,7 +35,7 @@ constexpr int kLegendGapPx = 8;
 // Blend weight used by derive_grid_color() to push border toward
 // text_secondary. 0.5 = halfway. Held here so the four views stay in sync
 // if the value ever needs to shift.
-constexpr float kGridBlend = 0.5f;
+constexpr float kGridBlend = 0.65f;
 // Blend weight used by derive_legend_frame_color(). Heavier than
 // kGridBlend so the legend column reads as a discrete container rather
 // than a subtle alignment guide — the legend's outer edge is the only
