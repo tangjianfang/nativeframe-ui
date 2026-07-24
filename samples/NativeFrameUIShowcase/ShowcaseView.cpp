@@ -278,10 +278,15 @@ void draw_nav_glyph(HDC hdc, std::size_t index, const RECT& cell, nfui::Color co
 
 [[nodiscard]] ShowcaseLayout build_layout(const RECT& client_rect, const nfui::DpiScale& dpi) noexcept {
     ShowcaseLayout layout{};
-    const int outer = dpi.logical_to_pixels(24);
-    const int gap = dpi.logical_to_pixels(16);
-    const int sidebar_width = dpi.logical_to_pixels(336);
-    const int inspector_width = dpi.logical_to_pixels(320);
+    // CP36: trim sidebar/inspector widths so all three columns fit comfortably
+    // inside the unified 940-px compact window. The previous 336 + 320 pair
+    // left the inspector card pinned against the right edge — sidebar drops
+    // 336 → 280 and inspector drops 320 → 260 to free ~116 px for the
+    // workspace and breathe the right border.
+    const int outer = dpi.logical_to_pixels(16);
+    const int gap = dpi.logical_to_pixels(12);
+    const int sidebar_width = dpi.logical_to_pixels(280);
+    const int inspector_width = dpi.logical_to_pixels(260);
     const int command_height = dpi.logical_to_pixels(116);
     const int nav_height = dpi.logical_to_pixels(40);
     const int nav_gap = dpi.logical_to_pixels(4);

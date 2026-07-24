@@ -115,8 +115,9 @@ public:
             0,
             CW_USEDEFAULT,
             CW_USEDEFAULT,
-            1180,
-            760,
+            // CP36: shrink from 1180×760 → 940×700.
+            940,
+            700,
         };
         if (!create(params)) {
             return false;

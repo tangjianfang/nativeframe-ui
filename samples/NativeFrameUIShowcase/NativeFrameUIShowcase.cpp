@@ -37,14 +37,13 @@ public:
             0,
             CW_USEDEFAULT,
             CW_USEDEFAULT,
-            1440,
-            // CP34: window height trimmed from 900 → 660 logical px so the
-            // sidebar / inspector / workspace columns no longer show a big
-            // stretch of empty background below their last populated card.
-            // Content stack ≈ command_bar (116) + cards (180) + note (140)
-            // + outer padding ≈ 484 logical px; 660 leaves comfortable
-            // 80 px breathing room on each side of the content stack.
-            660,
+            // CP36: shrink default window from 1440×660 → 940×700. The
+            // smaller width forces the sidebar / inspector columns to
+            // slim down so the workspace gets the lion's share of the
+            // canvas; the height bump from 660 → 700 keeps every card
+            // visible without cramping the footer note.
+            940,
+            700,
         };
 
         if (!create(params)) {

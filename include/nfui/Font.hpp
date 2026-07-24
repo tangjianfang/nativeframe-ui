@@ -12,23 +12,25 @@ namespace nfui {
 // the design system bumps it.
 //
 // CP32: extended to a full 6-step scale (xs/sm/base/md/lg/xl) so samples
-// can pull sizes from one place. The numeric values map to the design
-// scale 12 / 13 / 14 / 16 / 20 / 28. All sizes compose with DpiScale and
-// FontCache so any DPI retains the proportions of the design. Existing
-// `font_pt::ui` callers stay on 9 pt; new sample surfaces should pick the
-// step that fits the design (base for body, lg for KPI values, xl for
-// page titles).
+// can pull sizes from one place. CP36: every design step (xs/sm/base/md/lg/xl)
+// was trimmed by ~1 pt to drop the demo surface density one notch. The
+// numeric values map to the new compact scale 11 / 12 / 13 / 14 / 16 / 22.
+// All sizes compose with DpiScale and FontCache so any DPI retains the
+// proportions of the design. Existing `font_pt::ui` callers stay on 9 pt;
+// new sample surfaces should pick the step that fits the design (base for
+// body, lg for KPI values, xl for page titles).
 namespace font_pt {
 constexpr int ui = 9;       // Back-compat: smallest UI chrome (status bar, tiny badges)
 
-// CP32 design scale: sans-serif UI typography. Names are independent of
-// the old "ui" value so the new scale can coexist with legacy call sites.
-constexpr int xs    = 12;   // Captions, small badges, eyebrow labels
-constexpr int sm    = 13;   // Secondary body, card metadata
-constexpr int base  = 14;   // Primary body, list rows, form labels
-constexpr int md    = 16;   // Emphasised body, buttons, section headers
-constexpr int lg    = 20;   // Card titles, KPI values, sidebar section labels
-constexpr int xl    = 28;   // Window title / brand mark
+// CP36 compact design scale: sans-serif UI typography. Names are
+// independent of the old "ui" value so the new scale can coexist with
+// legacy call sites.
+constexpr int xs    = 11;   // Captions, small badges, eyebrow labels
+constexpr int sm    = 12;   // Secondary body, card metadata
+constexpr int base  = 13;   // Primary body, list rows, form labels
+constexpr int md    = 14;   // Emphasised body, buttons, section headers
+constexpr int lg    = 16;   // Card titles, KPI values, sidebar section labels
+constexpr int xl    = 22;   // Window title / brand mark
 
 // Chart typography aliases (same scale, semantic names).
 constexpr int chart_tick   = xs;

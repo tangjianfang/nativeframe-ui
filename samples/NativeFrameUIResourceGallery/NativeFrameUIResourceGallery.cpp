@@ -253,8 +253,9 @@ public:
             0,
             CW_USEDEFAULT,
             CW_USEDEFAULT,
-            1220,
-            820,
+            // CP36: shrink default window from 1220×820 → 940×700.
+            940,
+            700,
         };
 
         if (!create(params)) {
