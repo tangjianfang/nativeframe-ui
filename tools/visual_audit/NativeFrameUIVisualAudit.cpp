@@ -461,7 +461,19 @@ int wmain(int argc, wchar_t* argv[]) {
     if (!sampleHandledTheme) {
         applyRequestedTheme(process.window, theme);
     }
-    std::this_thread::sleep_for(std::chrono::milliseconds(1'000));
+    // CP33: 1 s was occasionally flaky for samples whose first WM_PAINT is
+    // staggered (Showcase in particular was missing the third inspector
+    // row on some captures — the body text was drawn after PrintWindow
+    // fired). 1.5 s gives the dispatcher enough headroom to finish the
+    // initial paint without lengthening captures perceptibly. After the
+    // settle, force a synchronous full re-paint so PrintWindow snapshots a
+    // frame that includes every section of the window (Showcase's
+    // inspector rail was sometimes still missing before this nudge).
+    std::this_thread::sleep_for(std::chrono::milliseconds(1'500));
+    RedrawWindow(process.window, nullptr, nullptr,
+                 RDW_INVALIDATE | RDW_UPDATENOW | RDW_ALLCHILDREN);
+    UpdateWindow(process.window);
+    std::this_thread::sleep_for(std::chrono::milliseconds(250));
 
     HWND captureTarget = process.window;
     if (!expandMenu.empty()) {

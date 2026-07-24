@@ -64,14 +64,22 @@ void draw_index_axis_ticks_v(HDC hdc,
     const int plot_w = pb.right - pb.left;
     wchar_t buf[32]{};
     // Up to kTickCount ticks under the x axis so dense series don't crowd.
+    // CP33: shrink the horizontal span by 2*half-width at each end so the
+    // first and last labels sit fully inside the plot — without the inset,
+    // the rightmost "12" tick straddled pb.right and read as "1".
     const std::size_t n = std::min<std::size_t>(point_count, kTickCount);
+    constexpr int kTickLabelHalfWidthPx = 20;
+    const int tick_span = std::max(plot_w - 2 * kTickLabelHalfWidthPx, 0);
+    const int tick_origin = pb.left + kTickLabelHalfWidthPx;
     for (std::size_t i = 0; i < n; ++i) {
         const double t = (n == 1) ? 0.5
                                   : static_cast<double>(i) / static_cast<double>(n - 1);
-        const int px = pb.left + static_cast<int>(t * static_cast<double>(plot_w) + 0.5);
+        const int px = tick_origin +
+                       static_cast<int>(t * static_cast<double>(tick_span) + 0.5);
         std::swprintf(buf, std::size(buf), L"%zu",
                       1 + i * (point_count - 1) / std::max<std::size_t>(1, n - 1));
-        RECT label{px - 16, pb.bottom + 4, px + 16, pb.bottom + kAxisLabelGutter};
+        RECT label{px - kTickLabelHalfWidthPx, pb.bottom + 4,
+                   px + kTickLabelHalfWidthPx, pb.bottom + kAxisLabelGutter};
         draw_text(hdc, label, buf, font, pal.text_secondary,
                   DT_CENTER | DT_TOP | DT_SINGLELINE | DT_NOPREFIX);
         draw_line(hdc, POINT{px, pb.bottom}, POINT{px, pb.bottom + 3}, pal.border, 1);

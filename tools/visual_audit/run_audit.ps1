@@ -1,6 +1,6 @@
 [CmdletBinding()]
 param(
-    [string]$Root = (Resolve-Path (Join-Path $PSScriptRoot '..\..')).Path,
+    [string]$Root = '',
     [string]$BuildDirectory = '',
     [ValidateSet('light', 'dark', 'high_contrast')]
     [string[]]$Themes = @('light', 'dark', 'high_contrast')
@@ -8,6 +8,22 @@ param(
 
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
+
+# CP33: $PSScriptRoot can be empty when this script is invoked through a
+# shell that doesn't preserve the launch context (notably Git Bash +
+# powershell.exe -File). Resolve the script's own directory from
+# $PSCommandPath (always populated when -File is used) and walk up two
+# levels to the repo root.
+$scriptDir = if (![string]::IsNullOrWhiteSpace($PSScriptRoot)) {
+    $PSScriptRoot
+} elseif (![string]::IsNullOrWhiteSpace($PSCommandPath)) {
+    Split-Path -Parent $PSCommandPath
+} else {
+    $PWD.Path
+}
+if ([string]::IsNullOrWhiteSpace($Root)) {
+    $Root = (Resolve-Path (Join-Path $scriptDir '..\..')).Path
+}
 
 if ([string]::IsNullOrWhiteSpace($BuildDirectory)) {
     $BuildDirectory = Join-Path $Root 'out\build\x64-debug\Debug'
@@ -22,14 +38,16 @@ if (-not (Test-Path -LiteralPath $auditExe -PathType Leaf)) {
 }
 
 $samples = @(
-    [pscustomobject]@{ Name = 'Workbench';       Exe = 'NativeFrameUIWorkbench.exe' },
-    [pscustomobject]@{ Name = 'Showcase';        Exe = 'NativeFrameUIShowcase.exe' },
-    [pscustomobject]@{ Name = 'DarkStudio';      Exe = 'NativeFrameUIDarkStudio.exe' },
-    [pscustomobject]@{ Name = 'SettingsDemo';    Exe = 'NativeFrameUISettingsDemo.exe' },
-    [pscustomobject]@{ Name = 'DialogTour';      Exe = 'NativeFrameUIDialogTour.exe' },
-    [pscustomobject]@{ Name = 'ResourceGallery'; Exe = 'NativeFrameUIResourceGallery.exe' },
-    [pscustomobject]@{ Name = 'ComponentGallery';Exe = 'NativeFrameUIComponentGallery.exe' },
-    [pscustomobject]@{ Name = 'ThemeDemo';       Exe = 'NativeFrameUIThemeDemo.exe' }
+    [pscustomobject]@{ Name = 'Workbench';         Exe = 'NativeFrameUIWorkbench.exe' },
+    [pscustomobject]@{ Name = 'Showcase';          Exe = 'NativeFrameUIShowcase.exe' },
+    [pscustomobject]@{ Name = 'DarkStudio';        Exe = 'NativeFrameUIDarkStudio.exe' },
+    [pscustomobject]@{ Name = 'SettingsDemo';      Exe = 'NativeFrameUISettingsDemo.exe' },
+    [pscustomobject]@{ Name = 'DialogTour';        Exe = 'NativeFrameUIDialogTour.exe' },
+    [pscustomobject]@{ Name = 'ResourceGallery';   Exe = 'NativeFrameUIResourceGallery.exe' },
+    [pscustomobject]@{ Name = 'ComponentGallery';  Exe = 'NativeFrameUIComponentGallery.exe' },
+    [pscustomobject]@{ Name = 'ThemeDemo';         Exe = 'NativeFrameUIThemeDemo.exe' },
+    [pscustomobject]@{ Name = 'ControlsPlayground';Exe = 'NativeFrameUIControlsPlayground.exe' },
+    [pscustomobject]@{ Name = 'Charts';            Exe = 'NativeFrameUICharts.exe' }
 )
 
 $results = [System.Collections.Generic.List[object]]::new()

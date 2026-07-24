@@ -700,7 +700,7 @@ void ShowcaseView::paint(HDC hdc, nfui::FontCache& fonts) const noexcept {
                                      ? nfui::alpha_blend(palette.accent, palette.surface, 0.12f)
                                      : palette.surface;
         const nfui::Color border = hovered ? palette.accent : palette.border;
-        const int card_elevation = 1;
+        const int card_elevation = 2;
         nfui::paint_drop_shadow(hdc, layout.cards[index], radius,
                                 card_elevation, palette.shadow);
         nfui::fill_rounded_rect(hdc, layout.cards[index], radius, fill, border);
@@ -776,13 +776,16 @@ void ShowcaseView::paint(HDC hdc, nfui::FontCache& fonts) const noexcept {
         SelectObject(measure_hdc, old_font);
         DeleteDC(measure_hdc);
         const int pill_h = dpi_scale_.logical_to_pixels(24);
-        const int pill_w = text_size.cx + dpi_scale_.logical_to_pixels(20);
+        // CP33: bump padding 20 -> 24 (10 -> 12 logical px per side) for the
+        // same reason as the inspector tag pill — "Release Ready" in xs font
+        // visually pressed the right border at 20-px device padding.
+        const int pill_w = text_size.cx + dpi_scale_.logical_to_pixels(24);
         const int pill_pad_x = dpi_scale_.logical_to_pixels(16);
         const int pill_y = layout.cards[index].bottom - dpi_scale_.logical_to_pixels(20) - pill_h;
         RECT pill_rect = make_rect(layout.cards[index].left + pill_pad_x, pill_y, pill_w, pill_h);
         nfui::fill_rounded_rect(hdc, pill_rect, pill_radius, pill_fill, pill_border);
-        RECT pill_text_rect = inset_rect(pill_rect, dpi_scale_.logical_to_pixels(10), 0,
-                                        dpi_scale_.logical_to_pixels(10), 0);
+        RECT pill_text_rect = inset_rect(pill_rect, dpi_scale_.logical_to_pixels(12), 0,
+                                        dpi_scale_.logical_to_pixels(12), 0);
         nfui::draw_text(hdc,
                         pill_text_rect,
                         card_badges[index],
@@ -876,17 +879,23 @@ void ShowcaseView::paint(HDC hdc, nfui::FontCache& fonts) const noexcept {
 
         // Right-edge tag pill — neutral fill, muted text. Width hugs the tag.
         HDC measure_hdc = CreateCompatibleDC(hdc);
-        HFONT tag_font = fetch_font(fonts, dpi(), FontWeight::regular, nfui::font_pt::xs);
+        HFONT tag_font = fetch_font(fonts, dpi(), FontWeight::semibold, nfui::font_pt::sm);
         HFONT old_font = static_cast<HFONT>(SelectObject(measure_hdc, tag_font));
         SIZE text_size{};
         GetTextExtentPoint32W(measure_hdc, inspector_tags[index].data(),
                               static_cast<int>(inspector_tags[index].size()), &text_size);
         SelectObject(measure_hdc, old_font);
         DeleteDC(measure_hdc);
-        const int tag_h = dpi_scale_.logical_to_pixels(22);
-        const int tag_w = text_size.cx + dpi_scale_.logical_to_pixels(16);
+        const int tag_h = dpi_scale_.logical_to_pixels(24);
+        // CP33: bump padding 20 -> 24 so "12px" / "dpi-aware" don't visually
+        // touch the pill border. GetTextExtentPoint32W excludes side-bearings
+        // for some glyphs (notably 'p'), so 10-px logical padding (20 device
+        // px) under-measures the right edge; 12 px (24 device px) leaves a
+        // comfortable 4-px gap on each side at 96/100 % DPI.
+        const int tag_pad = dpi_scale_.logical_to_pixels(24);
+        const int tag_w = text_size.cx + tag_pad;
         RECT tag_rect = make_rect(layout.inspector_rows[index].right - row_pad - tag_w,
-                                  layout.inspector_rows[index].top + row_pad + dpi_scale_.logical_to_pixels(1),
+                                  layout.inspector_rows[index].top + row_pad,
                                   tag_w,
                                   tag_h);
         // Tag pill: high-contrast, readable in both themes. Use a soft surface
@@ -897,8 +906,8 @@ void ShowcaseView::paint(HDC hdc, nfui::FontCache& fonts) const noexcept {
                                             : palette.border;
         nfui::fill_rounded_rect(hdc, tag_rect, pill_radius, tag_fill, tag_border);
         nfui::draw_text(hdc,
-                        inset_rect(tag_rect, dpi_scale_.logical_to_pixels(8), 0,
-                                   dpi_scale_.logical_to_pixels(8), 0),
+                        inset_rect(tag_rect, dpi_scale_.logical_to_pixels(12), 0,
+                                   dpi_scale_.logical_to_pixels(12), 0),
                         inspector_tags[index],
                         tag_font,
                         dark ? palette.text : palette.muted_text,

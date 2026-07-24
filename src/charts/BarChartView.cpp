@@ -22,12 +22,12 @@ constexpr int kTickCount = 5;
 constexpr int kAxisLabelGutter = 28;
 // Half-width of the tick-label text rect (centered on the tick position).
 // The category-axis labels are 1..N where N can be > 12 (e.g. 12 monthly
-// bars). With a per-tick spacing of ~33px in a 400px plot, the previous
-// 16px half-width caused adjacent labels to overlap. Bumping to 24px
-// gives the ellipsized label room to breathe; if the chart is narrower
-// than the label band, DT_END_ELLIPSIS truncates without bleeding into
-// the neighbour's rect.
-constexpr int kTickLabelHalfWidthPx = 24;
+// bars). 20 px is wide enough to hold "12" / "11" without clipping (each
+// digit is ~7 px at the default tick font), while still fitting 5 ticks
+// across a typical 360-px plot band. If the chart is narrower than
+// 2*half-width per band, the label is centred on its tick and may
+// overlap its neighbour — the caller can grow the chart HWND to avoid.
+constexpr int kTickLabelHalfWidthPx = 20;
 constexpr int kValueLabelGapLogical = 4;
 constexpr int kValueLabelPadLogical = 2;
 
@@ -127,14 +127,20 @@ void draw_category_axis_ticks_v(HDC hdc,
     // Subsample to kTickCount labels so dense categories (12 monthly bars in
     // a 400px plot = 33px per band) don't pile up on top of each other.
     // Mirrors LineChartView::draw_index_axis_ticks_v's behaviour so all
-    // four chart views read with the same tick density.
+    // four chart views read with the same tick density. CP33: shrink the
+    // horizontal span by 2*half-width at each end so the first tick label
+    // sits fully inside pb.left and the last ("12") sits fully inside
+    // pb.right — without the inset, the rightmost label straddled the
+    // plot frame / chart card corner and was visually clipped to "1".
     const std::size_t n = std::min<std::size_t>(bar_count, kTickCount);
+    const int tick_span = std::max(plot_w - 2 * kTickLabelHalfWidthPx, 0);
+    const int tick_origin = pb.left + kTickLabelHalfWidthPx;
     for (std::size_t i = 0; i < n; ++i) {
         const double t = (n == 1) ? 0.5
                                  : static_cast<double>(i) /
                                    static_cast<double>(n - 1);
-        const int px = pb.left +
-                       static_cast<int>(t * static_cast<double>(plot_w) + 0.5);
+        const int px = tick_origin +
+                       static_cast<int>(t * static_cast<double>(tick_span) + 0.5);
         std::swprintf(buf, std::size(buf), L"%zu",
                       1 + i * (bar_count - 1) /
                           std::max<std::size_t>(1, n - 1));
@@ -143,7 +149,7 @@ void draw_category_axis_ticks_v(HDC hdc,
                    px + kTickLabelHalfWidthPx,
                    pb.bottom + kAxisLabelGutter};
         draw_text(hdc, label, buf, font, pal.text_secondary,
-                  DT_CENTER | DT_TOP | DT_SINGLELINE | DT_END_ELLIPSIS | DT_NOPREFIX);
+                  DT_CENTER | DT_TOP | DT_SINGLELINE | DT_NOPREFIX);
     }
 }
 

@@ -587,7 +587,7 @@ private:
         //    behind them, so chrome here only fills the reserved band.
         for (const CardLayout& layout : cards_) {
             nfui::paint_drop_shadow(target, layout.card, card_radius,
-                                    1, p.shadow);
+                                    2, p.shadow);
             nfui::fill_rounded_rect(target, layout.card, card_radius,
                                     p.surface, p.border);
             paint_card_title(target, layout);

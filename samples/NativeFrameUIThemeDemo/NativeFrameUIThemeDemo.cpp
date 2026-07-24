@@ -58,7 +58,7 @@ constexpr int kGap                 = 12;
 constexpr int kToolbarHeight       = 48;   // dedicated top row for title + toggles
 constexpr int kSectionHeaderHeight = 20;
 constexpr int kRowHeight           = 44;   // default row height for single-line controls
-constexpr int kLabelWidth          = 140;  // fixed label column width
+constexpr int kLabelWidth          = 160;  // fixed label column width
 constexpr int kGroupGap            = 16;   // vertical space between sections
 
 // CP32: per-row heights so the ListView / TreeView / Tabs / Panel rows have
@@ -73,11 +73,11 @@ constexpr int kRowHeights[] = {
     44,  // StaticText
     120, // ListBox (5 rows × 24)
     44,  // ComboBox
-    140, // ListView (header + 4 rows × 24)
-    140, // TreeView (root + 3 children × 24)
+    120, // ListView (header + 3 rows × 24)
+    120, // TreeView (root + 3 children × 24)
     44,  // IconView
     44,  // ProgressBar
-    96,  // TabControl (3 tabs visible band)
+    84,  // TabControl (3 tabs visible band)
     72,  // Panel + Splitter
 };
 
@@ -161,7 +161,7 @@ public:
             CW_USEDEFAULT,
             CW_USEDEFAULT,
             980,
-            1240,
+            1080,
         };
 
         if (!create(params)) {
