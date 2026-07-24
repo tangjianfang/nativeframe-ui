@@ -7,6 +7,7 @@
 #include <algorithm>
 #include <cstdio>
 #include <string>
+#include <string_view>
 #include <vector>
 
 namespace nfui {
@@ -18,7 +19,7 @@ namespace {
 // the default placeholder in ChartView::draw_default_placeholder. Legend
 // constants live in internal/ChartsPaint.cpp.
 constexpr int kTickCount = 5;
-constexpr int kAxisLabelGutter = 18;
+constexpr int kAxisLabelGutter = 28;
 // Half-width of the tick-label text rect (centered on the tick position).
 // The category-axis labels are 1..N where N can be > 12 (e.g. 12 monthly
 // bars). With a per-tick spacing of ~33px in a 400px plot, the previous
@@ -27,6 +28,54 @@ constexpr int kAxisLabelGutter = 18;
 // than the label band, DT_END_ELLIPSIS truncates without bleeding into
 // the neighbour's rect.
 constexpr int kTickLabelHalfWidthPx = 24;
+constexpr int kValueLabelGapLogical = 4;
+constexpr int kValueLabelPadLogical = 2;
+
+[[nodiscard]] SIZE measure_text(HDC hdc,
+                                HFONT font,
+                                std::wstring_view text) noexcept {
+    SIZE size{};
+    if (hdc == nullptr || text.empty()) {
+        return size;
+    }
+
+    HGDIOBJ old_font = font != nullptr ? SelectObject(hdc, font) : nullptr;
+    GetTextExtentPoint32W(hdc, text.data(), static_cast<int>(text.size()), &size);
+    if (old_font != nullptr && old_font != HGDI_ERROR) {
+        SelectObject(hdc, old_font);
+    }
+    return size;
+}
+
+void draw_value_label_above(HDC hdc,
+                            const RECT& bounds,
+                            const RECT& bar,
+                            std::wstring_view text,
+                            HFONT font,
+                            Color color,
+                            const DpiScale& dpi) noexcept {
+    const SIZE text_size = measure_text(hdc, font, text);
+    const int pad = dpi.logical_to_pixels(kValueLabelPadLogical);
+    const int gap = dpi.logical_to_pixels(kValueLabelGapLogical);
+    const int label_w = std::max(dpi.logical_to_pixels(1),
+                                 static_cast<int>(text_size.cx)) + pad * 2;
+    const int label_h = std::max(dpi.logical_to_pixels(16),
+                                 static_cast<int>(text_size.cy));
+    const int center_x = bar.left + (bar.right - bar.left) / 2;
+
+    int label_top = bar.top - gap - label_h;
+    if (label_top < bounds.top) {
+        label_top = bounds.top;
+    }
+    RECT label{
+        center_x - label_w / 2,
+        label_top,
+        center_x - label_w / 2 + label_w,
+        label_top + label_h,
+    };
+    draw_text(hdc, label, text, font, color,
+              DT_CENTER | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX);
+}
 
 // (Tick labels are formatted inline via nfui::format_axis_tick so callers can
 // pick the precision per axis via ChartAxisRange::label_format.)
@@ -150,6 +199,11 @@ void BarChartView::on_paint(HDC hdc, const RECT& bounds) {
     const int plot_h = layout.plot_bounds.bottom - layout.plot_bounds.top;
     const int band_slot_w = bands.front().right - bands.front().left;
     const int sub_w = std::max(1, band_slot_w / static_cast<int>(std::max<std::size_t>(1, series_count)));
+    const int dpi = (hwnd() != nullptr) ? dpi_of(hwnd()) : 96;
+    const DpiScale dpi_scale(dpi);
+    HFONT value_font = (fonts_ != nullptr)
+        ? fonts_->semibold(dpi, font_pt::sm)
+        : nullptr;
 
     // In stacked mode the per-column sum governs the column's visual extent, so
     // we pre-compute column sums + the global max once and reuse them for the
@@ -199,6 +253,8 @@ void BarChartView::on_paint(HDC hdc, const RECT& bounds) {
             const RECT& band = bands[i];
             if (col_sums[i] <= 0.0) continue;  // empty column; nothing to stack
             double cursor = eff_min;
+            int stack_top = layout.plot_bounds.bottom;
+            Color top_series_color = pal.text;
             for (std::size_t s = 0; s < series_count; ++s) {
                 const ChartSeries& series = series_[s];
                 if (i >= series.points.size()) continue;
@@ -216,9 +272,20 @@ void BarChartView::on_paint(HDC hdc, const RECT& bounds) {
                     RECT bar{band.left, plot_y_top, band.right, plot_y_bot};
                     fill_rounded_rect(hdc, bar, theme_metrics().corner_radius_control,
                                       series.color, series.color);
+                    stack_top = plot_y_top;
+                    top_series_color = series.color;
                 }
                 cursor = v_top;
                 if (cursor >= eff_max) break;  // stack saturated; drop later segments
+            }
+
+            if (stack_top < layout.plot_bounds.bottom) {
+                const std::wstring text =
+                    format_axis_tick(col_sums[i], axis_y_.label_format);
+                const RECT stack_bar{band.left, stack_top,
+                                     band.right, layout.plot_bounds.bottom};
+                draw_value_label_above(hdc, bounds, stack_bar, text,
+                                       value_font, top_series_color, dpi_scale);
             }
         }
     } else {
@@ -249,11 +316,14 @@ void BarChartView::on_paint(HDC hdc, const RECT& bounds) {
                 }
                 fill_rounded_rect(hdc, bar, theme_metrics().corner_radius_control,
                                   series.color, series.color);
+                const std::wstring text =
+                    format_axis_tick(p.y, axis_y_.label_format);
+                draw_value_label_above(hdc, bounds, bar, text,
+                                       value_font, series.color, dpi_scale);
             }
         }
     }
 
-    const int dpi = (hwnd() != nullptr) ? dpi_of(hwnd()) : 96;
     HFONT tick_font = (fonts_ != nullptr) ? fonts_->mono(dpi, font_pt::chart_tick) : nullptr;
 
     // In stacked mode the tick labels should reflect the column-sum range, not

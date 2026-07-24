@@ -3,12 +3,18 @@
 // nfui_button (NOT the NativeFrameUI umbrella). Verifies that consumers
 // can ship a minimal product with a small dependency footprint.
 //
-// CP32: modern brand window with two owner-drawn buttons, the 4/8/12/16 grid,
-// and the new font_pt scale. The HWND wrappers live as globals so their
-// addresses stay stable until the parent window reaches WM_NCDESTROY.
+// CP32 redesign: replaced the flat left-aligned layout with a centered
+// hero card. Vertical surface->background gradient, top-left coral N
+// brand mark, centered xl title + sm subtitle, full-width coral primary
+// button and outlined secondary button (both with visible hover/pressed
+// state tracking). Layout is recomputed every paint from a logical grid
+// (4/8/12/16/24 spacing) via DpiScale so proportions survive DPI bumps.
+//
+// Build deps (see CMakeLists.txt): NativeFrameUI::nfui_core,
+// NativeFrameUI::nfui_theme, NativeFrameUI::nfui_control_base,
+// NativeFrameUI::nfui_button. 4 libs vs. 13 via the umbrella.
 
 #include <nfui/Application.hpp>
-#include <nfui/Controls/Button.hpp>
 #include <nfui/Dpi.hpp>
 #include <nfui/Font.hpp>
 #include <nfui/Paint.hpp>
@@ -17,188 +23,247 @@
 #include <windows.h>
 #include <windowsx.h>
 
+#include <shellapi.h>
 #include <string>
 
 namespace {
 
-constexpr int id_confirm = 101;
-constexpr int id_reset   = 102;
+// Hit-test rects are recomputed every WM_PAINT (they depend on window DPI),
+// so the global hover/pressed flags and the captured mouse state are
+// module-local and reconciled against the latest layout on each paint.
+nfui::ThemeMode g_theme_mode = nfui::ThemeMode::light;
+nfui::FontCache  g_fonts;
+RECT g_primary_rect{};
+RECT g_secondary_rect{};
+bool g_primary_hot = false;
+bool g_primary_pressed = false;
+bool g_secondary_hot = false;
+bool g_secondary_pressed = false;
+bool g_capture_active = false;
 
-// Same constant used by Control::subclass_proc to reflect owner-draw messages.
-constexpr UINT ocm_base = WM_USER + 0x1c00;
+nfui::ThemeMode parse_theme_mode() noexcept {
+    int argc = 0;
+    wchar_t** argv = CommandLineToArgvW(GetCommandLineW(), &argc);
+    if (argv == nullptr) return nfui::ThemeMode::light;
 
-// Global wrappers guarantee a stable object address for the lifetime of the
-// HWND. Control::detach_destroyed_hwnd releases the HWND at WM_NCDESTROY,
-// so the wrapper destructor does not call DestroyWindow on a dead handle.
-nfui::Button g_confirm_button;
-nfui::Button g_reset_button;
-nfui::ThemePalette g_palette;
-nfui::FontCache g_fonts;
-nfui::DpiScale g_dpi{96};
-std::wstring g_status = L"Press a button to confirm the minimal link set works.";
-HWND g_hwnd{};
-RECT g_status_rect{};
-
-int px(int logical) noexcept {
-    return g_dpi.logical_to_pixels(logical);
+    nfui::ThemeMode mode = nfui::ThemeMode::light;
+    for (int i = 1; i < argc - 1; ++i) {
+        if (wcscmp(argv[i], L"--theme") != 0) continue;
+        const wchar_t* value = argv[i + 1];
+        if (wcscmp(value, L"dark") == 0) {
+            mode = nfui::ThemeMode::dark;
+        } else if (wcscmp(value, L"high_contrast") == 0) {
+            mode = nfui::ThemeMode::high_contrast;
+        } else if (wcscmp(value, L"light") == 0) {
+            mode = nfui::ThemeMode::light;
+        }
+        break;
+    }
+    LocalFree(argv);
+    return mode;
 }
 
-void layout() noexcept {
-    if (g_hwnd == nullptr || g_confirm_button.hwnd() == nullptr) {
-        return;
-    }
+// Recompute the hit-test rects from the design grid. Cached in module-level
+// RECTs so the mouse handler can hit-test cheaply without rerunning the math.
+void layout_column(const RECT& client, int dpi) noexcept {
+    nfui::DpiScale dpi_(dpi);
+    constexpr int kColWidthLogical = 480;
+    int col_w = dpi_.logical_to_pixels(kColWidthLogical);
+    if (col_w > client.right) col_w = client.right;
+    const int col_x = (client.right - col_w) / 2;
 
-    RECT client{};
-    GetClientRect(g_hwnd, &client);
-    g_dpi = nfui::DpiScale(nfui::dpi_of(g_hwnd));
+    const int title_h      = dpi_.logical_to_pixels(40);   // line-box for xl 28 pt
+    const int subtitle_h   = dpi_.logical_to_pixels(20);   // line-box for sm 13 pt
+    const int btn_h        = dpi_.logical_to_pixels(40);
+    const int gap_title_sub = dpi_.logical_to_pixels(8);
+    const int gap_sub_btn1  = dpi_.logical_to_pixels(24);
+    const int gap_btn1_btn2 = dpi_.logical_to_pixels(12);
 
-    const int outer   = px(24);
-    const int gap     = px(16);
-    const int btn_w   = px(140);
-    const int btn_h   = px(40);
-    const int status_h = px(24);
+    const int content_h = title_h + gap_title_sub + subtitle_h
+                        + gap_sub_btn1 + btn_h
+                        + gap_btn1_btn2 + btn_h;
+    int y = (client.bottom - content_h) / 2;
+    if (y < 0) y = 0;
 
-    // Brand block: top-left, aligned to the grid.
-    // (Painted in WM_PAINT; no child control needed.)
-
-    // Status line rectangle; defined early so WM_PAINT can read it.
-    g_status_rect = RECT{outer, client.bottom - outer - status_h,
-                         client.right - outer, client.bottom - outer};
-
-    // Two buttons centred in the remaining client area.
-    const int total_w = btn_w * 2 + gap;
-    const int x = (client.right - total_w) / 2;
-    const int y = client.bottom / 2 - btn_h / 2;
-    MoveWindow(g_confirm_button.hwnd(), x, y, btn_w, btn_h, TRUE);
-    MoveWindow(g_reset_button.hwnd(), x + btn_w + gap, y, btn_w, btn_h, TRUE);
-
-    // Refresh fonts on DPI changes.
-    const int d = g_dpi.dpi();
-    SendMessageW(g_confirm_button.hwnd(), WM_SETFONT,
-                 reinterpret_cast<WPARAM>(g_fonts.semibold(d, nfui::font_pt::md)), TRUE);
-    SendMessageW(g_reset_button.hwnd(), WM_SETFONT,
-                 reinterpret_cast<WPARAM>(g_fonts.semibold(d, nfui::font_pt::md)), TRUE);
+    y += title_h + gap_title_sub + subtitle_h + gap_sub_btn1;
+    g_primary_rect   = {col_x, y, col_x + col_w, y + btn_h};
+    y += btn_h + gap_btn1_btn2;
+    g_secondary_rect = {col_x, y, col_x + col_w, y + btn_h};
 }
 
 LRESULT CALLBACK wnd_proc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam) {
-    switch (msg) {
-    case WM_CREATE:
-        g_hwnd = hwnd;
-        g_palette = nfui::theme_palette(nfui::ThemeMode::light);
-        g_dpi = nfui::DpiScale(nfui::dpi_of(hwnd));
-
-        g_confirm_button.inject_theme(&g_palette, &g_fonts);
-        g_reset_button.inject_theme(&g_palette, &g_fonts);
-
-        {
-            nfui::ButtonStyle style{};
-            style.use_semibold = true;
-            g_confirm_button.set_style(style);
-            g_reset_button.set_style(style);
-        }
-
-        {
-            HINSTANCE instance = reinterpret_cast<LPCREATESTRUCTW>(lparam)->hInstance;
-            nfui::ControlCreateParams params{
-                instance, hwnd, id_confirm, L"Confirm",
-                0, 0, px(140), px(40), WS_CHILD | WS_VISIBLE | WS_TABSTOP
-            };
-            if (!g_confirm_button.create(params)) {
-                return -1;
+    if (msg == WM_MOUSEMOVE) {
+        const POINT pt{GET_X_LPARAM(lparam), GET_Y_LPARAM(lparam)};
+        const bool ph = PtInRect(&g_primary_rect, pt) != FALSE;
+        const bool sh = PtInRect(&g_secondary_rect, pt) != FALSE;
+        if (ph != g_primary_hot || sh != g_secondary_hot) {
+            g_primary_hot = ph;
+            g_secondary_hot = sh;
+            if (!g_capture_active) {
+                g_primary_pressed = g_primary_hot;
+                g_secondary_pressed = g_secondary_hot;
             }
-            params.control_id = id_reset;
-            params.text = L"Reset";
-            if (!g_reset_button.create(params)) {
-                return -1;
-            }
+            InvalidateRect(hwnd, nullptr, FALSE);
         }
-        layout();
-        return 0;
-
-    case WM_SIZE:
-        layout();
-        InvalidateRect(hwnd, nullptr, FALSE);
-        return 0;
-
-    case WM_DPICHANGED: {
-        auto* suggested = reinterpret_cast<RECT*>(lparam);
-        if (suggested != nullptr) {
-            SetWindowPos(hwnd, nullptr,
-                         suggested->left, suggested->top,
-                         suggested->right - suggested->left,
-                         suggested->bottom - suggested->top,
-                         SWP_NOZORDER | SWP_NOACTIVATE);
-        }
-        layout();
-        InvalidateRect(hwnd, nullptr, FALSE);
         return 0;
     }
-
-    case WM_COMMAND: {
-        const int cmd = LOWORD(wparam);
-        if (cmd == id_confirm) {
-            g_status = L"NativeFrame UI is running with the minimal link set.";
-            InvalidateRect(hwnd, &g_status_rect, FALSE);
-            return 0;
+    if (msg == WM_MOUSELEAVE) {
+        if (g_primary_hot || g_secondary_hot || g_capture_active) {
+            g_primary_hot = false;
+            g_secondary_hot = false;
+            if (!g_capture_active) {
+                g_primary_pressed = false;
+                g_secondary_pressed = false;
+            }
+            InvalidateRect(hwnd, nullptr, FALSE);
         }
-        if (cmd == id_reset) {
-            g_status = L"Press a button to confirm the minimal link set works.";
-            InvalidateRect(hwnd, &g_status_rect, FALSE);
-            return 0;
-        }
-        break;
+        return 0;
     }
+    if (msg == WM_LBUTTONDOWN) {
+        const POINT pt{GET_X_LPARAM(lparam), GET_Y_LPARAM(lparam)};
+        if (PtInRect(&g_primary_rect, pt) != FALSE) {
+            g_primary_pressed = true;
+            g_capture_active = true;
+            SetCapture(hwnd);
+            InvalidateRect(hwnd, nullptr, FALSE);
+            return 0;
+        }
+        if (PtInRect(&g_secondary_rect, pt) != FALSE) {
+            g_secondary_pressed = true;
+            g_capture_active = true;
+            SetCapture(hwnd);
+            InvalidateRect(hwnd, nullptr, FALSE);
+            return 0;
+        }
+        return 0;
+    }
+    if (msg == WM_LBUTTONUP) {
+        const POINT pt{GET_X_LPARAM(lparam), GET_Y_LPARAM(lparam)};
+        if (g_capture_active) {
+            g_capture_active = false;
+            ReleaseCapture();
+        }
+        const bool was_primary_pressed = g_primary_pressed;
+        const bool was_secondary_pressed = g_secondary_pressed;
+        // Reconcile pressed state to the current pointer location -- a release
+        // outside the button must clear the pressed highlight even without a
+        // preceding WM_MOUSEMOVE.
+        g_primary_hot = PtInRect(&g_primary_rect, pt) != FALSE;
+        g_secondary_hot = PtInRect(&g_secondary_rect, pt) != FALSE;
+        g_primary_pressed = g_primary_pressed && g_primary_hot;
+        g_secondary_pressed = g_secondary_pressed && g_secondary_hot;
+        if (was_primary_pressed || was_secondary_pressed ||
+            g_primary_pressed != was_primary_pressed ||
+            g_secondary_pressed != was_secondary_pressed) {
+            InvalidateRect(hwnd, nullptr, FALSE);
+        }
+        return 0;
+    }
+    if (msg == WM_PAINT) {
+        PAINTSTRUCT paint{};
+        HDC hdc = BeginPaint(hwnd, &paint);
 
-    case WM_PAINT: {
-        PAINTSTRUCT ps{};
-        HDC hdc = BeginPaint(hwnd, &ps);
         RECT client{};
         GetClientRect(hwnd, &client);
+        const int dpi = nfui::dpi_of(hwnd);
+        const nfui::ThemePalette palette = nfui::theme_palette(g_theme_mode);
+        const nfui::ThemeMetrics metrics  = nfui::theme_metrics();
+        nfui::DpiScale dpi_(dpi);
 
-        nfui::MemoryDC mem(hdc, client);
-        HDC target = mem.valid() ? mem.dc() : hdc;
+        layout_column(client, dpi);
 
-        nfui::fill_rect(target, client, g_palette.background);
+        // Background -- vertical surface->background gradient so the chrome
+        // gets a quiet, depth-suggesting lift at the top without competing
+        // with the column content.
+        nfui::paint_linear_gradient(hdc, client, 0, palette.surface, palette.background);
 
-        const int d = g_dpi.dpi();
-        const int outer = px(24);
+        // Brand mark -- 32 logical px coral rounded square with a soft
+        // elevation-2 shadow, anchored at top-left with a 24 px gutter.
+        const int pad = dpi_.logical_to_pixels(24);
+        const int logo_size = dpi_.logical_to_pixels(32);
+        const int logo_radius = dpi_.logical_to_pixels(8);
+        const RECT logo{ pad, pad, pad + logo_size, pad + logo_size };
+        nfui::paint_drop_shadow(hdc, logo, logo_radius, 2, palette.shadow);
+        nfui::fill_rounded_rect(hdc, logo, logo_radius, palette.accent, palette.accent);
+        // White "N" glyph rendered in the logo's own bold face, sized so it
+        // visually fills the rounded square (about 20 logical pt).
+        const int logo_glyph_pt = dpi_.logical_to_pixels(20);
+        nfui::draw_text(hdc, logo, L"N",
+                        g_fonts.bold(dpi, logo_glyph_pt),
+                        palette.accent_text,
+                        DT_CENTER | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX);
 
-        // Brand title.
-        RECT title_rc{outer, outer, client.right - outer, outer + px(40)};
-        nfui::draw_text(target, title_rc, L"NativeFrame UI",
-                        g_fonts.bold(d, nfui::font_pt::xl), g_palette.text,
-                        DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX);
+        // Centered hero column -- title, subtitle, primary, secondary.
+        constexpr int kColWidthLogical = 480;
+        int col_w = dpi_.logical_to_pixels(kColWidthLogical);
+        if (col_w > client.right) col_w = client.right;
+        const int col_x = (client.right - col_w) / 2;
 
-        // Brand subtitle.
-        RECT sub_rc{outer, outer + px(36), client.right - outer, outer + px(62)};
-        nfui::draw_text(target, sub_rc, L"Minimal sample",
-                        g_fonts.regular(d, nfui::font_pt::sm), g_palette.text_secondary,
-                        DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX);
+        const int title_h      = dpi_.logical_to_pixels(40);
+        const int subtitle_h   = dpi_.logical_to_pixels(20);
+        const int btn_h        = dpi_.logical_to_pixels(40);
+        const int gap_title_sub = dpi_.logical_to_pixels(8);
+        const int gap_sub_btn1  = dpi_.logical_to_pixels(24);
+        const int gap_btn1_btn2 = dpi_.logical_to_pixels(12);
+        const int content_h = title_h + gap_title_sub + subtitle_h
+                            + gap_sub_btn1 + btn_h
+                            + gap_btn1_btn2 + btn_h;
+        int y = (client.bottom - content_h) / 2;
+        if (y < 0) y = 0;
 
-        // Accent divider under the brand block.
-        RECT divider{outer, outer + px(68), outer + px(120), outer + px(70)};
-        nfui::fill_rect(target, divider, g_palette.accent);
+        RECT title_rect{ col_x, y, col_x + col_w, y + title_h };
+        nfui::draw_text(hdc, title_rect, L"NativeFrame UI",
+                        g_fonts.bold(dpi, nfui::font_pt::xl),
+                        palette.text,
+                        DT_CENTER | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX);
+        y += title_h + gap_title_sub;
 
-        // Status line at the bottom of the window.
-        if (g_status_rect.bottom > g_status_rect.top) {
-            nfui::draw_text(target, g_status_rect, g_status,
-                            g_fonts.regular(d, nfui::font_pt::base), g_palette.text,
-                            DT_CENTER | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS | DT_NOPREFIX);
-        }
+        RECT subtitle_rect{ col_x, y, col_x + col_w, y + subtitle_h };
+        nfui::draw_text(hdc, subtitle_rect, L"A minimal sample for the native shell",
+                        g_fonts.regular(dpi, nfui::font_pt::sm),
+                        palette.text_secondary,
+                        DT_CENTER | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX);
+        y += subtitle_h + gap_sub_btn1;
 
-        EndPaint(hwnd, &ps);
+        // Primary action -- accent fill, white text. Pressed (or hover) lifts
+        // to accent_hover so the state is visually distinct from rest.
+        RECT btn1{ col_x, y, col_x + col_w, y + btn_h };
+        const nfui::Color primary_fill =
+            g_primary_pressed
+                ? palette.accent_hover
+                : palette.accent;
+        nfui::fill_rounded_rect(hdc, btn1, metrics.corner_radius_control,
+                                primary_fill, primary_fill);
+        nfui::draw_text(hdc, btn1, L"Open Sample",
+                        g_fonts.semibold(dpi, nfui::font_pt::base),
+                        palette.accent_text,
+                        DT_CENTER | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX);
+        y += btn_h + gap_btn1_btn2;
+
+        // Secondary action -- surface fill with a 1 px palette.border outline
+        // so the "View on GitHub" button reads as a secondary tier against
+        // the gradient background. Pressed swaps in surface_hover.
+        RECT btn2{ col_x, y, col_x + col_w, y + btn_h };
+        const nfui::Color second_fill =
+            g_secondary_pressed
+                ? palette.surface_hover
+                : palette.surface;
+        nfui::fill_rounded_rect(hdc, btn2, metrics.corner_radius_control,
+                                second_fill, palette.border);
+        nfui::draw_text(hdc, btn2, L"View on GitHub",
+                        g_fonts.semibold(dpi, nfui::font_pt::base),
+                        palette.text,
+                        DT_CENTER | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX);
+
+        EndPaint(hwnd, &paint);
         return 0;
     }
-
-    case WM_ERASEBKGND:
+    if (msg == WM_ERASEBKGND) {
         return 1;
-
-    case WM_DESTROY:
+    }
+    if (msg == WM_DESTROY) {
         PostQuitMessage(0);
         return 0;
-
-    default:
-        break;
     }
     return DefWindowProcW(hwnd, msg, wparam, lparam);
 }
@@ -211,7 +276,7 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, LPWSTR, int) {
         return 1;
     }
 
-    g_palette = nfui::theme_palette(nfui::ThemeMode::light);
+    g_theme_mode = parse_theme_mode();
 
     WNDCLASSEXW wc{};
     wc.cbSize = sizeof(wc);
@@ -219,21 +284,24 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, LPWSTR, int) {
     wc.lpfnWndProc = &wnd_proc;
     wc.hInstance = instance;
     wc.hCursor = LoadCursorW(nullptr, IDC_ARROW);
-    wc.hbrBackground = CreateSolidBrush(g_palette.background.rgb);
+    wc.hbrBackground = nullptr;  // paint_gradient handles the chrome
     wc.lpszClassName = L"NFUI_MINIMAL";
-    if (RegisterClassExW(&wc) == 0) {
-        return 2;
-    }
+    if (RegisterClassExW(&wc) == 0) return 2;
 
-    // Logical size 560 x 280; the create-time WM_CREATE path will scale and
-    // centre the controls once the window DPI is known.
+    // Centre the demo on the desktop work area so the chrome always lands
+    // in a predictable spot regardless of monitor layout.
+    constexpr int kWinWidthLogical  = 640;
+    constexpr int kWinHeightLogical = 460;
+    RECT work_area{};
+    SystemParametersInfoW(SPI_GETWORKAREA, 0, &work_area, 0);
+    const int wx = work_area.left + ((work_area.right  - work_area.left) - kWinWidthLogical) / 2;
+    const int wy = work_area.top  + ((work_area.bottom - work_area.top)  - kWinHeightLogical) / 2;
+
     HWND hwnd = CreateWindowExW(0, wc.lpszClassName, L"NativeFrameUI Minimal",
                                 WS_OVERLAPPEDWINDOW | WS_VISIBLE,
-                                CW_USEDEFAULT, CW_USEDEFAULT, 560, 280,
+                                wx, wy, kWinWidthLogical, kWinHeightLogical,
                                 nullptr, nullptr, instance, nullptr);
-    if (hwnd == nullptr) {
-        return 3;
-    }
+    if (hwnd == nullptr) return 3;
 
     MSG msg{};
     while (GetMessageW(&msg, nullptr, 0, 0) > 0) {

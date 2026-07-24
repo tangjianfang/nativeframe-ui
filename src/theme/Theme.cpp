@@ -21,7 +21,7 @@ ThemePalette theme_palette(ThemeMode mode) noexcept {
             to_color(RGB(64, 64, 68)),    to_color(RGB(238, 238, 240)), to_color(RGB(170, 170, 176)),
             to_color(RGB(232, 142, 110)), to_color(RGB(244, 165, 130)), to_color(RGB(255, 255, 255)),
             to_color(RGB(58, 46, 38)),    to_color(RGB(238, 238, 240)), to_color(RGB(232, 122, 108)),
-            to_color(RGB(120, 184, 140)), to_color(RGB(232, 176, 70)),  to_color(RGB(0, 0, 0)),
+            to_color(RGB(120, 184, 140)), to_color(RGB(232, 176, 70)),  to_color(RGB(96, 168, 216)), to_color(RGB(0, 0, 0)),
             // CP16: shadow tint (alpha baked by helper)
         };
     case ThemeMode::high_contrast:
@@ -66,6 +66,7 @@ ThemePalette theme_palette(ThemeMode mode) noexcept {
             to_color(RGB(255, 132, 132)), // danger       — 8.89:1 AAA
             to_color(RGB(80, 255, 132)),  // success      — 15.98:1 AAA
             to_color(RGB(255, 176, 0)),   // warning      — 11.46:1 AAA, orange to separate from yellow accent
+            to_color(RGB(85, 255, 255)),  // info         — cyan, distinct from warning/accent
             to_color(RGB(255, 255, 255)), // CP16: shadow tint — HC uses a white halo so the shadow reads as a glow, not a smudge
         };
     case ThemeMode::system:
@@ -76,7 +77,7 @@ ThemePalette theme_palette(ThemeMode mode) noexcept {
             to_color(RGB(219, 215, 204)), to_color(RGB(31, 30, 29)),    to_color(RGB(107, 104, 98)),
             to_color(RGB(217, 119, 87)),  to_color(RGB(193, 95, 63)),   to_color(RGB(255, 255, 255)),
             to_color(RGB(242, 214, 200)), to_color(RGB(31, 30, 29)),    to_color(RGB(199, 84, 80)),
-            to_color(RGB(77, 124, 95)),   to_color(RGB(184, 130, 31)),
+            to_color(RGB(77, 124, 95)),   to_color(RGB(184, 130, 31)),  to_color(RGB(96, 168, 216)),
             to_color(RGB(0, 0, 0)),       // CP16: shadow tint (alpha baked by helper)
         };
     }
@@ -89,6 +90,36 @@ ThemeTokens theme_tokens(ThemeMode mode) noexcept {
 
 ThemeMetrics theme_metrics() noexcept {
     return ThemeMetrics{};
+}
+
+const std::array<Color, 8>& chart_series_palette(ThemeMode mode) noexcept {
+    static const std::array<Color, 8> chart_series_light = {
+        Color{RGB(76, 120, 168)}, Color{RGB(84, 162, 75)},  Color{RGB(245, 133, 24)}, Color{RGB(228, 87, 86)},
+        Color{RGB(178, 121, 162)}, Color{RGB(114, 183, 178)}, Color{RGB(238, 202, 59)},  Color{RGB(157, 117, 93)}
+    };
+    static const std::array<Color, 8> chart_series_dark = {
+        Color{RGB(91, 143, 249)}, Color{RGB(90, 216, 166)}, Color{RGB(255, 157, 77)}, Color{RGB(232, 104, 74)},
+        Color{RGB(146, 112, 202)}, Color{RGB(109, 200, 236)}, Color{RGB(246, 189, 22)},  Color{RGB(84, 162, 75)}
+    };
+    static const std::array<Color, 8> chart_series_hc = {
+        Color{RGB(255, 255, 255)}, Color{RGB(85, 255, 85)},  Color{RGB(85, 85, 255)},  Color{RGB(255, 85, 255)},
+        Color{RGB(255, 170, 85)}, Color{RGB(85, 255, 255)}, Color{RGB(255, 255, 85)}, Color{RGB(255, 85, 85)}
+    };
+    switch (mode) {
+    case ThemeMode::dark:
+        return chart_series_dark;
+    case ThemeMode::high_contrast:
+        return chart_series_hc;
+    case ThemeMode::system:
+    case ThemeMode::light:
+    default:
+        return chart_series_light;
+    }
+}
+
+Color chart_series_color(ThemeMode mode, std::size_t index) noexcept {
+    const auto& palette = chart_series_palette(mode);
+    return palette[index % palette.size()];
 }
 
 bool is_high_contrast(const ThemePalette& p) noexcept {

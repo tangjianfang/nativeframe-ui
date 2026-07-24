@@ -915,9 +915,9 @@ int wmain() {
         const ThemePalette light = theme_palette(ThemeMode::light);
         const ThemePalette dark  = theme_palette(ThemeMode::dark);
         ok = expect(light.accent.rgb == RGB(217, 119, 87), L"light accent is Claude Code coral #D97757") && ok;
-        ok = expect(dark.accent.rgb  == RGB(217, 119, 87), L"dark accent is Claude Code coral #D97757") && ok;
+        ok = expect(dark.accent.rgb  == RGB(232, 142, 110), L"dark accent is CP32 desaturated coral #E88E6E") && ok;
         ok = expect(light.background.rgb == RGB(250, 249, 245), L"light background is warm cream #FAF9F5") && ok;
-        ok = expect(dark.background.rgb  == RGB(31, 30, 29),    L"dark background is warm ink #1F1E1D") && ok;
+        ok = expect(dark.background.rgb  == RGB(36, 36, 38),    L"dark background is CP32 neutral cool ink #242426") && ok;
         ok = expect(light.text.rgb != dark.text.rgb, L"light and dark text differ") && ok;
         const ThemeMetrics m = theme_metrics();
         ok = expect(m.corner_radius_control == 6, L"metrics control radius == 6") && ok;

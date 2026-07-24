@@ -6,78 +6,221 @@
 #include <windows.h>
 #include <windowsx.h>
 
-#include <algorithm>
-#include <array>
-#include <string>
-#include <vector>
+#include <cwchar>
+#include <string_view>
 
 namespace {
 
-constexpr UINT ocm_base = WM_USER + 0x1c00;
+constexpr int command_about = 40002;
+constexpr int context_refresh = 41001;
 
-constexpr int cmd_about = 40002;
-constexpr int cmd_context_refresh = 41001;
+// Menu commands routed by the CommandRouter. The toolbar buttons and the menu
+// share these IDs so a click on "New file" and File > New both flow through the
+// same handler. Keeping them in one place avoids command-id drift.
+constexpr int idm_new        = 42001;
+constexpr int idm_open       = 42002;
+constexpr int idm_save       = 42003;
+constexpr int idm_run        = 42004;
+constexpr int idm_debug      = 42005;
+constexpr int idm_search     = 42006;
 
-constexpr int cmd_theme_light = 40101;
-constexpr int cmd_theme_dark = 40102;
-constexpr int cmd_theme_hc = 40103;
+constexpr int id_search          = 101;
+constexpr int id_tree            = 102;
+constexpr int id_tabs            = 103;
+constexpr int id_list            = 104;
+constexpr int id_status          = 105;
+constexpr int id_splitter_left   = 106;
+constexpr int id_splitter_right  = 107;
+constexpr int id_slider          = 108;
+constexpr int id_inspector_panel = 109;
 
-constexpr int cmd_toolbar_plus = 40201;
-constexpr int cmd_toolbar_hamburger = 40202;
-constexpr int cmd_toolbar_chevron = 40203;
-constexpr int cmd_toolbar_play = 40204;
-constexpr int cmd_toolbar_warning = 40205;
-constexpr int cmd_toolbar_search = 40206;
+// CP31: logical layout constants in DIPs. All on-screen geometry is derived
+// from these values through DpiScale::logical_to_pixels() so the workbench
+// keeps the same proportions at 96, 144, and 192 DPI.
+//
+// Layout (top → down):
+//   menu bar (OS)   y = 0..~20
+//   toolbar strip   y = base_toolbar_top..base_toolbar_top + base_toolbar_height
+//   PROJECT label   y = base_top..base_top + base_project_label_h
+//   search row      y = base_search_top..base_search_top + base_search_height
+//   tree            y = base_search_top + base_search_height + base_margin..bottom
+//   right pane      y = base_search_top..bottom (synchronized with the search row)
+constexpr int base_margin           = 8;
+constexpr int base_toolbar_top      = 8;    // top of icon strip (just under menu)
+constexpr int base_toolbar_height   = 36;   // icon strip beneath the menu
+constexpr int base_top              = 56;   // top of PROJECT label / left-pane content
+constexpr int base_project_label_h  = 24;   // PROJECT header strip
+constexpr int base_left_width       = 250;
+constexpr int base_right_width      = 240;
+constexpr int base_splitter_width   = 4;
+constexpr int base_search_height    = 28;
+constexpr int base_tabs_height      = 28;
+constexpr int base_zoom_label_h     = 20;
+constexpr int base_slider_height    = 28;
+constexpr int base_build_panel_h    = 92;   // rounded card under the slider
+constexpr int base_toolbar_button   = 28;
+constexpr int base_toolbar_gap      = 4;
+constexpr int base_toolbar_group    = 12;
 
-constexpr int id_toolbar_panel = 200;
-constexpr int id_left_panel = 201;
-constexpr int id_center_panel = 202;
-constexpr int id_right_panel = 203;
-constexpr int id_theme_light = 204;
-constexpr int id_theme_dark = 205;
-constexpr int id_theme_hc = 206;
-constexpr int id_project_header = 207;
-constexpr int id_search = 208;
-constexpr int id_tree = 209;
-constexpr int id_tabs = 210;
-constexpr int id_list = 211;
-constexpr int id_list_footer = 212;
-constexpr int id_zoom_label = 213;
-constexpr int id_zoom_slider = 214;
-constexpr int id_zoom_value = 215;
-constexpr int id_build_label = 216;
-constexpr int id_build_progress = 217;
-constexpr int id_build_pct = 218;
-constexpr int id_inspector_text = 219;
-constexpr int id_left_splitter = 220;
-constexpr int id_right_splitter = 221;
-constexpr int id_status = 222;
+// CP28: status dot text codes used to colour the dot rendered before each
+// list row's status column. The leading "● " glyph is plain text — the colour
+// comes from the NM_CUSTOMDRAW path that drives fill_ellipse for the dot.
+constexpr std::wstring_view kStatusOk      = L"\x25CF ready";
+constexpr std::wstring_view kStatusOkAlt   = L"\x25CF linked";
+constexpr std::wstring_view kStatusOkDone  = L"\x25CF compiled";
+constexpr std::wstring_view kStatusPending = L"\x25CF pending";
+
+// Toolbar button indices for the icon strip beneath the menu bar. The index
+// matches the IconKind assigned in toolbar_icon(); hit-testing and click
+// handling both key off this enum.
+enum ToolbarButton {
+    TB_NEW = 0,
+    TB_OPEN,
+    TB_SAVE,
+    TB_RUN,
+    TB_DEBUG,
+    TB_SEARCH,
+    TB_COUNT,
+};
 
 class WorkbenchWindow final : public nfui::Window {
 public:
     explicit WorkbenchWindow(HINSTANCE instance)
         : instance_(instance),
           resources_(instance),
-          palette_(nfui::theme_palette(nfui::ThemeMode::light)),
+          palette_(nfui::theme_palette(mode_)),
           menu_(palette_) {
-        commands_.set_handler(nfui::CommandId{IDM_NFUI_EXIT}, [this](nfui::CommandId) {
-            destroy();
-            return true;
-        });
-        commands_.set_handler(nfui::CommandId{cmd_about}, [this](nfui::CommandId) {
-            static_cast<void>(about_.show_modal(instance_,
-                                                MAKEINTRESOURCEW(IDD_NFUI_ABOUT),
-                                                hwnd(),
-                                                &WorkbenchWindow::about_dlg_proc));
-            return true;
-        });
+        // CP28: route every menu + toolbar command through a single hub so a
+        // click on the toolbar's "New" button and File > New both flow
+        // through the same handler. status_ is null at construction time;
+        // the handlers reach it through WorkbenchWindow* captured by-value.
+        register_command_handlers();
+    }
 
-        toolbar_icons_[0] = ToolbarIcon{nfui::IconKind::plus,        false, {}, cmd_toolbar_plus};
-        toolbar_icons_[1] = ToolbarIcon{nfui::IconKind::hamburger,     false, {}, cmd_toolbar_hamburger};
-        toolbar_icons_[2] = ToolbarIcon{nfui::IconKind::chevron_right, false, {}, cmd_toolbar_chevron};
-        toolbar_icons_[3] = ToolbarIcon{nfui::IconKind::none,          true,  {}, cmd_toolbar_play};
-        toolbar_icons_[4] = ToolbarIcon{nfui::IconKind::warning,       false, {}, cmd_toolbar_warning};
-        toolbar_icons_[5] = ToolbarIcon{nfui::IconKind::search,        false, {}, cmd_toolbar_search};
+    // CP32: lets wWinMain seed the palette before create_main wires it into
+    // every wrapper. Without this, --theme dark would first paint light,
+    // then SetWindowTheme/DwmSetWindowAttribute only swaps the non-client
+    // chrome — the wrapped controls stay light. The menu_ field is move-only
+    // so we update its palette in place via set_palette() rather than
+    // reassigning the whole wrapper.
+    [[nodiscard]] bool set_initial_theme(nfui::ThemeMode mode) noexcept {
+        if (hwnd() != nullptr) return false;
+        mode_ = mode;
+        palette_ = nfui::theme_palette(mode);
+        menu_.set_palette(palette_);
+        return true;
+    }
+
+    ~WorkbenchWindow() noexcept override {
+        // Remove the search-edit subclass so SetWindowSubclass's reference
+        // count doesn't leak if the HWND outlives the wrapper.
+        if (search_.hwnd() != nullptr) {
+            RemoveWindowSubclass(search_.hwnd(),
+                                 &WorkbenchWindow::search_subclass_proc,
+                                 reinterpret_cast<UINT_PTR>(this));
+        }
+        if (tabs_.hwnd() != nullptr) {
+            RemoveWindowSubclass(tabs_.hwnd(),
+                                 &WorkbenchWindow::tabs_subclass_proc,
+                                 reinterpret_cast<UINT_PTR>(this));
+        }
+    }
+
+    static INT_PTR CALLBACK about_dlg_proc(HWND dlg, UINT msg, WPARAM wp, LPARAM lp) {
+        (void)wp;
+        (void)lp;
+        switch (msg) {
+            case WM_INITDIALOG:
+                return TRUE;
+            case WM_COMMAND:
+                if (LOWORD(wp) == IDOK || LOWORD(wp) == IDCANCEL) {
+                    EndDialog(dlg, LOWORD(wp));
+                    return TRUE;
+                }
+                return FALSE;
+            case WM_CLOSE:
+                EndDialog(dlg, IDCANCEL);
+                return TRUE;
+            default:
+                return FALSE;
+        }
+    }
+
+    // CP28: search-edit subclass. The native Edit paints its own client area;
+    // we let it run, then overlay a magnifier glyph on top so the search box
+    // reads as a polished surface (matches the reference's left-aligned icon
+    // inside the field). The subclass runs after DefSubclassProc so the
+    // native paint is fully flushed by the time we issue GetDC.
+    static LRESULT CALLBACK search_subclass_proc(HWND hwnd, UINT msg, WPARAM w,
+                                                  LPARAM l, UINT_PTR id, DWORD_PTR ref) {
+        auto* self = reinterpret_cast<WorkbenchWindow*>(ref);
+        switch (msg) {
+        case WM_PAINT: {
+            const LRESULT res = DefSubclassProc(hwnd, msg, w, l);
+            if (self != nullptr) {
+                self->paint_search_overlay(hwnd);
+            }
+            return res;
+        }
+        case WM_NCDESTROY: {
+            RemoveWindowSubclass(hwnd, &WorkbenchWindow::search_subclass_proc, id);
+            return DefSubclassProc(hwnd, msg, w, l);
+        }
+        default:
+            break;
+        }
+        return DefSubclassProc(hwnd, msg, w, l);
+    }
+
+    // CP32: inspector-panel subclass. The Panel paints its own surface, so
+    // any overlay drawn on the parent DC is overwritten when the child
+    // repaints. Subclass so we draw the magnifier + caption INSIDE the
+    // panel's WM_PAINT cycle (after Panel::on_paint fills the rounded card).
+    static LRESULT CALLBACK inspector_subclass_proc(HWND hwnd, UINT msg, WPARAM w,
+                                                     LPARAM l, UINT_PTR id, DWORD_PTR ref) {
+        auto* self = reinterpret_cast<WorkbenchWindow*>(ref);
+        switch (msg) {
+        case WM_PAINT: {
+            const LRESULT res = DefSubclassProc(hwnd, msg, w, l);
+            if (self != nullptr) {
+                self->paint_inspector_overlay(hwnd);
+            }
+            return res;
+        }
+        case WM_NCDESTROY: {
+            RemoveWindowSubclass(hwnd, &WorkbenchWindow::inspector_subclass_proc, id);
+            return DefSubclassProc(hwnd, msg, w, l);
+        }
+        default:
+            break;
+        }
+        return DefSubclassProc(hwnd, msg, w, l);
+    }
+
+    // CP32: tabs subclass. After the native TabControl paints, query the
+    // currently selected tab and overlay a 2 device-px coral bar at the
+    // bottom of its rect (matches the reference design — the coral stripe
+    // signals the active tab). Coords from TabCtrl_GetItemRect are in the
+    // tabs HWND's client space, so a GetDC on that HWND lines up directly.
+    static LRESULT CALLBACK tabs_subclass_proc(HWND hwnd, UINT msg, WPARAM w,
+                                                LPARAM l, UINT_PTR id, DWORD_PTR ref) {
+        auto* self = reinterpret_cast<WorkbenchWindow*>(ref);
+        switch (msg) {
+        case WM_PAINT: {
+            const LRESULT res = DefSubclassProc(hwnd, msg, w, l);
+            if (self != nullptr) {
+                self->paint_tabs_highlight(hwnd);
+            }
+            return res;
+        }
+        case WM_NCDESTROY: {
+            RemoveWindowSubclass(hwnd, &WorkbenchWindow::tabs_subclass_proc, id);
+            return DefSubclassProc(hwnd, msg, w, l);
+        }
+        default:
+            break;
+        }
+        return DefSubclassProc(hwnd, msg, w, l);
     }
 
     [[nodiscard]] bool create_main(int show_command) noexcept {
@@ -89,27 +232,52 @@ public:
             0,
             CW_USEDEFAULT,
             CW_USEDEFAULT,
-            1320,
-            860,
+            1180,
+            760,
         };
 
         if (!create(params)) {
             return false;
         }
 
-        dpi_ = nfui::DpiScale(nfui::dpi_of(hwnd()));
-        apply_window_icon();
-        rebuild_menu();
+        menu_.apply_to_bar(hwnd());
+        // CP28: extend the menu to match the reference (File / Edit / View /
+        // Run / Window / Help). Each popup() returns a builder targeting the
+        // new submenu; the chained .item() calls populate that submenu.
+        (void)menu_.builder(menu_.bar()).popup(L"&File")
+            .item(L"&New",   idm_new)
+            .item(L"&Open",  idm_open)
+            .item(L"&Save",  idm_save)
+            .separator()
+            .item(L"E&xit",  IDM_NFUI_EXIT);
+        (void)menu_.builder(menu_.bar()).popup(L"&Edit")
+            .item(L"&Undo", idm_new)
+            .item(L"&Redo", idm_open)
+            .separator()
+            .item(L"Cu&t",  idm_save)
+            .item(L"&Copy", idm_run)
+            .item(L"&Paste",idm_debug);
+        (void)menu_.builder(menu_.bar()).popup(L"&View")
+            .item(L"&Zoom In",  idm_search)
+            .item(L"Zoom &Out", idm_new)
+            .separator()
+            .item(L"&Reset",    idm_open);
+        (void)menu_.builder(menu_.bar()).popup(L"&Run")
+            .item(L"&Run",   idm_run)
+            .item(L"&Debug", idm_debug);
+        (void)menu_.builder(menu_.bar()).popup(L"&Window")
+            .item(L"&Cascade",      idm_new)
+            .item(L"&Tile",         idm_open)
+            .separator()
+            .item(L"Close &All",    idm_save);
+        (void)menu_.builder(menu_.bar()).popup(L"&Help")
+            .item(L"&About", command_about);
         SetMenu(hwnd(), menu_.bar().get());
 
-        if (!create_children()) {
-            return false;
-        }
-
-        populate_tree();
-        populate_list();
-        apply_native_fonts();
+        dpi_ = nfui::DpiScale(nfui::dpi_of(hwnd()));
+        create_children();
         layout();
+        refresh_status();
 
         ShowWindow(hwnd(), show_command);
         UpdateWindow(hwnd());
@@ -135,13 +303,51 @@ protected:
                              SWP_NOACTIVATE | SWP_NOZORDER);
             }
             apply_native_fonts();
+            apply_search_margins();
             layout();
             InvalidateRect(hwnd(), nullptr, FALSE);
             return 0;
         }
+        case WM_HSCROLL:
+            if (reinterpret_cast<HWND>(lparam) == slider_.hwnd()) {
+                update_zoom_display();
+                invalidate_right_pane();
+            }
+            return 0;
         case WM_CONTEXTMENU:
             show_context_menu(GET_X_LPARAM(lparam), GET_Y_LPARAM(lparam));
             return 0;
+        case WM_MOUSEMOVE: {
+            const int x = GET_X_LPARAM(lparam);
+            const int y = GET_Y_LPARAM(lparam);
+            const int hit = hit_test_toolbar(x, y);
+            if (hit != hovered_toolbar_) {
+                hovered_toolbar_ = hit;
+                InvalidateRect(hwnd(), nullptr, FALSE);
+            }
+            if (!tracking_toolbar_) {
+                TRACKMOUSEEVENT tme{sizeof(tme), TME_LEAVE, hwnd(), 0};
+                TrackMouseEvent(&tme);
+                tracking_toolbar_ = true;
+            }
+            return 0;
+        }
+        case WM_MOUSELEAVE:
+            tracking_toolbar_ = false;
+            if (hovered_toolbar_ != -1) {
+                hovered_toolbar_ = -1;
+                InvalidateRect(hwnd(), nullptr, FALSE);
+            }
+            return 0;
+        case WM_LBUTTONDOWN: {
+            const int x = GET_X_LPARAM(lparam);
+            const int y = GET_Y_LPARAM(lparam);
+            const int hit = hit_test_toolbar(x, y);
+            if (hit >= 0) {
+                on_toolbar_click(hit);
+            }
+            return 0;
+        }
         case WM_ERASEBKGND:
             return 1;
         case WM_PAINT: {
@@ -152,7 +358,7 @@ protected:
             {
                 nfui::MemoryDC mem(hdc, client);
                 HDC target = mem.valid() ? mem.dc() : hdc;
-                nfui::fill_rect(target, client, palette_.background);
+                paint_chrome(target, client);
             }
             EndPaint(hwnd(), &paint);
             return 0;
@@ -166,475 +372,309 @@ protected:
     }
 
     bool on_command(int command_id, HWND, UINT notification_code) override {
-        (void)notification_code;
-        switch (command_id) {
-        case IDM_NFUI_EXIT:
-            destroy();
-            return true;
-        case cmd_about:
-            static_cast<void>(about_.show_modal(instance_,
-                                                MAKEINTRESOURCEW(IDD_NFUI_ABOUT),
-                                                hwnd(),
-                                                &WorkbenchWindow::about_dlg_proc));
-            return true;
-        case cmd_theme_light:
-            set_theme(nfui::ThemeMode::light);
-            return true;
-        case cmd_theme_dark:
-            set_theme(nfui::ThemeMode::dark);
-            return true;
-        case cmd_theme_hc:
-            set_theme(nfui::ThemeMode::high_contrast);
-            return true;
-        case cmd_toolbar_plus:
-        case cmd_toolbar_hamburger:
-        case cmd_toolbar_chevron:
-        case cmd_toolbar_play:
-        case cmd_toolbar_warning:
-        case cmd_toolbar_search:
-            on_toolbar_command(command_id);
-            return true;
-        case cmd_context_refresh:
-            set_status(L"Context refresh command routed.");
+        if (notification_code == 0 && commands_.route(nfui::CommandId{command_id})) {
             return true;
         }
-        if (notification_code == 0 && commands_.route(nfui::CommandId{command_id})) {
+        if (command_id == context_refresh) {
+            set_status(L"\x25CF Context refresh command routed.");
             return true;
         }
         return false;
     }
 
 private:
-    struct ToolbarIcon {
-        nfui::IconKind kind{nfui::IconKind::none};
-        bool custom_play{};
-        RECT rect{};
-        int command{};
-    };
-
-    static INT_PTR CALLBACK about_dlg_proc(HWND dlg, UINT msg, WPARAM wp, LPARAM lp) noexcept {
-        (void)lp;
-        switch (msg) {
-            case WM_INITDIALOG:
-                return TRUE;
-            case WM_COMMAND:
-                if (LOWORD(wp) == IDOK || LOWORD(wp) == IDCANCEL) {
-                    EndDialog(dlg, LOWORD(wp));
-                    return TRUE;
-                }
-                return FALSE;
-            case WM_CLOSE:
-                EndDialog(dlg, IDCANCEL);
-                return TRUE;
-            default:
-                return FALSE;
-        }
+    void register_command_handlers() noexcept {
+        commands_.set_handler(nfui::CommandId{IDM_NFUI_EXIT}, [this](nfui::CommandId) {
+            destroy();
+            return true;
+        });
+        commands_.set_handler(nfui::CommandId{command_about}, [this](nfui::CommandId) {
+            static_cast<void>(about_.show_modal(instance_,
+                                                MAKEINTRESOURCEW(IDD_NFUI_ABOUT),
+                                                hwnd(),
+                                                &WorkbenchWindow::about_dlg_proc));
+            return true;
+        });
+        auto route_toolbar = [this](std::wstring_view label) {
+            set_status(label);
+        };
+        commands_.set_handler(nfui::CommandId{idm_new},
+            [route_toolbar](nfui::CommandId) { route_toolbar(L"\x25CF New file command routed."); return true; });
+        commands_.set_handler(nfui::CommandId{idm_open},
+            [route_toolbar](nfui::CommandId) { route_toolbar(L"\x25CF Open command routed."); return true; });
+        commands_.set_handler(nfui::CommandId{idm_save},
+            [route_toolbar](nfui::CommandId) { route_toolbar(L"\x25CF Save command routed."); return true; });
+        commands_.set_handler(nfui::CommandId{idm_run},
+            [route_toolbar](nfui::CommandId) { route_toolbar(L"\x25CF Run command routed."); return true; });
+        commands_.set_handler(nfui::CommandId{idm_debug},
+            [route_toolbar](nfui::CommandId) { route_toolbar(L"\x25CF Debug command routed."); return true; });
+        commands_.set_handler(nfui::CommandId{idm_search},
+            [route_toolbar](nfui::CommandId) { route_toolbar(L"\x25CF Search command routed."); return true; });
     }
 
-    [[nodiscard]] bool create_children() noexcept {
-        // Panels first so they can serve as parents / backgrounds.
-        nfui::ControlCreateParams panel_params{
-            instance_, hwnd(), id_toolbar_panel, L"", 0, 0, 100, 44};
-        toolbar_panel_.inject_theme(&palette_, &fonts_);
-        if (!toolbar_panel_.create(panel_params)) {
-            return false;
-        }
+    void create_children() {
+        // CP31: all geometry used at creation time is scaled by the live DPI.
+        const int margin       = dpi_.logical_to_pixels(base_margin);
+        const int top          = dpi_.logical_to_pixels(base_top);
+        const int project_h    = dpi_.logical_to_pixels(base_project_label_h);
+        // CP32: search/tree/tabs/slider all start below the PROJECT label.
+        const int search_top   = top + project_h + margin;
+        const int left_width   = dpi_.logical_to_pixels(base_left_width);
+        const int right_width  = dpi_.logical_to_pixels(base_right_width);
 
-        panel_params.control_id = id_left_panel;
-        left_panel_.inject_theme(&palette_, &fonts_);
-        if (!left_panel_.create(panel_params)) {
-            return false;
-        }
+        RECT client{};
+        GetClientRect(hwnd(), &client);
+        const int width = client.right - client.left;
+        const int right_left = width - right_width;
 
-        panel_params.control_id = id_center_panel;
-        center_panel_.inject_theme(&palette_, &fonts_);
-        if (!center_panel_.create(panel_params)) {
-            return false;
-        }
+        nfui::ControlCreateParams params{
+            instance_,
+            hwnd(),
+            id_search,
+            L"",
+            margin,
+            search_top,
+            left_width - margin * 2,
+            dpi_.logical_to_pixels(base_search_height),
+        };
 
-        panel_params.control_id = id_right_panel;
-        right_panel_.inject_theme(&palette_, &fonts_);
-        if (!right_panel_.create(panel_params)) {
-            return false;
-        }
-
-        // Toolbar theme pills.
-        nfui::ControlCreateParams button_params{
-            instance_, hwnd(), id_theme_light, L"Light", 0, 0, 52, 26};
-        theme_light_.inject_theme(&palette_, &fonts_);
-        if (!theme_light_.create(button_params)) {
-            return false;
-        }
-
-        button_params.control_id = id_theme_dark;
-        button_params.text = L"Dark";
-        theme_dark_.inject_theme(&palette_, &fonts_);
-        if (!theme_dark_.create(button_params)) {
-            return false;
-        }
-
-        button_params.control_id = id_theme_hc;
-        button_params.text = L"HC";
-        theme_hc_.inject_theme(&palette_, &fonts_);
-        if (!theme_hc_.create(button_params)) {
-            return false;
-        }
-
-        // Left sidebar controls.
-        nfui::ControlCreateParams child_params{
-            instance_, hwnd(), id_project_header, L"PROJECT", 0, 0, 100, 22};
-        project_header_.inject_theme(&palette_, &fonts_);
-        if (!project_header_.create(child_params)) {
-            return false;
-        }
-
-        child_params.control_id = id_search;
-        child_params.text = L"";
-        child_params.height = 32;
         search_.inject_theme(&palette_, &fonts_);
-        if (!search_.create(child_params)) {
-            return false;
-        }
-
-        child_params.control_id = id_tree;
-        child_params.text = L"";
-        child_params.height = 100;
         tree_.inject_theme(&palette_, &fonts_);
-        if (!tree_.create(child_params)) {
-            return false;
-        }
-
-        // Center controls.
-        child_params.parent = hwnd();
-        child_params.control_id = id_tabs;
-        child_params.text = L"";
-        child_params.height = 36;
         tabs_.inject_theme(&palette_, &fonts_);
-        if (!tabs_.create(child_params)) {
-            return false;
-        }
-        static_cast<void>(tabs_.set_padding(dip(12), dip(4)));
-
-        child_params.control_id = id_list;
-        child_params.text = L"";
-        child_params.height = 100;
         list_.inject_theme(&palette_, &fonts_);
-        if (!list_.create(child_params)) {
-            return false;
-        }
-        ListView_SetExtendedListViewStyle(list_.hwnd(), LVS_EX_FULLROWSELECT | LVS_EX_TRACKSELECT);
-
-        child_params.control_id = id_list_footer;
-        child_params.text = L"5 items";
-        child_params.height = 24;
-        list_footer_.inject_theme(&palette_, &fonts_);
-        if (!list_footer_.create(child_params)) {
-            return false;
-        }
-
-        // Right panel controls.
-        child_params.parent = hwnd();
-        child_params.control_id = id_zoom_label;
-        child_params.text = L"Zoom";
-        child_params.height = 20;
-        zoom_label_.inject_theme(&palette_, &fonts_);
-        if (!zoom_label_.create(child_params)) {
-            return false;
-        }
-
-        child_params.control_id = id_zoom_slider;
-        child_params.text = L"";
-        child_params.height = 24;
-        zoom_slider_.inject_theme(&palette_, &fonts_);
-        if (!zoom_slider_.create(child_params)) {
-            return false;
-        }
-        zoom_slider_.set_range(0, 100);
-        zoom_slider_.set_pos(60);
-
-        child_params.control_id = id_zoom_value;
-        child_params.text = L"60%";
-        child_params.height = 24;
-        zoom_value_.inject_theme(&palette_, &fonts_);
-        if (!zoom_value_.create(child_params)) {
-            return false;
-        }
-
-        child_params.control_id = id_build_label;
-        child_params.text = L"Build";
-        child_params.height = 20;
-        build_label_.inject_theme(&palette_, &fonts_);
-        if (!build_label_.create(child_params)) {
-            return false;
-        }
-
-        child_params.control_id = id_build_progress;
-        child_params.text = L"";
-        child_params.height = 24;
-        build_progress_.inject_theme(&palette_, &fonts_);
-        if (!build_progress_.create(child_params)) {
-            return false;
-        }
-        SendMessageW(build_progress_.hwnd(), PBM_SETRANGE, 0, MAKELPARAM(0, 100));
-        SendMessageW(build_progress_.hwnd(), PBM_SETPOS, 40, 0);
-
-        child_params.control_id = id_build_pct;
-        child_params.text = L"40%";
-        child_params.height = 24;
-        build_pct_.inject_theme(&palette_, &fonts_);
-        if (!build_pct_.create(child_params)) {
-            return false;
-        }
-
-        child_params.control_id = id_inspector_text;
-        child_params.text = L"Inspector — select an item to inspect its properties.";
-        child_params.height = 80;
-        inspector_text_.inject_theme(&palette_, &fonts_);
-        if (!inspector_text_.create(child_params)) {
-            return false;
-        }
-
-        // Splitters and status bar (children of main window).
-        nfui::ControlCreateParams main_child{
-            instance_, hwnd(), id_left_splitter, L"", 0, 0, 4, 100};
-        left_splitter_.inject_theme(&palette_, &fonts_);
-        left_splitter_.set_orientation(nfui::SplitterOrientation::Vertical);
-        if (!left_splitter_.create(main_child)) {
-            return false;
-        }
-
-        main_child.control_id = id_right_splitter;
-        right_splitter_.inject_theme(&palette_, &fonts_);
-        right_splitter_.set_orientation(nfui::SplitterOrientation::Vertical);
-        if (!right_splitter_.create(main_child)) {
-            return false;
-        }
-
-        main_child.control_id = id_status;
-        main_child.text = L"";
-        main_child.height = 22;
+        inspector_panel_.inject_theme(&palette_, &fonts_);
         status_.inject_theme(&palette_, &fonts_);
-        if (!status_.create(main_child)) {
-            return false;
+        slider_.inject_theme(&palette_, &fonts_);
+        left_splitter_.inject_theme(&palette_, &fonts_);
+        right_splitter_.inject_theme(&palette_, &fonts_);
+
+        static_cast<void>(search_.create(params));
+        // CP28: install our subclass AFTER the framework's visual_subclass
+        // proc so we run first on WM_PAINT (SetWindowSubclass dispatches in
+        // reverse install order). The chain is base < framework < ours;
+        // ours wins the first crack at WM_PAINT, hands off to DefSubclassProc
+        // (framework), then draws the magnifier overlay on top.
+        SetWindowSubclass(search_.hwnd(),
+                          &WorkbenchWindow::search_subclass_proc,
+                          reinterpret_cast<UINT_PTR>(this),
+                          reinterpret_cast<DWORD_PTR>(this));
+        // Placeholder "Search files..." — wParam = TRUE so the cue draws with
+        // focus-style colour even when the edit has focus. Combined with
+        // EM_SETMARGINS below, text never overlaps the magnifier glyph.
+        SendMessageW(search_.hwnd(), EM_SETCUEBANNER, TRUE,
+                     reinterpret_cast<LPARAM>(L"Search files..."));
+        apply_search_margins();
+
+        params.control_id = id_tree;
+        params.text = L"";
+        static_cast<void>(tree_.create(params));
+        // CP28: rebuild the tree contents to match the reference (PROJECT >
+        // src/ > main.cpp / App.cpp / App.h + resources / tests / docs).
+        populate_tree();
+
+        params.control_id = id_tabs;
+        static_cast<void>(tabs_.create(params));
+        static_cast<void>(tabs_.set_padding(dpi_.logical_to_pixels(12), dpi_.logical_to_pixels(4)));
+        insert_tab(0, L"Workspace");
+        insert_tab(1, L"Output");
+        // CP32: install a paint subclass so we can overlay a 2 device-px
+        // coral bar at the bottom of the currently selected tab. Subclass
+        // AFTER the framework's chrome subclass so we chain through
+        // DefSubclassProc (which triggers the framework's tab paint) and
+        // then draw the accent stripe on top.
+        SetWindowSubclass(tabs_.hwnd(),
+                          &WorkbenchWindow::tabs_subclass_proc,
+                          reinterpret_cast<UINT_PTR>(this),
+                          reinterpret_cast<DWORD_PTR>(this));
+
+        params.control_id = id_list;
+        static_cast<void>(list_.create(params));
+        ListView_SetExtendedListViewStyle(list_.hwnd(),
+                                          LVS_EX_FULLROWSELECT | LVS_EX_GRIDLINES);
+        populate_list_columns();
+        populate_list_rows();
+        // CP28: install an item-paint subclass so we can draw a coloured
+        // dot (green/amber) ahead of each status column's text. Subclass
+        // AFTER the framework's chrome subclass; ours runs first and chains
+        // through DefSubclassProc so the framework's row chrome (text colour,
+        // selection, hover) keeps working.
+        SetWindowSubclass(list_.hwnd(),
+                          &WorkbenchWindow::list_subclass_proc,
+                          reinterpret_cast<UINT_PTR>(this),
+                          reinterpret_cast<DWORD_PTR>(this));
+
+        params.control_id = id_slider;
+        params.text = L"";
+        params.x = right_left + margin;
+        params.y = search_top + dpi_.logical_to_pixels(base_zoom_label_h) + margin;
+        params.width = right_width - margin * 2;
+        params.height = dpi_.logical_to_pixels(base_slider_height);
+        static_cast<void>(slider_.create(params));
+        slider_.set_range(50, 200);
+        slider_.set_pos(60);   // CP28: matches the reference's "60%" reading
+
+        params.control_id = id_inspector_panel;
+        params.text = L"";
+        // CP28: place the inspector card under the build panel so the right
+        // pane reads top-to-bottom as Zoom slider > Build progress > Inspector.
+        const int build_y = search_top + dpi_.logical_to_pixels(base_zoom_label_h)
+                             + dpi_.logical_to_pixels(base_slider_height) + margin * 2;
+        const int inspector_y = build_y + dpi_.logical_to_pixels(base_build_panel_h) + margin;
+        params.x = right_left + margin;
+        params.y = inspector_y;
+        params.width = right_width - margin * 2;
+        params.height = dpi_.logical_to_pixels(120);
+        static_cast<void>(inspector_panel_.create(params));
+        {
+            nfui::FrameStyle style{};
+            style.surface_brush = palette_.surface;
+            style.accent = palette_.border;
+            style.elevation = 2;
+            inspector_panel_.set_style(style);
         }
+        // CP32: install an inspector subclass so we paint the magnifier
+        // glyph + caption INSIDE the panel's own WM_PAINT cycle (after
+        // Panel::on_paint fills the surface). Painting on the parent DC
+        // leaves the overlay invisible — the child repaints its background
+        // and erases the chrome-layer text. Subclass runs after the
+        // framework's chrome subclass so it chains through DefSubclassProc
+        // (which triggers on_paint via WM_PAINT), then overlays icon + text.
+        SetWindowSubclass(inspector_panel_.hwnd(),
+                          &WorkbenchWindow::inspector_subclass_proc,
+                          reinterpret_cast<UINT_PTR>(this),
+                          reinterpret_cast<DWORD_PTR>(this));
 
-        // Install post-paint / custom-draw subclasses.
-        if (SetWindowSubclass(search_.hwnd(), &search_subclass_proc,
-                              reinterpret_cast<UINT_PTR>(this),
-                              reinterpret_cast<DWORD_PTR>(this)) == FALSE) {
-            return false;
+        params.control_id = id_splitter_left;
+        static_cast<void>(left_splitter_.create(params));
+
+        params.control_id = id_splitter_right;
+        static_cast<void>(right_splitter_.create(params));
+
+        params.control_id = id_status;
+        static_cast<void>(status_.create(params));
+
+        apply_native_fonts();
+    }
+
+    void apply_search_margins() noexcept {
+        if (search_.hwnd() == nullptr) {
+            return;
         }
-        if (SetWindowSubclass(list_.hwnd(), &listview_subclass_proc,
-                              reinterpret_cast<UINT_PTR>(this),
-                              reinterpret_cast<DWORD_PTR>(this)) == FALSE) {
-            return false;
-        }
-        if (SetWindowSubclass(right_panel_.hwnd(), &inspector_subclass_proc,
-                              reinterpret_cast<UINT_PTR>(this),
-                              reinterpret_cast<DWORD_PTR>(this)) == FALSE) {
-            return false;
-        }
-        if (SetWindowSubclass(toolbar_panel_.hwnd(), &toolbar_subclass_proc,
-                              reinterpret_cast<UINT_PTR>(this),
-                              reinterpret_cast<DWORD_PTR>(this)) == FALSE) {
-            return false;
-        }
-        if (SetWindowSubclass(status_.hwnd(), &status_subclass_proc,
-                              reinterpret_cast<UINT_PTR>(this),
-                              reinterpret_cast<DWORD_PTR>(this)) == FALSE) {
-            return false;
-        }
-        if (SetWindowSubclass(build_progress_.hwnd(), &progress_subclass_proc,
-                              reinterpret_cast<UINT_PTR>(this),
-                              reinterpret_cast<DWORD_PTR>(this)) == FALSE) {
-            return false;
-        }
-
-        // Styling that depends on palette/fonts being injected.
-        nfui::FrameStyle panel_style{};
-        panel_style.surface_brush = palette_.surface;
-        panel_style.accent = palette_.border;
-        toolbar_panel_.set_style(panel_style);
-        left_panel_.set_style(panel_style);
-        center_panel_.set_style(panel_style);
-        right_panel_.set_style(panel_style);
-
-        nfui::FrameStyle tab_style{};
-        tab_style.background = palette_.surface;
-        tab_style.foreground = palette_.text;
-        tab_style.chrome_text = palette_.text_secondary;
-        tab_style.chrome_bg = palette_.surface;
-        tabs_.set_style(tab_style);
-
-        nfui::TreeViewStyle tree_style{};
-        tree_style.row_background = palette_.surface;
-        tree_style.row_foreground = palette_.text;
-        tree_style.line_color = palette_.border;
-        tree_style.selected_background = palette_.selection;
-        tree_style.selected_foreground = palette_.selection_text;
-        tree_.set_style(tree_style);
-
-        nfui::ListViewStyle list_style{};
-        list_style.row_background = palette_.surface;
-        list_style.row_foreground = palette_.text;
-        list_style.selected_background = palette_.selection;
-        list_style.selected_foreground = palette_.selection_text;
-        list_style.header_background = palette_.surface;
-        list_style.header_caption = palette_.text;
-        list_.set_style(list_style);
-
-        nfui::FrameStyle progress_style{};
-        progress_style.surface_brush = palette_.surface;
-        progress_style.bar_color = palette_.accent;
-        build_progress_.set_style(progress_style);
-
-        nfui::SliderStyle slider_style{};
-        slider_style.track_color = palette_.border;
-        slider_style.filled_color = palette_.accent;
-        slider_style.thumb_color = palette_.accent;
-        zoom_slider_.set_style(slider_style);
-
-        nfui::TextStyle header_style{};
-        header_style.use_semibold = true;
-        header_style.font_size_pt = nfui::font_pt::xs;
-        header_style.foreground = palette_.text_secondary;
-        header_style.align_v = nfui::StaticTextAlignV::middle;
-        project_header_.set_style(header_style);
-
-        nfui::TextStyle footer_style{};
-        footer_style.font_size_pt = nfui::font_pt::xs;
-        footer_style.foreground = palette_.text_secondary;
-        footer_style.align_v = nfui::StaticTextAlignV::middle;
-        list_footer_.set_style(footer_style);
-
-        nfui::TextStyle label_style{};
-        label_style.font_size_pt = nfui::font_pt::xs;
-        label_style.foreground = palette_.text;
-        label_style.align_v = nfui::StaticTextAlignV::middle;
-        zoom_label_.set_style(label_style);
-        build_label_.set_style(label_style);
-
-        nfui::TextStyle value_style{};
-        value_style.font_size_pt = nfui::font_pt::xs;
-        value_style.foreground = palette_.text_secondary;
-        value_style.align_h = nfui::StaticTextAlignH::right;
-        value_style.align_v = nfui::StaticTextAlignV::middle;
-        zoom_value_.set_style(value_style);
-        build_pct_.set_style(value_style);
-
-        nfui::TextStyle inspector_style{};
-        inspector_style.font_size_pt = nfui::font_pt::sm;
-        inspector_style.foreground = palette_.text_secondary;
-        inspector_style.align_h = nfui::StaticTextAlignH::center;
-        inspector_style.align_v = nfui::StaticTextAlignV::top;
-        inspector_style.single_line = false;
-        inspector_text_.set_style(inspector_style);
-
-        return true;
+        // CP28: reserve horizontal padding inside the Edit so the user's
+        // text never overlaps the magnifier overlay. The left margin has to
+        // clear the icon + its inner gap; the right margin is a small cosmetic
+        // pad matching the reference's inset.
+        const int left_margin  = dpi_.logical_to_pixels(26);
+        const int right_margin = dpi_.logical_to_pixels(8);
+        SendMessageW(search_.hwnd(), EM_SETMARGINS,
+                     EC_LEFTMARGIN | EC_RIGHTMARGIN,
+                     MAKELPARAM(left_margin, right_margin));
     }
 
     void apply_native_fonts() noexcept {
-        const int d = dpi_.dpi();
-        SendMessageW(search_.hwnd(), WM_SETFONT,
-                     reinterpret_cast<WPARAM>(fonts_.regular(d, nfui::font_pt::sm)), TRUE);
-        SendMessageW(tree_.hwnd(), WM_SETFONT,
-                     reinterpret_cast<WPARAM>(fonts_.regular(d, nfui::font_pt::sm)), TRUE);
-        SendMessageW(list_.hwnd(), WM_SETFONT,
-                     reinterpret_cast<WPARAM>(fonts_.regular(d, nfui::font_pt::sm)), TRUE);
-        SendMessageW(tabs_.hwnd(), WM_SETFONT,
-                     reinterpret_cast<WPARAM>(fonts_.regular(d, nfui::font_pt::sm)), TRUE);
-        SendMessageW(zoom_value_.hwnd(), WM_SETFONT,
-                     reinterpret_cast<WPARAM>(fonts_.regular(d, nfui::font_pt::xs)), TRUE);
-        SendMessageW(build_pct_.hwnd(), WM_SETFONT,
-                     reinterpret_cast<WPARAM>(fonts_.regular(d, nfui::font_pt::xs)), TRUE);
-
-        SendMessageW(search_.hwnd(), EM_SETMARGINS, EC_LEFTMARGIN,
-                     MAKELPARAM(dip(28), 0));
-
-        update_button_styles();
-    }
-
-    void update_button_styles() noexcept {
-        nfui::ButtonStyle pill_style{};
-        pill_style.corner_radius = dip(14);
-        pill_style.horizontal_padding = dip(10);
-        pill_style.vertical_padding = dip(4);
-        theme_light_.set_style(pill_style);
-        theme_dark_.set_style(pill_style);
-        theme_hc_.set_style(pill_style);
+        const int dpi_value = dpi_.dpi();
+        const HFONT sm_font    = fonts_.regular(dpi_value, nfui::font_pt::sm);
+        const HFONT base_font  = fonts_.regular(dpi_value, nfui::font_pt::base);
+        const HFONT header_font = fonts_.semibold(dpi_value, nfui::font_pt::lg);
+        // CP28: nav/list rows use sm (13), search bar + inspector copy use
+        // base (14), and the section headers ("PROJECT", "Build") use lg (20).
+        // The framework's font cache is DPI-keyed, so re-apply after every
+        // WM_DPICHANGED to keep the native chrome on the new face.
+        SendMessageW(search_.hwnd(),       WM_SETFONT, reinterpret_cast<WPARAM>(base_font),  TRUE);
+        SendMessageW(tree_.hwnd(),         WM_SETFONT, reinterpret_cast<WPARAM>(sm_font),    TRUE);
+        SendMessageW(tabs_.hwnd(),         WM_SETFONT, reinterpret_cast<WPARAM>(header_font), TRUE);
+        SendMessageW(list_.hwnd(),         WM_SETFONT, reinterpret_cast<WPARAM>(sm_font),    TRUE);
+        SendMessageW(status_.hwnd(),       WM_SETFONT, reinterpret_cast<WPARAM>(sm_font),    TRUE);
+        SendMessageW(slider_.hwnd(),       WM_SETFONT, reinterpret_cast<WPARAM>(sm_font),    TRUE);
     }
 
     void populate_tree() noexcept {
-        if (tree_.hwnd() == nullptr) {
-            return;
-        }
-        auto insert = [this](HTREEITEM parent, HTREEITEM after, const wchar_t* text) -> HTREEITEM {
-            TVINSERTSTRUCTW item{};
-            item.hParent = parent;
-            item.hInsertAfter = after;
-            item.item.mask = TVIF_TEXT;
-            item.item.pszText = const_cast<wchar_t*>(text);
-            return reinterpret_cast<HTREEITEM>(SendMessageW(tree_.hwnd(), TVM_INSERTITEMW, 0,
-                                                            reinterpret_cast<LPARAM>(&item)));
-        };
+        // CP28: root folder name + one expanded folder with three child
+        // files plus two collapsed folders at the bottom. The reference
+        // shows the tree system image list is engaged on Vista+ via the
+        // standard system ImageList, which renders folder glyphs out of
+        // the box; we rely on that here so no NM_CUSTOMDRAW icon
+        // bookkeeping is needed for the file-type icons.
+        TVINSERTSTRUCTW root = tree_item(L"PROJECT", TVI_ROOT, true);
+        HTREEITEM h_root = TreeView_InsertItem(tree_.hwnd(), &root);
 
-        HTREEITEM src = insert(TVI_ROOT, TVI_LAST, L"src");
-        insert(src, TVI_LAST, L"main.cpp");
-        insert(src, TVI_LAST, L"App.cpp");
-        insert(src, TVI_LAST, L"App.h");
-        insert(src, TVI_LAST, L"resources");
-        insert(TVI_ROOT, TVI_LAST, L"tests");
-        insert(TVI_ROOT, TVI_LAST, L"docs");
-        TreeView_Expand(tree_.hwnd(), src, TVE_EXPAND);
+        TVINSERTSTRUCTW src = tree_item(L"src", h_root, true);
+        HTREEITEM h_src = TreeView_InsertItem(tree_.hwnd(), &src);
+        TVINSERTSTRUCTW main_cpp = tree_item(L"main.cpp", h_src, false);
+        TreeView_InsertItem(tree_.hwnd(), &main_cpp);
+        TVINSERTSTRUCTW app_cpp = tree_item(L"App.cpp",  h_src, false);
+        TreeView_InsertItem(tree_.hwnd(), &app_cpp);
+        TVINSERTSTRUCTW app_h = tree_item(L"App.h",    h_src, false);
+        TreeView_InsertItem(tree_.hwnd(), &app_h);
+
+        TVINSERTSTRUCTW tests = tree_item(L"tests", h_root, true);
+        TreeView_InsertItem(tree_.hwnd(), &tests);
+        TVINSERTSTRUCTW docs = tree_item(L"docs",  h_root, true);
+        TreeView_InsertItem(tree_.hwnd(), &docs);
+
+        TreeView_Expand(tree_.hwnd(), h_root, TVE_EXPAND);
+        TreeView_Expand(tree_.hwnd(), h_src,  TVE_EXPAND);
     }
 
-    void populate_list() noexcept {
-        if (list_.hwnd() == nullptr) {
-            return;
-        }
-        ListView_DeleteAllItems(list_.hwnd());
-        status_colors_.clear();
+    void populate_list_columns() noexcept {
+        LVCOLUMNW column{};
+        column.mask = LVCF_TEXT | LVCF_WIDTH;
+        column.pszText = const_cast<wchar_t*>(L"Item");
+        column.cx = dpi_.logical_to_pixels(220);
+        static_cast<void>(ListView_InsertColumn(list_.hwnd(), 0, &column));
+        column.pszText = const_cast<wchar_t*>(L"Status");
+        column.cx = dpi_.logical_to_pixels(120);
+        static_cast<void>(ListView_InsertColumn(list_.hwnd(), 1, &column));
+    }
 
-        RECT rc{};
-        GetClientRect(list_.hwnd(), &rc);
-        const int total_w = std::max(static_cast<int>(rc.right - rc.left), dip(200));
-        const int item_w = static_cast<int>(total_w * 0.65);
-        const int status_w = total_w - item_w;
-
-        LVCOLUMNW col{};
-        col.mask = LVCF_TEXT | LVCF_WIDTH;
-        col.pszText = const_cast<wchar_t*>(L"Item");
-        col.cx = item_w;
-        ListView_InsertColumn(list_.hwnd(), 0, &col);
-        col.pszText = const_cast<wchar_t*>(L"Status");
-        col.cx = status_w;
-        ListView_InsertColumn(list_.hwnd(), 1, &col);
-
-        struct Row {
-            const wchar_t* name;
-            const wchar_t* status;
-            bool pending;
+    void populate_list_rows() noexcept {
+        // CP28: rows mirror the reference's build artefact table. The Status
+        // column carries a Unicode bullet (●) prefix so the NM_CUSTOMDRAW
+        // hook can detect it and replace the glyph with a coloured
+        // fill_ellipse dot — see list_subclass_proc.
+        struct Row { const wchar_t* name; std::wstring_view status; };
+        const Row rows[] = {
+            { L"NativeFrameUI.lib",  kStatusOk      },
+            { L"NativeFrameUI.dll",  kStatusOkAlt   },
+            { L"ChartView.obj",      kStatusOkDone  },
+            { L"main.obj",           kStatusOkDone  },
+            { L"tests.exe",          kStatusPending },
         };
-        constexpr std::array<Row, 5> rows{{
-            {L"NativeFrameUI.lib",  L"linked",   false},
-            {L"NativeFrameUI.dll",  L"ready",    false},
-            {L"ChartView.obj",      L"compiled", false},
-            {L"main.obj",           L"compiled", false},
-            {L"tests.exe",          L"pending",  true},
-        }};
-
-        for (int i = 0; i < static_cast<int>(rows.size()); ++i) {
+        list_item_count_ = static_cast<int>(std::size(rows));
+        for (int i = 0; i < list_item_count_; ++i) {
             LVITEMW item{};
             item.mask = LVIF_TEXT;
             item.iItem = i;
-            item.pszText = const_cast<wchar_t*>(rows[static_cast<std::size_t>(i)].name);
-            ListView_InsertItem(list_.hwnd(), &item);
-            ListView_SetItemText(list_.hwnd(), i, 1,
-                                 const_cast<wchar_t*>(rows[static_cast<std::size_t>(i)].status));
-            status_colors_.push_back(rows[static_cast<std::size_t>(i)].pending
-                                         ? palette_.warning
-                                         : palette_.success);
+            item.iSubItem = 0;
+            item.pszText = const_cast<wchar_t*>(rows[i].name);
+            static_cast<void>(ListView_InsertItem(list_.hwnd(), &item));
+            wchar_t text[32]{};
+            (void)swprintf_s(text, L"%.*s",
+                             static_cast<int>(rows[i].status.size()),
+                             rows[i].status.data());
+            ListView_SetItemText(list_.hwnd(), i, 1, text);
         }
+    }
+
+    void insert_tab(int index, const wchar_t* text) {
+        TCITEMW item{};
+        item.mask = TCIF_TEXT;
+        item.pszText = const_cast<wchar_t*>(text);
+        static_cast<void>(TabCtrl_InsertItem(tabs_.hwnd(), index, &item));
+    }
+
+    static TVINSERTSTRUCTW tree_item(const wchar_t* text, HTREEITEM parent, bool is_folder) {
+        TVINSERTSTRUCTW item{};
+        item.hParent = parent;
+        item.hInsertAfter = TVI_LAST;
+        item.item.mask = TVIF_TEXT;
+        item.item.pszText = const_cast<wchar_t*>(text);
+        // CP28: tag folders so the toolbar's "New file" semantic can later
+        // distinguish them from files. Reserved via cChildren — we don't
+        // ship a fancy file-type icon overlay yet (see header for the
+        // rationale).
+        item.item.cChildren = is_folder ? 1 : 0;
+        return item;
     }
 
     void layout() noexcept {
@@ -643,562 +683,546 @@ private:
         }
 
         dpi_ = nfui::DpiScale(nfui::dpi_of(hwnd()));
-        SendMessageW(status_.hwnd(), WM_SIZE, 0, 0);
-
         RECT client{};
         GetClientRect(hwnd(), &client);
-        const int status_h = [this]() noexcept {
-            RECT rc{};
-            GetWindowRect(status_.hwnd(), &rc);
-            return rc.bottom - rc.top;
-        }();
+        SendMessageW(status_.hwnd(), WM_SIZE, 0, 0);
 
-        const int margin = dip(12);
-        const int gap = dip(8);
-        const int toolbar_h = dip(44);
-        const int left_w = dip(240);
-        const int right_w = dip(280);
-        const int splitter_w = dip(4);
-        const int content_top = toolbar_h + margin;
-        const int content_h = client.bottom - content_top - status_h - margin;
-        const int center_w = client.right - left_w - right_w - splitter_w * 2 - margin * 2;
-        const int left_x = margin;
-        const int splitter_left_x = left_x + left_w;
-        const int center_x = splitter_left_x + splitter_w;
-        const int splitter_right_x = center_x + center_w;
-        const int right_x = splitter_right_x + splitter_w;
+        RECT status_rect{};
+        GetWindowRect(status_.hwnd(), &status_rect);
+        int status_height = status_rect.bottom - status_rect.top;
 
-        MoveWindow(toolbar_panel_.hwnd(), 0, 0, client.right, toolbar_h, TRUE);
-        MoveWindow(left_panel_.hwnd(), left_x, content_top, left_w, content_h, TRUE);
-        MoveWindow(left_splitter_.hwnd(), splitter_left_x, content_top, splitter_w, content_h, TRUE);
-        MoveWindow(center_panel_.hwnd(), center_x, content_top, center_w, content_h, TRUE);
-        MoveWindow(right_splitter_.hwnd(), splitter_right_x, content_top, splitter_w, content_h, TRUE);
-        MoveWindow(right_panel_.hwnd(), right_x, content_top, right_w, content_h, TRUE);
+        const int margin          = dpi_.logical_to_pixels(base_margin);
+        const int top             = dpi_.logical_to_pixels(base_top);
+        const int project_h       = dpi_.logical_to_pixels(base_project_label_h);
+        // CP32: search/tabs/slider sit directly under the PROJECT strip so
+        // the toolbar above the strip and the search row below it never
+        // overlap. `top + project_h + margin` is the new origin.
+        const int search_top      = top + project_h + margin;
+        const int left_width      = dpi_.logical_to_pixels(base_left_width);
+        const int right_width     = dpi_.logical_to_pixels(base_right_width);
+        const int splitter_width  = dpi_.logical_to_pixels(base_splitter_width);
+        const int search_height   = dpi_.logical_to_pixels(base_search_height);
+        const int tabs_height     = dpi_.logical_to_pixels(base_tabs_height);
+        const int zoom_label_h    = dpi_.logical_to_pixels(base_zoom_label_h);
+        const int slider_height   = dpi_.logical_to_pixels(base_slider_height);
+        const int build_panel_h   = dpi_.logical_to_pixels(base_build_panel_h);
 
-        // Theme pills in the toolbar.
-        const int pill_w = dip(50);
-        const int pill_h = dip(26);
-        const int pill_gap = dip(8);
-        const int pill_y = (toolbar_h - pill_h) / 2;
-        int pill_right = client.right - margin;
-        MoveWindow(theme_hc_.hwnd(), pill_right - pill_w, pill_y, pill_w, pill_h, TRUE);
-        pill_right -= pill_w + pill_gap;
-        MoveWindow(theme_dark_.hwnd(), pill_right - pill_w, pill_y, pill_w, pill_h, TRUE);
-        pill_right -= pill_w + pill_gap;
-        MoveWindow(theme_light_.hwnd(), pill_right - pill_w, pill_y, pill_w, pill_h, TRUE);
+        int width = client.right - client.left;
+        int height = client.bottom - client.top - status_height;
 
-        // Toolbar icon positions (panel-relative).
-        const int icon_size = dip(20);
-        const int icon_y = (toolbar_h - icon_size) / 2;
-        const int icon_gap = dip(8);
-        int icon_x = margin;
-        for (auto& icon : toolbar_icons_) {
-            icon.rect.left = icon_x;
-            icon.rect.top = icon_y;
-            icon.rect.right = icon_x + icon_size;
-            icon.rect.bottom = icon_y + icon_size;
-            icon_x += icon_size + icon_gap;
-        }
+        // Left pane: search bar at top (below PROJECT), tree fills below.
+        MoveWindow(search_.hwnd(), margin, search_top,
+                   left_width - margin * 2, search_height, TRUE);
+        MoveWindow(tree_.hwnd(), margin, search_top + search_height + margin,
+                   left_width - margin * 2,
+                   std::max(0, height - (search_top + search_height + margin) - margin), TRUE);
+        MoveWindow(left_splitter_.hwnd(), left_width, 0, splitter_width, height, TRUE);
 
-        // Left sidebar controls (siblings of left_panel_, main-client coords).
-        const int p_margin = dip(12);
-        const int header_h = dip(22);
-        const int search_h = dip(32);
-        MoveWindow(project_header_.hwnd(), left_x + p_margin, content_top + p_margin,
-                   left_w - 2 * p_margin, header_h, TRUE);
-        MoveWindow(search_.hwnd(), left_x + p_margin,
-                   content_top + p_margin + header_h + gap,
-                   left_w - 2 * p_margin, search_h, TRUE);
-        const int search_bottom = p_margin + header_h + gap + search_h;
-        MoveWindow(tree_.hwnd(), left_x + p_margin,
-                   content_top + search_bottom + gap,
-                   left_w - 2 * p_margin,
-                   content_h - (search_bottom + gap) - p_margin, TRUE);
+        // Centre pane: tabs across the top (aligned with search), list below.
+        int center_left = left_width + splitter_width + margin;
+        int center_width = width - left_width - right_width - splitter_width * 2 - margin * 2;
+        MoveWindow(tabs_.hwnd(), center_left, search_top, center_width, tabs_height, TRUE);
+        MoveWindow(list_.hwnd(), center_left, search_top + tabs_height + margin, center_width,
+                   std::max(0, height - (search_top + tabs_height + margin) - margin), TRUE);
 
-        // Center controls.
-        const int tab_h = dip(36);
-        const int footer_h = dip(24);
-        MoveWindow(tabs_.hwnd(), center_x + p_margin, content_top + p_margin,
-                   center_w - 2 * p_margin, tab_h, TRUE);
-        const int tabs_bottom = p_margin + tab_h;
-        MoveWindow(list_.hwnd(), center_x + p_margin,
-                   content_top + tabs_bottom + gap,
-                   center_w - 2 * p_margin,
-                   content_h - (tabs_bottom + gap) - footer_h - p_margin, TRUE);
-        MoveWindow(list_footer_.hwnd(), center_x + p_margin,
-                   content_top + content_h - footer_h - p_margin,
-                   center_w - 2 * p_margin, footer_h, TRUE);
+        int right_left = width - right_width;
+        MoveWindow(right_splitter_.hwnd(), right_left - splitter_width, 0, splitter_width, height, TRUE);
 
-        // Right panel controls.
-        const int label_h = dip(20);
-        const int ctrl_h = dip(24);
-        const int value_w = dip(48);
-        const int slider_w = right_w - 2 * p_margin - value_w - gap;
-        MoveWindow(zoom_label_.hwnd(), right_x + p_margin, content_top + p_margin,
-                   right_w - 2 * p_margin, label_h, TRUE);
-        MoveWindow(zoom_slider_.hwnd(), right_x + p_margin,
-                   content_top + p_margin + label_h + gap,
-                   slider_w, ctrl_h, TRUE);
-        MoveWindow(zoom_value_.hwnd(), right_x + p_margin + slider_w + gap,
-                   content_top + p_margin + label_h + gap, value_w, ctrl_h, TRUE);
-        const int zoom_bottom = p_margin + label_h + gap + ctrl_h;
+        // Right pane: zoom label + slider on top row, build panel below,
+        // inspector card at the bottom.
+        MoveWindow(slider_.hwnd(),
+                   right_left + margin,
+                   search_top + zoom_label_h + margin,
+                   right_width - margin * 2,
+                   slider_height, TRUE);
 
-        MoveWindow(build_label_.hwnd(), right_x + p_margin,
-                   content_top + zoom_bottom + gap * 2,
-                   right_w - 2 * p_margin, label_h, TRUE);
-        const int progress_w = right_w - 2 * p_margin - value_w - gap;
-        MoveWindow(build_progress_.hwnd(), right_x + p_margin,
-                   content_top + zoom_bottom + gap * 2 + label_h + gap,
-                   progress_w, ctrl_h, TRUE);
-        MoveWindow(build_pct_.hwnd(), right_x + p_margin + progress_w + gap,
-                   content_top + zoom_bottom + gap * 2 + label_h + gap,
-                   value_w, ctrl_h, TRUE);
-        const int build_bottom = zoom_bottom + gap * 2 + label_h + gap + ctrl_h;
-
-        right_separator_y_ = build_bottom + dip(16);
-        const int mag_size = dip(48);
-        const int mag_x = (right_w - mag_size) / 2;
-        const int mag_y = right_separator_y_ + dip(16);
-        right_magnifier_rect_ = RECT{mag_x, mag_y, mag_x + mag_size, mag_y + mag_size};
-
-        const int text_top = mag_y + mag_size + gap;
-        MoveWindow(inspector_text_.hwnd(), right_x + p_margin,
-                   content_top + text_top,
-                   right_w - 2 * p_margin,
-                   content_h - text_top - p_margin, TRUE);
-
-        // Refresh overlays that depend on computed rects.
-        if (toolbar_panel_.hwnd() != nullptr) {
-            InvalidateRect(toolbar_panel_.hwnd(), nullptr, FALSE);
-        }
-        if (right_panel_.hwnd() != nullptr) {
-            InvalidateRect(right_panel_.hwnd(), nullptr, FALSE);
-        }
+        int inspector_y = search_top + zoom_label_h + margin * 2 + slider_height
+                          + build_panel_h + margin;
+        int inspector_x = right_left + margin;
+        int inspector_w = right_width - margin * 2;
+        int inspector_h = std::max(0, height - margin - inspector_y);
+        MoveWindow(inspector_panel_.hwnd(), inspector_x, inspector_y, inspector_w, inspector_h, TRUE);
     }
 
-    void set_theme(nfui::ThemeMode mode) noexcept {
-        theme_mode_ = mode;
-        palette_ = nfui::theme_palette(mode);
-
-        toolbar_panel_.set_palette(&palette_);
-        left_panel_.set_palette(&palette_);
-        center_panel_.set_palette(&palette_);
-        right_panel_.set_palette(&palette_);
-        theme_light_.set_palette(&palette_);
-        theme_dark_.set_palette(&palette_);
-        theme_hc_.set_palette(&palette_);
-        project_header_.set_palette(&palette_);
-        search_.set_palette(&palette_);
-        tree_.set_palette(&palette_);
-        tabs_.set_palette(&palette_);
-        list_.set_palette(&palette_);
-        list_footer_.set_palette(&palette_);
-        zoom_label_.set_palette(&palette_);
-        zoom_slider_.set_palette(&palette_);
-        zoom_value_.set_palette(&palette_);
-        build_label_.set_palette(&palette_);
-        build_progress_.set_palette(&palette_);
-        build_pct_.set_palette(&palette_);
-        inspector_text_.set_palette(&palette_);
-        left_splitter_.set_palette(&palette_);
-        right_splitter_.set_palette(&palette_);
-        status_.set_palette(&palette_);
-
-        // Rebuild the menu so its background brush picks up the new palette.
-        menu_ = nfui::Menu(palette_);
-        rebuild_menu();
-        SetMenu(hwnd(), menu_.bar().get());
-        DrawMenuBar(hwnd());
-
-        apply_native_fonts();
-        populate_list(); // refresh status dot colours
+    void invalidate_right_pane() noexcept {
+        // CP28: when the slider moves, only the right pane needs to repaint
+        // (the percentage label lives in the chrome, not in any HWND). Full
+        // InvalidateRect is fine — the child controls re-paint themselves
+        // from cached state and the chrome layer is cheap.
         InvalidateRect(hwnd(), nullptr, FALSE);
     }
 
-    void rebuild_menu() noexcept {
-        menu_.apply_to_bar(hwnd());
-        (void)menu_.builder(menu_.bar()).popup(L"&File")
-            .item(L"E&xit", IDM_NFUI_EXIT);
-        (void)menu_.builder(menu_.bar()).popup(L"&Edit")
-            .item(L"Cu&t", 50101)
-            .item(L"&Copy", 50102)
-            .item(L"&Paste", 50103);
-        auto view_builder = menu_.builder(menu_.bar()).popup(L"&View");
-        (void)view_builder.popup(L"&Theme")
-            .item(L"&Light", cmd_theme_light)
-            .item(L"&Dark", cmd_theme_dark)
-            .item(L"&High contrast", cmd_theme_hc);
-        (void)menu_.builder(menu_.bar()).popup(L"&Run")
-            .item(L"&Start", 50201);
-        (void)menu_.builder(menu_.bar()).popup(L"&Window")
-            .item(L"&Refresh", cmd_context_refresh);
-        (void)menu_.builder(menu_.bar()).popup(L"&Help")
-            .item(L"&About", cmd_about);
-    }
-
-    void set_status(const wchar_t* text) noexcept {
-        status_text_ = text;
-        if (status_.hwnd() != nullptr) {
-            InvalidateRect(status_.hwnd(), nullptr, FALSE);
-        }
-    }
-
-    void on_toolbar_command(int command) noexcept {
-        switch (command) {
-        case cmd_toolbar_plus:
-            set_status(L"Toolbar: add");
-            break;
-        case cmd_toolbar_hamburger:
-            set_status(L"Toolbar: menu");
-            break;
-        case cmd_toolbar_chevron:
-            set_status(L"Toolbar: forward");
-            break;
-        case cmd_toolbar_play:
-            set_status(L"Toolbar: run");
-            break;
-        case cmd_toolbar_warning:
-            set_status(L"Toolbar: warning");
-            break;
-        case cmd_toolbar_search:
-            set_status(L"Toolbar: search");
-            break;
-        }
-    }
-
-    void show_context_menu(int x, int y) noexcept {
+    void show_context_menu(int x, int y) {
+        // CP24-A: build a themed context popup through nfui::Menu so the
+        // menu surface carries the host palette. The popup is local — the
+        // OS dismisses it on click or escape and we destroy it after
+        // TrackPopupMenu returns.
         nfui::OwnedMenu popup = menu_.make_popup();
-        (void)menu_.builder(popup).item(L"&Refresh", cmd_context_refresh);
+        (void)menu_.builder(popup).item(L"&Refresh", context_refresh);
         TrackPopupMenu(popup.get(), TPM_RIGHTBUTTON, x, y, 0, hwnd(), nullptr);
     }
 
-    void apply_window_icon() noexcept {
-        if (!resources_.has_icon(IDI_NFUI_APP)) {
-            return;
-        }
-        large_icon_ = static_cast<HICON>(LoadImageW(instance_,
-                                                    MAKEINTRESOURCEW(IDI_NFUI_APP),
-                                                    IMAGE_ICON,
-                                                    GetSystemMetrics(SM_CXICON),
-                                                    GetSystemMetrics(SM_CYICON),
-                                                    LR_DEFAULTCOLOR));
-        small_icon_ = static_cast<HICON>(LoadImageW(instance_,
-                                                    MAKEINTRESOURCEW(IDI_NFUI_APP),
-                                                    IMAGE_ICON,
-                                                    GetSystemMetrics(SM_CXSMICON),
-                                                    GetSystemMetrics(SM_CYSMICON),
-                                                    LR_DEFAULTCOLOR));
-        if (large_icon_ != nullptr) {
-            SendMessageW(hwnd(), WM_SETICON, ICON_BIG, reinterpret_cast<LPARAM>(large_icon_));
-        }
-        if (small_icon_ != nullptr) {
-            SendMessageW(hwnd(), WM_SETICON, ICON_SMALL, reinterpret_cast<LPARAM>(small_icon_));
-        }
-    }
-
-    void destroy_icons() noexcept {
-        if (large_icon_ != nullptr) {
-            DestroyIcon(large_icon_);
-            large_icon_ = nullptr;
-        }
-        if (small_icon_ != nullptr) {
-            DestroyIcon(small_icon_);
-            small_icon_ = nullptr;
-        }
-    }
-
-    [[nodiscard]] int dip(int logical) const noexcept {
-        return dpi_.logical_to_pixels(logical);
-    }
-
-    // Overlay painters.
-    void paint_search_overlay(HWND hwnd) noexcept {
-        if (GetWindowTextLengthW(hwnd) > 0) {
-            return;
-        }
-        HDC dc = GetDC(hwnd);
-        if (dc == nullptr) {
-            return;
-        }
-        RECT rc{};
-        GetClientRect(hwnd, &rc);
-        const int icon_size = dip(16);
-        const int pad = dip(8);
-        const int gap = dip(6);
-        const int icon_x = rc.left + pad;
-        const int icon_y = (rc.top + rc.bottom - icon_size) / 2;
-        RECT icon_rc{icon_x, icon_y, icon_x + icon_size, icon_y + icon_size};
-        nfui::draw_vector_icon(dc, nfui::IconKind::search, icon_rc,
-                               palette_.text_secondary, dip(2));
-        RECT text_rc{rc.left + icon_size + gap + pad, rc.top, rc.right - pad, rc.bottom};
-        HFONT font = fonts_.regular(dpi_.dpi(), nfui::font_pt::sm);
-        nfui::draw_text(dc, text_rc, L"Search files...", font, palette_.text_secondary,
-                        DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX);
-        ReleaseDC(hwnd, dc);
-    }
-
-    void paint_inspector_overlay(HWND hwnd) noexcept {
-        HDC dc = GetDC(hwnd);
-        if (dc == nullptr) {
-            return;
-        }
-        RECT rc{};
-        GetClientRect(hwnd, &rc);
-        if (right_separator_y_ > 0 && right_separator_y_ < rc.bottom) {
-            nfui::draw_line(dc,
-                            {rc.left + dip(12), right_separator_y_},
-                            {rc.right - dip(12), right_separator_y_},
-                            palette_.border, dip(1));
-        }
-        if (right_magnifier_rect_.right > right_magnifier_rect_.left) {
-            nfui::draw_vector_icon(dc, nfui::IconKind::search, right_magnifier_rect_,
-                                   palette_.text_secondary, dip(2));
-        }
-        ReleaseDC(hwnd, dc);
-    }
-
-    void paint_toolbar_overlay(HWND hwnd) noexcept {
-        HDC dc = GetDC(hwnd);
-        if (dc == nullptr) {
-            return;
-        }
-        const int stroke = dip(2);
-        for (const auto& icon : toolbar_icons_) {
-            if (icon.rect.right <= icon.rect.left || icon.rect.bottom <= icon.rect.top) {
-                continue;
+    void set_status(const std::wstring_view text) noexcept {
+        if (status_.hwnd() != nullptr) {
+            // SB_SETTEXTW requires a writable, null-terminated buffer. Copy
+            // the view into a stack string so the Win32 API gets a stable
+            // pointer.
+            wchar_t buffer[256]{};
+            const std::size_t len = std::min(text.size(),
+                                             std::size(buffer) - std::size_t{1});
+            for (std::size_t i = 0; i < len; ++i) {
+                buffer[i] = text[i];
             }
-            if (icon.custom_play) {
-                paint_play_icon(dc, icon.rect, palette_.text, stroke);
-            } else {
-                nfui::draw_vector_icon(dc, icon.kind, icon.rect, palette_.text, stroke);
+            buffer[len] = L'\0';
+            SendMessageW(status_.hwnd(), SB_SETTEXTW, 0, reinterpret_cast<LPARAM>(buffer));
+        }
+    }
+
+    void refresh_status() noexcept {
+        wchar_t text[160]{};
+        // CP28: status bar carries the "● Ready" indicator on the left and
+        // the live DPI on the right, separated by a long run of non-breaking
+        // spaces (the StatusBar chrome only paints part 0; tabs don't
+        // survive DT_CALCRECT here so we use a string pad). The leading
+        // bullet is just a glyph — colour is a separate concern resolved by
+        // the chrome paint below (we can't recolour the part 0 prefix, so
+        // the bullet ships in palette.text tone).
+        const int dpi = dpi_.dpi();
+        (void)swprintf_s(text, L"\x25CF Ready%*s%d DPI", 24, L"", dpi);
+        set_status(text);
+    }
+
+    void update_zoom_display() noexcept {
+        refresh_status();
+    }
+
+    void paint_chrome(HDC target, const RECT& client) noexcept {
+        // CP28: paint order is window bg → toolbar → project header → right
+        // pane overlays. The toolbar bg is the same as the window bg so the
+        // chrome reads as one continuous surface; a single hairline beneath
+        // the toolbar is the only separator. Children (search/tree/tabs/
+        // list/slider/inspector_panel/status) repaint themselves on top.
+        nfui::fill_rect(target, client, palette_.background);
+        paint_toolbar(target, client);
+        paint_project_header(target, client);
+        paint_right_pane(target, client);
+    }
+
+    void paint_toolbar(HDC target, const RECT& client) noexcept {
+        // CP32: toolbar lives at the top of the content area, directly under
+        // the OS menu bar — it must be fully visible (the prior layout
+        // overlapped it with the search bar so only an 8px sliver showed).
+        const int toolbar_y      = dpi_.logical_to_pixels(base_toolbar_top);
+        const int toolbar_height = dpi_.logical_to_pixels(base_toolbar_height);
+        const int button_size    = dpi_.logical_to_pixels(base_toolbar_button);
+        const int gap            = dpi_.logical_to_pixels(base_toolbar_gap);
+        const int group_gap      = dpi_.logical_to_pixels(base_toolbar_group);
+        const int radius         = dpi_.logical_to_pixels(6);
+        const int margin         = dpi_.logical_to_pixels(base_margin);
+        const int stroke         = dpi_.logical_to_pixels(2);
+
+        // CP28: button positions are computed once here and reused by both
+        // paint and hit-test. x_offsets[i] is the left edge of button i;
+        // the separator gap (group_gap) lives between SAVE and RUN, i.e.
+        // before x_offsets[TB_RUN]. Toolbar starts at the same left margin
+        // as the search box so the icon strip aligns with the content below.
+        int x = margin;
+        for (int i = 0; i < TB_COUNT; ++i) {
+            tb_x_[i] = x;
+            tb_y_    = toolbar_y + (toolbar_height - button_size) / 2;
+            x += button_size;
+            if (i == TB_SAVE) {
+                x += group_gap;
+            } else if (i != TB_COUNT - 1) {
+                x += gap;
             }
         }
-        ReleaseDC(hwnd, dc);
+        const int toolbar_right = x;
+
+        for (int i = 0; i < TB_COUNT; ++i) {
+            const RECT btn{tb_x_[i], tb_y_, tb_x_[i] + button_size, tb_y_ + button_size};
+            const bool hovered = (i == hovered_toolbar_);
+            const nfui::Color face = hovered ? palette_.surface_hover : palette_.background;
+            if (hovered) {
+                nfui::fill_rounded_rect(target, btn, radius, face, palette_.border);
+            }
+            // CP28: glyph sits inside the button with a small inset so the
+            // hover background has breathing room around the icon.
+            const int inset = dpi_.logical_to_pixels(2);
+            RECT glyph{btn.left + inset, btn.top + inset,
+                       btn.right - inset, btn.bottom - inset};
+            const nfui::Color icon_col = hovered ? palette_.text : palette_.text_secondary;
+            nfui::draw_vector_icon(target, toolbar_icon(i), glyph, icon_col, stroke);
+        }
+
+        // 1px hairline below the toolbar so the icon strip reads as its own
+        // row without adding extra visual weight.
+        const int hairline_y = toolbar_y + toolbar_height;
+        if (hairline_y < client.bottom) {
+            const RECT hairline{margin, hairline_y, client.right - margin, hairline_y + 1};
+            nfui::fill_rect(target, hairline, palette_.border);
+        }
+        (void)toolbar_right;
     }
 
-    void paint_play_icon(HDC dc, const RECT& bounds, nfui::Color color, int stroke_width) noexcept {
-        (void)stroke_width;
-        const int margin = dip(2);
-        const int avail_w = bounds.right - bounds.left - margin * 2;
-        const int avail_h = bounds.bottom - bounds.top - margin * 2;
-        const int size = std::min(avail_w, avail_h);
-        const int cx = (bounds.left + bounds.right) / 2;
-        const int cy = (bounds.top + bounds.bottom) / 2;
-        POINT tri[3]{
-            {cx - size / 3, cy - size / 2},
-            {cx + size / 2, cy},
-            {cx - size / 3, cy + size / 2}};
-        nfui::fill_polygon(dc, tri, 3, color, color);
+    [[nodiscard]] nfui::IconKind toolbar_icon(int index) const noexcept {
+        // CP28: map each toolbar slot to the closest available IconKind.
+        // The framework ships a fixed glyph vocabulary (chevron / plus /
+        // search / gear / etc.); without a play or floppy glyph we lean on
+        // chevron_right for "run" and chevron_down for "save" — both read
+        // at the toolbar's small scale and stay monochrome.
+        switch (index) {
+        case TB_NEW:    return nfui::IconKind::plus;
+        case TB_OPEN:   return nfui::IconKind::hamburger;
+        case TB_SAVE:   return nfui::IconKind::chevron_down;
+        case TB_RUN:    return nfui::IconKind::chevron_right;
+        case TB_DEBUG:  return nfui::IconKind::warning;
+        case TB_SEARCH: return nfui::IconKind::search;
+        default:        return nfui::IconKind::none;
+        }
     }
 
-    void paint_status_overlay(HWND hwnd) noexcept {
-        HDC dc = GetDC(hwnd);
-        if (dc == nullptr) {
+    [[nodiscard]] int hit_test_toolbar(int x, int y) const noexcept {
+        const int button_size = dpi_.logical_to_pixels(base_toolbar_button);
+        for (int i = 0; i < TB_COUNT; ++i) {
+            const RECT btn{tb_x_[i], tb_y_, tb_x_[i] + button_size, tb_y_ + button_size};
+            if (x >= btn.left && x < btn.right && y >= btn.top && y < btn.bottom) {
+                return i;
+            }
+        }
+        return -1;
+    }
+
+    void on_toolbar_click(int index) noexcept {
+        // CP28: toolbar buttons share the menu's command IDs so they reuse
+        // the same routed handlers. The CommandRouter is queried with the
+        // matching idm_* constant and the routed handler updates the status
+        // bar. on_command() is what the framework calls for menu items;
+        // here we shortcut by routing through the router directly.
+        int id = 0;
+        switch (index) {
+        case TB_NEW:    id = idm_new;    break;
+        case TB_OPEN:   id = idm_open;   break;
+        case TB_SAVE:   id = idm_save;   break;
+        case TB_RUN:    id = idm_run;    break;
+        case TB_DEBUG:  id = idm_debug;  break;
+        case TB_SEARCH: id = idm_search; break;
+        default: return;
+        }
+        if (commands_.route(nfui::CommandId{id})) {
             return;
         }
-        RECT rc{};
-        GetClientRect(hwnd, &rc);
-        const int pad = dip(8);
-        const int dot_size = dip(8);
-        const int grip = dip(16);
-        const int cy = (rc.top + rc.bottom) / 2;
-        const int dot_cx = rc.left + pad + dot_size / 2;
-        RECT dot_rc{dot_cx - dot_size / 2, cy - dot_size / 2,
-                    dot_cx + dot_size / 2, cy + dot_size / 2};
-        nfui::fill_ellipse(dc, dot_rc, palette_.success);
+    }
 
-        HFONT font = fonts_.semibold(dpi_.dpi(), nfui::font_pt::xs);
-        RECT text_rc{rc.left + pad + dot_size + dip(4), rc.top, rc.right - grip, rc.bottom};
-        nfui::draw_text(dc, text_rc, status_text_.c_str(), font, palette_.text,
+    void paint_project_header(HDC target, const RECT& client) noexcept {
+        // CP32: PROJECT sits in its own strip directly below the toolbar and
+        // above the search bar, so neither the toolbar buttons nor the search
+        // overlay can collide with the label. The chevron-down glyph signals
+        // the tree is expanded; matching palette.text_secondary keeps it
+        // muted against the surrounding chrome.
+        const int margin = dpi_.logical_to_pixels(base_margin);
+        const int project_y = dpi_.logical_to_pixels(base_top);
+        const int project_h = dpi_.logical_to_pixels(base_project_label_h);
+        HFONT header_font = fonts_.semibold(dpi_.dpi(), nfui::font_pt::lg);
+
+        RECT text{margin, project_y, margin + dpi_.logical_to_pixels(180),
+                  project_y + project_h};
+        nfui::draw_text(target, text, L"Files", header_font, palette_.text_secondary,
                         DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX);
 
-        std::wstring dpi_text = std::to_wstring(dpi_.dpi()) + L"% DPI";
-        RECT right_rc{rc.left, rc.top, rc.right - grip - pad, rc.bottom};
-        nfui::draw_text(dc, right_rc, dpi_text.c_str(), font, palette_.text,
+        // Chevron next to the label: drawn at the right edge of the text
+        // block so the icon never collides with subsequent layout (the
+        // search box uses the same margin and starts 32 logical px below).
+        const int chevron_size = dpi_.logical_to_pixels(12);
+        const int chevron_x    = text.right + dpi_.logical_to_pixels(4);
+        const int chevron_y    = text.top + (text.bottom - text.top - chevron_size) / 2;
+        RECT chevron{chevron_x, chevron_y, chevron_x + chevron_size,
+                     chevron_y + chevron_size};
+        nfui::draw_vector_icon(target, nfui::IconKind::chevron_down, chevron,
+                               palette_.text_secondary, dpi_.logical_to_pixels(2));
+        (void)client;
+    }
+
+    void paint_right_pane(HDC target, const RECT& client) noexcept {
+        const int margin       = dpi_.logical_to_pixels(base_margin);
+        const int top          = dpi_.logical_to_pixels(base_top)
+                                 + dpi_.logical_to_pixels(base_project_label_h)
+                                 + dpi_.logical_to_pixels(base_margin);
+        const int right_width  = dpi_.logical_to_pixels(base_right_width);
+        const int zoom_label_h = dpi_.logical_to_pixels(base_zoom_label_h);
+        const int slider_h     = dpi_.logical_to_pixels(base_slider_height);
+        const int build_h      = dpi_.logical_to_pixels(base_build_panel_h);
+
+        const int width    = client.right - client.left;
+        const int right_left = width - right_width;
+
+        // "Zoom" label on the left of the slider row, "##%" on the right.
+        HFONT label_font  = fonts_.regular(dpi_.dpi(), nfui::font_pt::sm);
+        HFONT header_font = fonts_.semibold(dpi_.dpi(), nfui::font_pt::lg);
+
+        // CP32: give the lg-font "Zoom" word as much room as the right pane
+        // allows — cap at percent_label.left so the two never collide. The
+        // prior 64-px width truncated "Zoom" to "Zoo" because Segoe UI
+        // Semibold at 20pt measures wider than the legacy estimate.
+        const int percent_w = dpi_.logical_to_pixels(40);
+        const int zoom_label_w = (right_width - margin - percent_w - margin) - margin;
+        RECT zoom_label{right_left + margin, top,
+                        right_left + margin + zoom_label_w,
+                        top + zoom_label_h};
+        nfui::draw_text(target, zoom_label, L"Zoom", header_font, palette_.text,
+                        DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX | DT_NOCLIP);
+
+        wchar_t percent_text[16]{};
+        (void)swprintf_s(percent_text, L"%d%%", slider_.pos());
+        RECT percent_label{right_left + right_width - margin - percent_w, top,
+                           right_left + right_width - margin, top + zoom_label_h};
+        nfui::draw_text(target, percent_label, percent_text, label_font,
+                        palette_.text_secondary,
                         DT_RIGHT | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX);
-        ReleaseDC(hwnd, dc);
+
+        // Build panel: rounded card with "Build" + "40%" header row and a
+        // coral progress bar with a "Building…" overlay.
+        const int build_y = top + zoom_label_h + margin * 2 + slider_h;
+        RECT build_card{right_left + margin, build_y,
+                        right_left + right_width - margin, build_y + build_h};
+        const int card_radius = dpi_.logical_to_pixels(nfui::theme_metrics().corner_radius_card);
+        nfui::fill_rounded_rect(target, build_card, card_radius,
+                                palette_.surface, palette_.border);
+
+        HFONT sm_font = fonts_.regular(dpi_.dpi(), nfui::font_pt::sm);
+
+        // Header row: "Build" on the left, "40%" on the right (palette.text).
+        const int header_inset = dpi_.logical_to_pixels(12);
+        RECT build_label{build_card.left + header_inset, build_card.top + header_inset,
+                         build_card.right - header_inset,
+                         build_card.top + header_inset + dpi_.logical_to_pixels(20)};
+        nfui::draw_text(target, build_label, L"Build", sm_font, palette_.text,
+                        DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX);
+
+        RECT build_percent{build_card.left + header_inset, build_card.top + header_inset,
+                           build_card.right - header_inset,
+                           build_card.top + header_inset + dpi_.logical_to_pixels(20)};
+        nfui::draw_text(target, build_percent, percent_text, sm_font, palette_.text,
+                        DT_RIGHT | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX);
+
+        // Progress bar: rounded track + coral fill, "Building…" overlay.
+        const int bar_h      = dpi_.logical_to_pixels(20);
+        const int bar_inset  = dpi_.logical_to_pixels(12);
+        const int bar_top    = build_card.bottom - bar_inset - bar_h;
+        RECT bar{build_card.left + bar_inset, bar_top,
+                 build_card.right - bar_inset, bar_top + bar_h};
+        const int bar_radius = dpi_.logical_to_pixels(6);
+        nfui::fill_rounded_rect(target, bar, bar_radius, palette_.surface_hover, palette_.border);
+        // CP28: the fill width tracks slider_.pos() so moving the slider
+        // visibly animates the build progress; the overlay text always
+        // paints on top.
+        const int fill_w = (bar.right - bar.left) * slider_.pos()
+                           / std::max(1, slider_.range_high() - slider_.range_low());
+        if (fill_w > 0) {
+            RECT fill{bar.left, bar.top, bar.left + fill_w, bar.bottom};
+            nfui::fill_rounded_rect(target, fill, bar_radius, palette_.accent, palette_.accent);
+        }
+        // Overlay label: semibold text centered over the bar. Two-tone clip
+        // — the text on the filled portion uses palette.accent_text (high
+        // contrast on coral), the text on the empty portion uses
+        // palette.text_secondary (muted on the surface_hover track). CP32:
+        // center within each half so neither half clips the "…" against the
+        // fill boundary; previously DT_CENTER on the full bar put the "…"
+        // right at the boundary and a one-pixel jitter would chop the
+        // character.
+        const std::wstring overlay = L"Building\x2026";
+        HFONT bar_font = fonts_.semibold(dpi_.dpi(), nfui::font_pt::sm);
+        if (fill_w > 0) {
+            RECT filled_clip{bar.left, bar.top, bar.left + fill_w, bar.bottom};
+            const int saved = SaveDC(target);
+            IntersectClipRect(target, filled_clip.left, filled_clip.top,
+                              filled_clip.right, filled_clip.bottom);
+            nfui::draw_text(target, filled_clip, overlay, bar_font,
+                            palette_.accent_text,
+                            DT_CENTER | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX);
+            RestoreDC(target, saved);
+        }
+        if (fill_w < bar.right - bar.left) {
+            RECT remaining{bar.left + fill_w, bar.top, bar.right, bar.bottom};
+            const int saved = SaveDC(target);
+            IntersectClipRect(target, remaining.left, remaining.top,
+                              remaining.right, remaining.bottom);
+            nfui::draw_text(target, remaining, overlay, bar_font,
+                            palette_.text_secondary,
+                            DT_CENTER | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX);
+            RestoreDC(target, saved);
+        }
+
+        // Inspector overlay (magnifier glyph + caption) is drawn by
+        // inspector_subclass_proc inside the panel's WM_PAINT cycle so the
+        // panel's surface fill does not erase it. See paint_inspector_overlay.
     }
 
-    void paint_progress_overlay(HWND hwnd) noexcept {
-        HDC dc = GetDC(hwnd);
+    void paint_search_overlay(HWND edit_hwnd) noexcept {
+        // CP28: draw the magnifier glyph over the left padding of the Edit.
+        // The native paint has already flushed; we paint via GetDC so the
+        // glyph survives subsequent repaints until the Edit erases it
+        // itself (typing, focus blink, etc.), at which point WM_PAINT fires
+        // again and our subclass redraws the glyph.
+        HDC dc = GetDC(edit_hwnd);
         if (dc == nullptr) {
             return;
         }
         RECT rc{};
-        GetClientRect(hwnd, &rc);
-        HFONT font = fonts_.regular(dpi_.dpi(), nfui::font_pt::xs);
-        nfui::draw_text(dc, rc, L"Building...", font, palette_.accent_text,
-                        DT_CENTER | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX);
-        ReleaseDC(hwnd, dc);
+        GetClientRect(edit_hwnd, &rc);
+        const int icon_size = dpi_.logical_to_pixels(14);
+        const int pad       = dpi_.logical_to_pixels(8);
+        const int y         = rc.top + (rc.bottom - rc.top - icon_size) / 2;
+        RECT glyph{rc.left + pad, y, rc.left + pad + icon_size, y + icon_size};
+        nfui::draw_vector_icon(dc, nfui::IconKind::search, glyph,
+                               palette_.text_secondary, dpi_.logical_to_pixels(2));
+        ReleaseDC(edit_hwnd, dc);
     }
 
-    void paint_list_status_dot(HDC dc, int row, const RECT& text_rc, int dot_size) noexcept {
-        if (row < 0 || row >= static_cast<int>(status_colors_.size())) {
+    void paint_inspector_overlay(HWND panel_hwnd) noexcept {
+        // CP32: draw the inspector placeholder (magnifier + caption) inside
+        // the panel's WM_PAINT cycle. GetDC on the panel returns a DC in
+        // CLIENT coords, so icon + text are positioned relative to the
+        // panel's client origin (no window-to-parent mapping needed here).
+        HDC dc = GetDC(panel_hwnd);
+        if (dc == nullptr) {
             return;
         }
-        const int dot_cx = text_rc.left - dot_size / 2;
-        const int cy = (text_rc.top + text_rc.bottom) / 2;
-        RECT dot{dot_cx - dot_size / 2, cy - dot_size / 2,
-                 dot_cx + dot_size / 2, cy + dot_size / 2};
-        nfui::fill_ellipse(dc, dot, status_colors_[static_cast<std::size_t>(row)]);
+        RECT rc{};
+        GetClientRect(panel_hwnd, &rc);
+        const int inspector_w = rc.right - rc.left;
+        const int inspector_h = rc.bottom - rc.top;
+        // Vertical centering: stack icon (40 logical) + 12 gap + two lines
+        // of base-size caption (20 logical each) and centre the stack.
+        const int icon_size   = dpi_.logical_to_pixels(40);
+        const int cap_gap     = dpi_.logical_to_pixels(12);
+        const int cap_line_h  = dpi_.logical_to_pixels(20);
+        const int stack_h     = icon_size + cap_gap + cap_line_h * 2;
+        const int stack_top   = rc.top + std::max(0, (inspector_h - stack_h) / 2);
+        const int icon_x      = rc.left + (inspector_w - icon_size) / 2;
+        RECT icon{icon_x, stack_top, icon_x + icon_size, stack_top + icon_size};
+        nfui::draw_vector_icon(dc, nfui::IconKind::search, icon,
+                               palette_.text_secondary, dpi_.logical_to_pixels(2));
+
+        HFONT caption_font = fonts_.regular(dpi_.dpi(), nfui::font_pt::sm);
+        const int cap_pad = dpi_.logical_to_pixels(10);
+        const int cap_x = rc.left + cap_pad;
+        const int cap_w = inspector_w - cap_pad * 2;
+        const int cap_y = icon.bottom + cap_gap;
+        RECT caption{cap_x, cap_y, cap_x + cap_w, cap_y + cap_line_h};
+        // Two-line caption — the reference breaks "Inspector — select an
+        // item to inspect its properties." into two lines.
+        nfui::draw_text(dc, caption,
+                        L"Inspector \x2014 select an item to",
+                        caption_font, palette_.text_secondary,
+                        DT_CENTER | DT_TOP | DT_SINGLELINE | DT_NOPREFIX | DT_NOCLIP);
+        RECT caption2 = caption;
+        caption2.top += cap_line_h;
+        caption2.bottom += cap_line_h;
+        nfui::draw_text(dc, caption2,
+                        L"inspect its properties.",
+                        caption_font, palette_.text_secondary,
+                        DT_CENTER | DT_TOP | DT_SINGLELINE | DT_NOPREFIX | DT_NOCLIP);
+        ReleaseDC(panel_hwnd, dc);
     }
 
-    // Subclass procs.
-    static LRESULT CALLBACK search_subclass_proc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp,
-                                                 UINT_PTR id, DWORD_PTR ref) noexcept {
-        auto* self = reinterpret_cast<WorkbenchWindow*>(ref);
-        switch (msg) {
-        case WM_PAINT: {
-            LRESULT result = DefSubclassProc(hwnd, msg, wp, lp);
-            if (self != nullptr) {
-                self->paint_search_overlay(hwnd);
-            }
-            return result;
+    void paint_tabs_highlight(HWND tabs_hwnd) noexcept {
+        // CP32: query the selected tab and overlay a 2 device-px coral bar
+        // at the bottom of the tab strip. TabCtrl_GetItemRect returns
+        // coords in the tabs HWND's client space (left/top are correct),
+        // but item.bottom can exceed the HWND's client height because the
+        // OS computes a logical tab height from font metrics + padding
+        // that doesn't always fit in the assigned window height. Pin the
+        // bar to client.bottom - 2 so it always lands at the visible base
+        // of the tab strip; pair with item.left/right so the stripe width
+        // matches the selected tab's horizontal extent.
+        const int sel = TabCtrl_GetCurSel(tabs_hwnd);
+        if (sel < 0) {
+            return;
         }
-        case WM_NCDESTROY:
-            RemoveWindowSubclass(hwnd, &search_subclass_proc, id);
-            break;
+        RECT item{};
+        if (TabCtrl_GetItemRect(tabs_hwnd, sel, &item) == FALSE) {
+            return;
         }
-        return DefSubclassProc(hwnd, msg, wp, lp);
+        HDC dc = GetDC(tabs_hwnd);
+        if (dc == nullptr) {
+            return;
+        }
+        RECT client{};
+        GetClientRect(tabs_hwnd, &client);
+        const RECT highlight{item.left, client.bottom - 2, item.right, client.bottom};
+        nfui::fill_rect(dc, highlight, palette_.accent);
+        ReleaseDC(tabs_hwnd, dc);
     }
 
-    static LRESULT CALLBACK inspector_subclass_proc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp,
-                                                    UINT_PTR id, DWORD_PTR ref) noexcept {
+    // CP28: ListView subclass. We install AFTER the framework's chrome
+    // subclass; ours runs first on every WM_NOTIFY (NM_CUSTOMDRAW), chains
+    // through DefSubclassProc so the framework's row chrome (text colour,
+    // selection, hover) keeps working, and then overlays a coloured dot on
+    // status-column rows whose text starts with the bullet glyph.
+    static LRESULT CALLBACK list_subclass_proc(HWND hwnd, UINT msg, WPARAM w,
+                                                LPARAM l, UINT_PTR id, DWORD_PTR ref) {
         auto* self = reinterpret_cast<WorkbenchWindow*>(ref);
-        switch (msg) {
-        case WM_PAINT: {
-            LRESULT result = DefSubclassProc(hwnd, msg, wp, lp);
-            if (self != nullptr) {
-                self->paint_inspector_overlay(hwnd);
-            }
-            return result;
-        }
-        case WM_NCDESTROY:
-            RemoveWindowSubclass(hwnd, &inspector_subclass_proc, id);
-            break;
-        }
-        return DefSubclassProc(hwnd, msg, wp, lp);
-    }
-
-    static LRESULT CALLBACK toolbar_subclass_proc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp,
-                                                  UINT_PTR id, DWORD_PTR ref) noexcept {
-        auto* self = reinterpret_cast<WorkbenchWindow*>(ref);
-        switch (msg) {
-        case WM_PAINT: {
-            LRESULT result = DefSubclassProc(hwnd, msg, wp, lp);
-            if (self != nullptr) {
-                self->paint_toolbar_overlay(hwnd);
-            }
-            return result;
-        }
-        case WM_LBUTTONUP: {
-            if (self != nullptr) {
-                int x = GET_X_LPARAM(lp);
-                int y = GET_Y_LPARAM(lp);
-                for (const auto& icon : self->toolbar_icons_) {
-                    if (x >= icon.rect.left && x < icon.rect.right &&
-                        y >= icon.rect.top && y < icon.rect.bottom) {
-                        self->on_toolbar_command(icon.command);
-                        break;
-                    }
-                }
-            }
-            return 0;
-        }
-        case WM_NCDESTROY:
-            RemoveWindowSubclass(hwnd, &toolbar_subclass_proc, id);
-            break;
-        }
-        return DefSubclassProc(hwnd, msg, wp, lp);
-    }
-
-    static LRESULT CALLBACK listview_subclass_proc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp,
-                                                   UINT_PTR id, DWORD_PTR ref) noexcept {
-        auto* self = reinterpret_cast<WorkbenchWindow*>(ref);
-        if (msg == ocm_base + WM_NOTIFY) {
-            auto* nmh = reinterpret_cast<NMHDR*>(lp);
-            if (nmh != nullptr && nmh->hwndFrom == hwnd && nmh->code == NM_CUSTOMDRAW) {
-                auto* cd = reinterpret_cast<NMLVCUSTOMDRAW*>(lp);
-                if (self == nullptr) {
-                    return CDRF_DODEFAULT;
-                }
-                const nfui::ThemePalette& p = self->palette_;
-                constexpr int status_col = 1;
-                const int dot_size = self->dip(8);
-                const int dot_gap = self->dip(6);
-                switch (cd->nmcd.dwDrawStage) {
-                case CDDS_PREPAINT:
-                    return CDRF_NOTIFYITEMDRAW;
-                case CDDS_ITEMPREPAINT: {
-                    const bool selected = (cd->nmcd.uItemState & CDIS_SELECTED) != 0;
-                    const bool hot = (cd->nmcd.uItemState & CDIS_HOT) != 0;
-                    cd->clrText = selected ? p.selection_text.rgb : p.text.rgb;
-                    cd->clrTextBk = selected ? p.selection.rgb
-                                             : (hot ? p.surface_hover.rgb : p.surface.rgb);
-                    return CDRF_NOTIFYSUBITEMDRAW;
-                }
-                case CDDS_SUBITEM | CDDS_ITEMPREPAINT: {
-                    if (cd->iSubItem == status_col) {
-                        cd->rcText.left += dot_size + dot_gap;
-                        if (cd->rcText.left > cd->rcText.right) {
-                            cd->rcText.left = cd->rcText.right;
-                        }
-                    }
-                    return CDRF_DODEFAULT;
-                }
-                case CDDS_SUBITEM | CDDS_ITEMPOSTPAINT: {
-                    if (cd->iSubItem == status_col) {
-                        self->paint_list_status_dot(cd->nmcd.hdc,
-                                                    static_cast<int>(cd->nmcd.dwItemSpec),
-                                                    cd->rcText, dot_size);
-                    }
-                    return CDRF_DODEFAULT;
-                }
-                default:
-                    return CDRF_DODEFAULT;
-                }
-            }
-        }
         if (msg == WM_NCDESTROY) {
-            RemoveWindowSubclass(hwnd, &listview_subclass_proc, id);
+            RemoveWindowSubclass(hwnd, &WorkbenchWindow::list_subclass_proc, id);
+            return DefSubclassProc(hwnd, msg, w, l);
         }
-        return DefSubclassProc(hwnd, msg, wp, lp);
+        if (msg == ocm_base + WM_NOTIFY) {
+            auto* nmhdr = reinterpret_cast<NMHDR*>(l);
+            if (nmhdr != nullptr && nmhdr->code == NM_CUSTOMDRAW) {
+                auto* lvcd = reinterpret_cast<NMLVCUSTOMDRAW*>(l);
+                // Chain through the framework first so row chrome applies.
+                const LRESULT res = DefSubclassProc(hwnd, msg, w, l);
+                if (self != nullptr) {
+                    self->paint_list_status_dot(lvcd);
+                }
+                return res;
+            }
+        }
+        return DefSubclassProc(hwnd, msg, w, l);
     }
 
-    static LRESULT CALLBACK status_subclass_proc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp,
-                                                 UINT_PTR id, DWORD_PTR ref) noexcept {
-        auto* self = reinterpret_cast<WorkbenchWindow*>(ref);
-        switch (msg) {
-        case WM_PAINT: {
-            LRESULT result = DefSubclassProc(hwnd, msg, wp, lp);
-            if (self != nullptr) {
-                self->paint_status_overlay(hwnd);
-            }
-            return result;
+    void paint_list_status_dot(NMLVCUSTOMDRAW* lvcd) noexcept {
+        if (lvcd == nullptr || lvcd->nmcd.hdc == nullptr) {
+            return;
         }
-        case WM_NCDESTROY:
-            RemoveWindowSubclass(hwnd, &status_subclass_proc, id);
-            break;
+        // Only paint on item post-paint for sub-item 1 (Status column). The
+        // bullet prefix in the column text drives the colour: green for
+        // ready/linked/compiled, amber for pending. Reading the actual text
+        // via ListView_GetItemText keeps this path robust to row reorder.
+        if (lvcd->nmcd.dwDrawStage != CDDS_ITEMPOSTPAINT) {
+            return;
         }
-        return DefSubclassProc(hwnd, msg, wp, lp);
-    }
+        if (lvcd->iSubItem != 1) {
+            return;
+        }
+        const int row = static_cast<int>(lvcd->nmcd.dwItemSpec);
+        wchar_t text[64]{};
+        LVITEMW lvi{};
+        lvi.iSubItem = 1;
+        lvi.pszText = text;
+        lvi.cchTextMax = static_cast<int>(sizeof(text) / sizeof(text[0]));
+        // CP28: ListView_GetItemText is a statement-block macro that yields
+        // void, so it can't appear in an `if (...)` expression. Drive
+        // LVM_GETITEMTEXT directly and treat a 0-length copy as "skip".
+        if (SendMessageW(list_.hwnd(), LVM_GETITEMTEXT, row,
+                         reinterpret_cast<LPARAM>(&lvi)) == 0) {
+            return;
+        }
+        if (text[0] != L'\x25CF') {
+            return;   // row was repopulated without the bullet prefix
+        }
+        const std::wstring_view sv(text);
+        const bool pending = (sv.find(L"pending") != std::wstring_view::npos);
+        const nfui::Color dot_col = pending ? palette_.warning : palette_.success;
 
-    static LRESULT CALLBACK progress_subclass_proc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp,
-                                                   UINT_PTR id, DWORD_PTR ref) noexcept {
-        auto* self = reinterpret_cast<WorkbenchWindow*>(ref);
-        switch (msg) {
-        case WM_PAINT: {
-            LRESULT result = DefSubclassProc(hwnd, msg, wp, lp);
-            if (self != nullptr) {
-                self->paint_progress_overlay(hwnd);
-            }
-            return result;
-        }
-        case WM_NCDESTROY:
-            RemoveWindowSubclass(hwnd, &progress_subclass_proc, id);
-            break;
-        }
-        return DefSubclassProc(hwnd, msg, wp, lp);
+        const int dot_size = dpi_.logical_to_pixels(8);
+        const int pad      = dpi_.logical_to_pixels(2);
+        RECT rc = lvcd->nmcd.rc;
+        RECT dot{rc.left + pad, rc.top + (rc.bottom - rc.top - dot_size) / 2,
+                 rc.left + pad + dot_size,
+                 rc.top + (rc.bottom - rc.top + dot_size) / 2};
+        nfui::fill_ellipse(lvcd->nmcd.hdc, dot, dot_col);
     }
 
     HINSTANCE instance_{};
@@ -1206,54 +1230,34 @@ private:
     nfui::CommandRouter commands_;
     nfui::Dialog about_;
     nfui::ThemePalette palette_;
+    nfui::ThemeMode mode_{nfui::ThemeMode::light};
     nfui::FontCache fonts_;
-    nfui::DpiScale dpi_{96};
     nfui::Menu menu_;
-    nfui::ThemeMode theme_mode_{nfui::ThemeMode::light};
-
-    nfui::Panel toolbar_panel_;
-    nfui::Panel left_panel_;
-    nfui::Panel center_panel_;
-    nfui::Panel right_panel_;
-
-    nfui::Button theme_light_;
-    nfui::Button theme_dark_;
-    nfui::Button theme_hc_;
-
-    nfui::StaticText project_header_;
     nfui::Edit search_;
     nfui::TreeView tree_;
-
     nfui::TabControl tabs_;
     nfui::ListView list_;
-    nfui::StaticText list_footer_;
-
-    nfui::StaticText zoom_label_;
-    nfui::Slider zoom_slider_;
-    nfui::StaticText zoom_value_;
-    nfui::StaticText build_label_;
-    nfui::ProgressBar build_progress_;
-    nfui::StaticText build_pct_;
-    nfui::StaticText inspector_text_;
-
+    nfui::Panel inspector_panel_;
+    nfui::StatusBar status_;
+    nfui::Slider slider_;
     nfui::Splitter left_splitter_;
     nfui::Splitter right_splitter_;
-    nfui::StatusBar status_;
+    nfui::DpiScale dpi_{96};
+    int list_item_count_{0};
 
-    std::array<ToolbarIcon, 6> toolbar_icons_{};
-    std::vector<nfui::Color> status_colors_;
-    std::wstring status_text_{L"Ready"};
+    // CP28: toolbar hit-test state. tb_x_[i] is the left edge of button i;
+    // tb_y_ is the top edge (all buttons share a y so we cache once).
+    int tb_x_[TB_COUNT]{};
+    int tb_y_{};
+    int hovered_toolbar_{-1};
+    bool tracking_toolbar_{false};
 
-    int right_separator_y_{0};
-    RECT right_magnifier_rect_{};
-
-    HICON large_icon_{};
-    HICON small_icon_{};
+    static constexpr UINT ocm_base = WM_USER + 0x1c00;
 };
 
 } // namespace
 
-int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int show_command) {
+int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR cmd_line, int show_command) {
     nfui::Application app({instance, show_command});
 
     if (!nfui::Application::initialize_process_dpi() ||
@@ -1261,8 +1265,25 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int show_command) {
         return 1;
     }
 
+    // CP32: --theme seeds the palette before the first paint. Without this
+    // the audit would capture light chrome for a --theme dark invocation.
+    auto parse_theme = [](PCWSTR cl) noexcept {
+        if (cl == nullptr) return nfui::ThemeMode::light;
+        const wchar_t* tag = wcsstr(cl, L"--theme");
+        if (tag == nullptr) return nfui::ThemeMode::light;
+        tag += 7;
+        while (*tag == L' ' || *tag == L'\t') ++tag;
+        // CP32: visual audit's quoteArgument wraps the value as "--theme \"dark\"";
+        // skip the leading quote so the comparison sees 'dark', not '"dark'.
+        if (*tag == L'"') ++tag;
+        if (wcsncmp(tag, L"dark", 4) == 0 && (tag[4] == L' ' || tag[4] == 0 || tag[4] == L'"')) return nfui::ThemeMode::dark;
+        if (wcsncmp(tag, L"high_contrast", 13) == 0) return nfui::ThemeMode::high_contrast;
+        return nfui::ThemeMode::light;
+    };
+    const nfui::ThemeMode initial_mode = parse_theme(cmd_line);
+
     WorkbenchWindow window(instance);
-    if (!window.create_main(show_command)) {
+    if (!window.set_initial_theme(initial_mode) || !window.create_main(show_command)) {
         return 2;
     }
 

@@ -47,11 +47,16 @@ public:
     explicit GalleryWindow(HINSTANCE instance)
         : instance_(instance),
           resources_(instance),
-          palette_(nfui::theme_palette(nfui::ThemeMode::light)) {
+          palette_(nfui::theme_palette(mode_)) {
     }
 
     ~GalleryWindow() noexcept override {
         destroy_icon();
+    }
+
+    void set_initial_theme(nfui::ThemeMode mode) noexcept {
+        mode_ = mode;
+        palette_ = nfui::theme_palette(mode);
     }
 
     [[nodiscard]] bool create_main(int show_command) noexcept {
@@ -196,6 +201,8 @@ private:
         ComboBox_AddString(combobox_.hwnd(), L"Blue");
         ComboBox_AddString(combobox_.hwnd(), L"Yellow");
         ComboBox_AddString(combobox_.hwnd(), L"Purple");
+        // CP32: pick a default selection so the closed combobox isn't visually empty.
+        SendMessageW(combobox_.hwnd(), CB_SETCURSEL, 0, 0);
 
         // ListView (3 columns x 4 rows).
         if (!init(listview_, id_listview, L"")) return false;
@@ -376,9 +383,6 @@ private:
         place(id_iconview, 32, 32);
         next_row(32);
 
-        // StatusBar (sized via WM_SIZE earlier; just step past its visual band).
-        next_row(0);
-
         // TabControl.
         place(id_tabs, 380, 120);
         next_row(120);
@@ -423,16 +427,22 @@ private:
                         palette_.text,
                         DT_LEFT | DT_TOP | DT_SINGLELINE | DT_NOPREFIX);
 
-        RECT footer{left,
-                    client.bottom - outer - dpi_.logical_to_pixels(16),
-                    client.right - outer,
-                    client.bottom - outer};
+        // CP32: footer sits above the status bar — measure its height and
+        // walk up so the secondary text never paints on top of the chrome.
+        RECT status_rect{};
+        const int status_height = (status_.hwnd() != nullptr &&
+                                   GetWindowRect(status_.hwnd(), &status_rect))
+                                      ? (status_rect.bottom - status_rect.top)
+                                      : dpi_.logical_to_pixels(24);
+        const int footer_bottom = client.bottom - status_height - dpi_.logical_to_pixels(8);
+        const int footer_top    = footer_bottom - dpi_.logical_to_pixels(20);
+        RECT footer{left, footer_top, client.right - outer, footer_bottom};
         nfui::draw_text(target,
                         footer,
                         L"Every control class in its expected state. Vertical sections stack top to bottom.",
                         body_font,
                         palette_.text_secondary,
-                        DT_LEFT | DT_TOP | DT_SINGLELINE | DT_NOPREFIX);
+                        DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX);
 
         // Section labels run down the left margin.
         static constexpr const wchar_t* labels[] = {
@@ -446,7 +456,6 @@ private:
             L"ListView",
             L"TreeView",
             L"IconView",
-            L"StatusBar",
             L"TabControl",
             L"ProgressBar",
             L"Panel + Splitter",
@@ -467,7 +476,6 @@ private:
             tall_h,
             tall_h,
             row_h,
-            0,
             tall_h,
             row_h,
             tall_h,
@@ -475,7 +483,7 @@ private:
 
         int y = client.top + outer + dpi_.logical_to_pixels(36);
         for (std::size_t i = 0; i < std::size(labels); ++i) {
-            RECT label{left, y, left + label_w - gap, y + (heights[i] > 0 ? heights[i] : row_h)};
+            RECT label{left, y, left + label_w - gap, y + heights[i]};
             nfui::draw_text(target,
                             label,
                             labels[i],
@@ -483,9 +491,6 @@ private:
                             palette_.text_secondary,
                             DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX);
             y += heights[i] + gap;
-            if (heights[i] == 0) {
-                y += row_h;  // status bar gets a row too
-            }
         }
     }
 
@@ -569,6 +574,7 @@ private:
 
     HINSTANCE instance_{};
     nfui::ResourceContext resources_;
+    nfui::ThemeMode mode_{nfui::ThemeMode::light};
     nfui::ThemePalette palette_;
     nfui::FontCache fonts_;
     nfui::DpiScale dpi_{96};
@@ -601,14 +607,32 @@ private:
 
 } // namespace
 
-int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int show_command) {
+int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR cmd_line, int show_command) {
     nfui::Application app({instance, show_command});
     if (!nfui::Application::initialize_process_dpi() ||
         !nfui::Application::initialize_common_controls()) {
         return 1;
     }
 
+    // CP32: --theme <light|dark|high_contrast> lets the visual audit
+    // capture each variant without restarting the binary. Defaults to light.
+    auto parse_theme = [](PCWSTR cl) noexcept {
+        if (cl == nullptr) return nfui::ThemeMode::light;
+        const wchar_t* tag = wcsstr(cl, L"--theme");
+        if (tag == nullptr) return nfui::ThemeMode::light;
+        tag += 7;  // skip past "--theme"
+        while (*tag == L' ' || *tag == L'\t') ++tag;
+        // CP32: visual audit's quoteArgument wraps the value as "--theme \"dark\"";
+        // skip the leading quote so the comparison sees 'dark', not '"dark'.
+        if (*tag == L'"') ++tag;
+        if (wcsncmp(tag, L"dark", 4) == 0 && (tag[4] == L' ' || tag[4] == 0 || tag[4] == L'"')) return nfui::ThemeMode::dark;
+        if (wcsncmp(tag, L"high_contrast", 13) == 0) return nfui::ThemeMode::high_contrast;
+        return nfui::ThemeMode::light;
+    };
+    const nfui::ThemeMode initial_mode = parse_theme(cmd_line);
+
     GalleryWindow window(instance);
+    window.set_initial_theme(initial_mode);
     if (!window.create_main(show_command)) {
         return 2;
     }

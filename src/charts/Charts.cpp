@@ -11,9 +11,9 @@ namespace nfui {
 
 namespace {
 
-constexpr int kAxisGutter = 8;       // px reserved for axis ticks/labels
-constexpr int kTopGutter = 4;        // px reserved above the plot
-constexpr int kBottomGutter = 4;     // px reserved below the plot
+constexpr int kAxisGutter = 40;      // px reserved for the y-axis tick labels (must exceed BarChartView::kAxisLabelGutter=28 + 8 px tick mark so the rightmost glyph doesn't sit flush against the plot frame)
+constexpr int kTopGutter = 24;       // px reserved above the plot for value labels above the tallest bar
+constexpr int kBottomGutter = 28;    // px reserved below the plot for category-axis tick labels (must cover kAxisLabelGutter so 1..N digits aren't clipped)
 
 [[nodiscard]] int normalize_axis(double v, double axis_min, double axis_max, int span) noexcept {
     if (span <= 0) return 0;

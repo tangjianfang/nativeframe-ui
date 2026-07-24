@@ -154,6 +154,13 @@ public:
     // Read the palette that drives MENUINFO chrome.
     [[nodiscard]] const ThemePalette& palette() const noexcept { return palette_; }
 
+    // CP32: lets a holder swap the palette after construction. The menu's
+    // bar_ is move-only so callers can't reassign the whole Menu; this is
+    // the supported way to retarget a built Menu (used by Workbench's
+    // --theme seed). Does NOT re-attach the menu to a host HWND — the
+    // caller still owns SetMenu.
+    void set_palette(ThemePalette palette) noexcept { palette_ = palette; }
+
     // Item label helpers.
     [[nodiscard]] static std::wstring escape_mnemonic(const std::wstring& text) noexcept;
 

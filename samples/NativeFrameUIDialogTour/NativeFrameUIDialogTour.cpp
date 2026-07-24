@@ -1,22 +1,28 @@
-// CP32 sample: NativeFrameUIDialogTour
+// CP12 sample: NativeFrameUIDialogTour
 //
-// A polished, product-quality wizard shell that demonstrates nfui::Dialog for
-// both modal and modeless dialogs. The main window is a modern tour card:
-// a hero header with the application mark, a title + subtitle, three clearly
-// tiered actions, and a clean status strip.
+// Exercises the nfui::Dialog wrapper (src/core/Dialog.cpp + include/nfui/Dialog.hpp)
+// in both modal and modeless modes. None of the existing ten samples uses
+// nfui::Dialog directly; this fills that gap and gives consumers a copy-
+// pasteable pattern for DLGPROC wiring, owned-hwnd modeless lifecycle, and
+// the modal_result / end_modeless contracts.
 //
-// Visual contracts:
-//   - 4/8/12/16 logical-pixel grid, scaled per-window DPI.
-//   - Typography uses the CP32 scale: xs/sm/base/md/xl.
-//   - Buttons are framework owner-drawn (rounded, gradient, hover cross-fade).
-//   - The window client area and header are painted from ThemePalette.
-//   - Every HWND wrapper is stable until WM_NCDESTROY.
+// Three launch points on the main window:
+//   - "Show About (modal)"    : Dialog::show_modal with IDD_NFUI_ABOUT
+//   - "Show Preferences..."   : Dialog::show_modeless with IDD_NFUI_PREFS
+//   - "Close modeless"        : end_modeless() for the prefs dialog
+//
+// CP35 polish: the tour window is now a single centered card with a coral
+// N brand mark, a 28pt page title, a muted description, three coral
+// primary buttons, a 2px divider, and a mono debug line. The Dialog
+// wrapper plumbing (modal_result, end_modeless, modeless DLGPROC routing)
+// is unchanged; only the surface presentation is redrawn.
 
 #include <nfui/Application.hpp>
-#include <nfui/Controls.hpp>
 #include <nfui/Dialog.hpp>
 #include <nfui/Dpi.hpp>
+#include <nfui/Font.hpp>
 #include <nfui/Handle.hpp>
+#include <nfui/Icon.hpp>
 #include <nfui/Paint.hpp>
 #include <nfui/Theme.hpp>
 #include <nfui/Window.hpp>
@@ -29,24 +35,6 @@
 
 namespace {
 
-constexpr int IDC_LAUNCH_ABOUT = 1001;
-constexpr int IDC_LAUNCH_PREFS = 1002;
-constexpr int IDC_CLOSE_PREFS  = 1003;
-constexpr int IDC_STATUS_LABEL = 1004;
-
-// CP32 grid: all logical values; converted to device pixels at layout time.
-constexpr int kWindowW     = 560;
-constexpr int kWindowH     = 480;
-constexpr int kMarginOuter = 24;
-constexpr int kHeaderH     = 144;
-constexpr int kIconSize    = 56;
-constexpr int kIconGap     = 16;
-constexpr int kButtonH     = 48;
-constexpr int kButtonGap   = 16;
-constexpr int kSectionGap  = 32;
-constexpr int kStatusH     = 40;
-constexpr int kStatusGap   = 8;
-
 // Custom WM_USER message used by the prefs DLGPROC to deliver a submitted
 // payload back to the main window. Routed via SendMessageW so the DLGPROC
 // stays free of any static pointer to the TourWindow.
@@ -56,6 +44,21 @@ constexpr UINT WM_NFUI_PREFS_SUBMITTED = WM_USER + 1;
 // loop needs to feed it to IsDialogMessageW. Only one modeless dialog is
 // alive at a time in this sample, so a single pointer is sufficient.
 HWND g_modeless_dlg = nullptr;
+
+// CP35: card + window layout in logical px. The window is sized so the
+// centered 640x480 card has even margins (~120 left/right, ~60 top/bottom).
+constexpr int kCardW      = 640;
+constexpr int kCardH      = 480;
+constexpr int kWindowW    = 880;
+constexpr int kWindowH    = 600;
+constexpr int kPadX       = 24;
+constexpr int kPadY       = 24;
+constexpr int kBrandSize  = 32;
+constexpr int kBrandGap   = 16;
+constexpr int kButtonH    = 44;
+constexpr int kButtonGap  = 12;
+constexpr int kDividerGap = 40;     // gap below last button
+constexpr int kDebugGap   = 16;     // gap below divider
 
 struct PrefsPayload {
     std::wstring name;
@@ -78,14 +81,30 @@ std::wstring format_payload(const PrefsPayload& p) {
     return s;
 }
 
+// CP35: hit-test cache for the three coral primary buttons. Each one
+// remembers its physical (DPI-scaled) rectangle plus hover state. The
+// main window owns these so the WM_PAINT path and the mouse path agree
+// without going through child HWNDs.
+struct ButtonSlot {
+    RECT rect{};
+    bool hover{false};
+};
+
 class TourWindow : public nfui::Window {
 public:
     explicit TourWindow(HINSTANCE instance)
         : instance_(instance),
+          theme_mode_(nfui::ThemeMode::light),
           palette_(nfui::theme_palette(nfui::ThemeMode::light)) {}
 
-    ~TourWindow() noexcept override {
-        destroy_icon();
+    ~TourWindow() noexcept override = default;
+
+    // CP32: lets wWinMain seed the mode before create_main paints the
+    // chrome. Without this, --theme dark still captures light.
+    void set_initial_theme(nfui::ThemeMode mode) noexcept {
+        if (hwnd() != nullptr) return;
+        theme_mode_ = mode;
+        palette_ = nfui::theme_palette(mode);
     }
 
     bool create_main(int cmd_show) {
@@ -93,7 +112,7 @@ public:
             instance_,
             L"NativeFrameUIDialogTourWindow",
             L"NativeFrame UI Dialog Tour",
-            WS_OVERLAPPED | WS_CAPTION | WS_SYSMENU | WS_MINIMIZEBOX | WS_MAXIMIZEBOX,
+            WS_OVERLAPPED | WS_CAPTION | WS_SYSMENU | WS_MINIMIZEBOX,
             0,
             CW_USEDEFAULT,
             CW_USEDEFAULT,
@@ -103,34 +122,37 @@ public:
         if (!create(params)) {
             return false;
         }
-
-        dpi_ = nfui::DpiScale(GetDpiForWindow(hwnd()));
         apply_window_icon();
-
-        if (!create_children()) {
-            return false;
-        }
-
+        dpi_ = nfui::DpiScale(GetDpiForWindow(hwnd()));
+        layout_card();
         ShowWindow(hwnd(), cmd_show);
-        UpdateWindow(hwnd());
         return true;
     }
 
     void launch_about() {
-        // Modal path: blocks until the user dismisses the dialog.
+        // CP35: record the event BEFORE the modal blocks, so a fast user
+        // who watches the status line sees the click registered even if
+        // the modal has not yet dismissed.
+        last_event_ = L"about_open";
+        invalidate_debug();
         last_about_result_ = about_.show_modal(
             instance_, MAKEINTRESOURCEW(IDD_NFUI_ABOUT),
             hwnd(), &TourWindow::about_dlg_proc);
-        refresh_status();
+        last_event_ = (last_about_result_ == IDOK) ? L"about_ok"
+                                                    : L"about_cancel";
+        about_done_ = true;
+        about_ok_   = (last_about_result_ == IDOK);
+        invalidate_debug();
     }
 
     void launch_prefs() {
-        // OwnedHwnd::valid() only checks the cached pointer, not that the
-        // HWND is still alive. When the prefs DLGPROC destroys the HWND
-        // directly without going through prefs_.end_modeless(), the wrapper
-        // keeps the dead pointer and a second click would silently no-op.
-        // Use IsWindow() on the cached HWND so we either foreground the live
-        // dialog or treat the slot as empty.
+        // CP22: OwnedHwnd::valid() only checks the cached pointer, not that
+        // the HWND is still alive. When the prefs DLGPROC destroys the HWND
+        // directly (IDOK / IDCANCEL / WM_CLOSE paths in prefs_dlg_proc
+        // below) without going through prefs_.end_modeless(), the wrapper
+        // keeps the dead pointer and a second click on "Open Modeless"
+        // silently no-ops. Use IsWindow() on the cached HWND so we either
+        // foreground the live dialog or treat the slot as empty.
         if (prefs_.valid() && IsWindow(prefs_.hwnd()) != FALSE) {
             SetForegroundWindow(prefs_.hwnd());
             return;
@@ -141,46 +163,78 @@ public:
         if (created != nullptr) {
             ShowWindow(created, SW_SHOW);
             g_modeless_dlg = created;
+            prefs_open_ = true;
+            last_event_ = L"prefs_opened";
+            invalidate_debug();
         }
-        refresh_status();
     }
 
     void close_prefs() {
+        // CP22: same IsWindow() guard so close_prefs() doesn't try to
+        // end_modeless() on a slot the DLGPROC already destroyed.
         if (prefs_.valid() && IsWindow(prefs_.hwnd()) != FALSE) {
             prefs_.end_modeless(IDCANCEL);
             g_modeless_dlg = nullptr;
         } else {
             g_modeless_dlg = nullptr;
         }
-        refresh_status();
+        if (prefs_open_) {
+            prefs_open_ = false;
+            last_event_ = L"prefs_closed";
+            invalidate_debug();
+        }
     }
 
     // Called by the prefs DLGPROC via WM_NFUI_PREFS_SUBMITTED.
     void on_prefs_submitted(const std::wstring& payload) {
         last_payload_ = payload;
-        refresh_status();
+        last_event_ = L"prefs_submitted";
+        invalidate_debug();
     }
 
 protected:
     LRESULT handle_message(UINT msg, WPARAM wp, LPARAM lp) noexcept override {
         switch (msg) {
             case WM_SIZE:
-                layout_children();
+                layout_card();
                 return 0;
             case WM_DPICHANGED: {
                 dpi_ = nfui::DpiScale(HIWORD(wp));
-                auto* suggested = reinterpret_cast<RECT*>(lp);
-                if (suggested != nullptr) {
-                    SetWindowPos(hwnd(),
-                                 nullptr,
-                                 suggested->left,
-                                 suggested->top,
-                                 suggested->right - suggested->left,
-                                 suggested->bottom - suggested->top,
-                                 SWP_NOACTIVATE | SWP_NOZORDER);
-                }
-                layout_children();
+                layout_card();
                 InvalidateRect(hwnd(), nullptr, TRUE);
+                return 0;
+            }
+            case WM_MOUSEMOVE: {
+                const POINT pt{GET_X_LPARAM(lp), GET_Y_LPARAM(lp)};
+                update_hover(pt);
+                return 0;
+            }
+            case WM_MOUSELEAVE: {
+                if (about_btn_.hover || prefs_btn_.hover || close_btn_.hover) {
+                    about_btn_.hover = false;
+                    prefs_btn_.hover = false;
+                    close_btn_.hover = false;
+                    InvalidateRect(hwnd(), nullptr, FALSE);
+                }
+                tracking_leave_ = false;
+                return 0;
+            }
+            case WM_LBUTTONDOWN: {
+                // Capture the mouse so a drag that leaves the button still
+                // releases inside our handler.
+                SetCapture(hwnd());
+                return 0;
+            }
+            case WM_LBUTTONUP: {
+                ReleaseCapture();
+                const POINT pt{GET_X_LPARAM(lp), GET_Y_LPARAM(lp)};
+                if (PtInRect(&about_btn_.rect, pt)) {
+                    launch_about();
+                } else if (PtInRect(&prefs_btn_.rect, pt)) {
+                    launch_prefs();
+                } else if (PtInRect(&close_btn_.rect, pt)) {
+                    close_prefs();
+                }
                 return 0;
             }
             case WM_ERASEBKGND:
@@ -190,28 +244,14 @@ protected:
                 HDC hdc = BeginPaint(hwnd(), &paint);
                 RECT client{};
                 GetClientRect(hwnd(), &client);
-                {
-                    nfui::MemoryDC mem(hdc, client);
-                    HDC target = mem.valid() ? mem.dc() : hdc;
-                    paint_background(target);
-                }
+                paint_surface(hdc, client);
                 EndPaint(hwnd(), &paint);
-                return 0;
-            }
-            case WM_COMMAND: {
-                const WORD code = HIWORD(wp);
-                const WORD id   = LOWORD(wp);
-                if (code == BN_CLICKED) {
-                    if (id == IDC_LAUNCH_ABOUT)      launch_about();
-                    else if (id == IDC_LAUNCH_PREFS) launch_prefs();
-                    else if (id == IDC_CLOSE_PREFS)  close_prefs();
-                }
                 return 0;
             }
             case WM_GETMINMAXINFO: {
                 auto* mmi = reinterpret_cast<MINMAXINFO*>(lp);
-                mmi->ptMinTrackSize.x = dpi_.logical_to_pixels(420);
-                mmi->ptMinTrackSize.y = dpi_.logical_to_pixels(360);
+                mmi->ptMinTrackSize.x = kWindowW;
+                mmi->ptMinTrackSize.y = kWindowH;
                 return 0;
             }
             case WM_NFUI_PREFS_SUBMITTED: {
@@ -231,203 +271,230 @@ protected:
     }
 
 private:
-    [[nodiscard]] bool create_children() noexcept {
-        about_btn_.inject_theme(&palette_, &fonts_);
-        prefs_btn_.inject_theme(&palette_, &fonts_);
-        close_btn_.inject_theme(&palette_, &fonts_);
-        status_label_.inject_theme(&palette_, &fonts_);
-
-        nfui::ControlCreateParams params{
-            instance_,
-            hwnd(),
-            IDC_LAUNCH_ABOUT,
-            L"Show About (modal)",
-            0, 0, 100, kButtonH,
-        };
-
-        nfui::ButtonStyle accent_style{};
-        accent_style.use_semibold = true;
-        about_btn_.set_style(accent_style);
-        if (!about_btn_.create(params)) {
-            return false;
-        }
-
-        params.control_id = IDC_LAUNCH_PREFS;
-        params.text       = L"Show Preferences (modeless)";
-        prefs_btn_.set_style(accent_style);
-        if (!prefs_btn_.create(params)) {
-            return false;
-        }
-
-        params.control_id = IDC_CLOSE_PREFS;
-        params.text       = L"Close modeless";
-        close_btn_.set_style(accent_style);
-        if (!close_btn_.create(params)) {
-            return false;
-        }
-
-        params.control_id = IDC_STATUS_LABEL;
-        params.text       = L"";
-        params.style      = WS_CHILD | WS_VISIBLE;
-        if (!status_label_.create(params)) {
-            return false;
-        }
-
-        nfui::TextStyle status_style{};
-        status_style.foreground         = palette_.text_secondary;
-        status_style.background         = palette_.background;
-        status_style.font_size_pt       = nfui::font_pt::sm;
-        status_style.align_v            = nfui::StaticTextAlignV::middle;
-        status_style.horizontal_padding = 0;
-        status_style.vertical_padding   = 0;
-        status_label_.set_style(status_style);
-
-        refresh_status();
-        layout_children();
-        return true;
-    }
-
     void apply_window_icon() noexcept {
-        if (app_icon_ != nullptr) {
-            return;
-        }
-        app_icon_ = static_cast<HICON>(LoadImageW(
-            instance_,
-            MAKEINTRESOURCEW(IDI_NFUI_APP),
-            IMAGE_ICON,
-            GetSystemMetrics(SM_CXSMICON),
-            GetSystemMetrics(SM_CYSMICON),
-            LR_DEFAULTCOLOR));
-        if (app_icon_ != nullptr) {
+        small_icon_ = nfui::IconHandle{static_cast<HICON>(LoadImageW(
+            instance_, MAKEINTRESOURCEW(IDI_NFUI_APP), IMAGE_ICON,
+            GetSystemMetrics(SM_CXSMICON), GetSystemMetrics(SM_CYSMICON),
+            LR_DEFAULTCOLOR))};
+        if (small_icon_.valid()) {
             SendMessageW(hwnd(), WM_SETICON, ICON_SMALL,
-                         reinterpret_cast<WPARAM>(app_icon_));
+                         reinterpret_cast<LPARAM>(small_icon_.get()));
+        }
+        large_icon_ = nfui::IconHandle{static_cast<HICON>(LoadImageW(
+            instance_, MAKEINTRESOURCEW(IDI_NFUI_APP), IMAGE_ICON,
+            GetSystemMetrics(SM_CXICON), GetSystemMetrics(SM_CYICON),
+            LR_DEFAULTCOLOR))};
+        if (large_icon_.valid()) {
+            SendMessageW(hwnd(), WM_SETICON, ICON_BIG,
+                         reinterpret_cast<LPARAM>(large_icon_.get()));
         }
     }
 
-    void destroy_icon() noexcept {
-        if (app_icon_ != nullptr) {
-            DestroyIcon(app_icon_);
-            app_icon_ = nullptr;
-        }
-    }
-
-    void refresh_status() {
-        std::wstring text = L"about=";
-        switch (last_about_result_) {
-            case IDOK:     text += L"IDOK";     break;
-            case IDCANCEL: text += L"IDCANCEL"; break;
-            default:       text += L"unset";    break;
-        }
-        text += L"   prefs_open=";
-        text += (prefs_.valid() ? L"yes" : L"no");
-        text += L"   last=";
-        text += last_payload_;
-        status_label_.set_caption(text);
-    }
-
-    void layout_children() {
+    // CP35: recompute the card geometry + button rects from the current
+    // DPI. The card stays centered in the client area; the inner padding
+    // drives every downstream rectangle so a DPI swap cannot desync the
+    // hit-test cache from what WM_PAINT draws.
+    void layout_card() noexcept {
         if (hwnd() == nullptr) {
             return;
         }
         dpi_ = nfui::DpiScale(GetDpiForWindow(hwnd()));
-        RECT rc{};
-        GetClientRect(hwnd(), &rc);
-
-        const int margin   = dpi_.logical_to_pixels(kMarginOuter);
-        const int header_h = dpi_.logical_to_pixels(kHeaderH);
-        const int button_h = dpi_.logical_to_pixels(kButtonH);
-        const int button_w = (rc.right - rc.left) - 2 * margin;
-        const int gap      = dpi_.logical_to_pixels(kButtonGap);
-        const int section  = dpi_.logical_to_pixels(kSectionGap);
-        const int status_h = dpi_.logical_to_pixels(kStatusH);
-        const int status_y = rc.bottom - dpi_.logical_to_pixels(kMarginOuter) - status_h;
-
-        int y = header_h + section;
-        MoveWindow(about_btn_.hwnd(),  margin, y, button_w, button_h, TRUE);
-        y += button_h + gap;
-        MoveWindow(prefs_btn_.hwnd(), margin, y, button_w, button_h, TRUE);
-        y += button_h + gap;
-        MoveWindow(close_btn_.hwnd(), margin, y, button_w, button_h, TRUE);
-
-        MoveWindow(status_label_.hwnd(),
-                   margin,
-                   status_y + dpi_.logical_to_pixels(kStatusGap),
-                   button_w,
-                   status_h - dpi_.logical_to_pixels(kStatusGap), TRUE);
-    }
-
-    void paint_background(HDC target) noexcept {
-        const int dpi_value = dpi_.dpi();
-        const nfui::ThemePalette& p = palette_;
-
         RECT client{};
         GetClientRect(hwnd(), &client);
-        nfui::fill_rect(target, client, p.background);
 
-        // Hero header: surface background with a 1px bottom divider.
-        const int header_h = dpi_.logical_to_pixels(kHeaderH);
-        RECT header{client.left, client.top, client.right, client.top + header_h};
-        nfui::fill_rect(target, header, p.surface);
-        const RECT divider{
-            header.left,
-            header.bottom - 1,
-            header.right,
-            header.bottom,
+        const int card_w = dpi_.logical_to_pixels(kCardW);
+        const int card_h = dpi_.logical_to_pixels(kCardH);
+        const int card_x = (client.right - client.left - card_w) / 2;
+        const int card_y = (client.bottom - client.top - card_h) / 2;
+        card_rect_ = {client.left + card_x, client.top + card_y,
+                      client.left + card_x + card_w,
+                      client.top + card_y + card_h};
+
+        const int pad_x   = dpi_.logical_to_pixels(kPadX);
+        const int brand   = dpi_.logical_to_pixels(kBrandSize);
+        const int gap     = dpi_.logical_to_pixels(kBrandGap);
+        const int btn_h   = dpi_.logical_to_pixels(kButtonH);
+        const int btn_gap = dpi_.logical_to_pixels(kButtonGap);
+
+        brand_rect_ = {
+            card_rect_.left + pad_x,
+            card_rect_.top  + pad_x,
+            card_rect_.left + pad_x + brand,
+            card_rect_.top  + pad_x + brand,
         };
-        nfui::fill_rect(target, divider, p.border);
+        title_rect_ = {
+            brand_rect_.right + gap,
+            brand_rect_.top,
+            card_rect_.right - pad_x,
+            brand_rect_.bottom,
+        };
 
-        // App mark on the left of the header: a rounded accent square with a
-        // white "N". This is sample-local chrome; the framework icon resource
-        // does not carry the same brand mark, so we paint it ourselves.
-        const int icon_size = dpi_.logical_to_pixels(kIconSize);
-        const int margin    = dpi_.logical_to_pixels(kMarginOuter);
-        const int icon_x    = client.left + margin;
-        const int icon_y    = client.top + (header_h - icon_size) / 2;
-        const RECT mark_rc{icon_x, icon_y, icon_x + icon_size, icon_y + icon_size};
-        const int mark_radius = nfui::theme_metrics().corner_radius_card;
-        nfui::fill_rounded_rect(target, mark_rc, mark_radius, p.accent, p.accent);
-        RECT mark_text_rc = mark_rc;
-        HFONT mark_font = fonts_.bold(dpi_value, nfui::font_pt::xl);
-        nfui::draw_text(target, mark_text_rc, L"N", mark_font, p.accent_text,
+        // Description block. Leave a comfortable gap below the brand row
+        // (16 logical px) and let DT_WORDBREAK wrap to ~2 lines.
+        const int desc_top = brand_rect_.bottom + dpi_.logical_to_pixels(16);
+        const int desc_h   = dpi_.logical_to_pixels(40);
+        desc_rect_ = {
+            card_rect_.left + pad_x,
+            desc_top,
+            card_rect_.right - pad_x,
+            desc_top + desc_h,
+        };
+
+        // Buttons: equal width across the inner card, stacked with the
+        // design gap.
+        const int btn_left  = card_rect_.left + pad_x;
+        const int btn_right = card_rect_.right - pad_x;
+        int y = desc_rect_.bottom + dpi_.logical_to_pixels(20);
+        about_btn_.rect = {btn_left, y, btn_right, y + btn_h};
+        y += btn_h + btn_gap;
+        prefs_btn_.rect = {btn_left, y, btn_right, y + btn_h};
+        y += btn_h + btn_gap;
+        close_btn_.rect = {btn_left, y, btn_right, y + btn_h};
+
+        divider_y_ = close_btn_.rect.bottom + dpi_.logical_to_pixels(kDividerGap);
+        debug_rect_ = {
+            card_rect_.left + pad_x,
+            divider_y_ + dpi_.logical_to_pixels(2) + dpi_.logical_to_pixels(kDebugGap),
+            card_rect_.right - pad_x,
+            card_rect_.bottom - pad_x,
+        };
+    }
+
+    // CP35: drive the card chrome + content in a single WM_PAINT path.
+    // Everything is a fill_rounded_rect + draw_text, so there is no
+    // dependency on the framework's nfui::Button / nfui::StaticText
+    // chrome — the sample owns its presentation.
+    void paint_surface(HDC hdc, const RECT& client) noexcept {
+        nfui::MemoryDC mem(hdc, client);
+        HDC target = mem.valid() ? mem.dc() : hdc;
+
+        // 1. Window background. This is the canvas behind the card.
+        nfui::fill_rect(target, client, palette_.background);
+
+        // 2. Card drop shadow (elevation 2) then the card itself.
+        const int radius = dpi_.logical_to_pixels(12);
+        nfui::paint_drop_shadow(target, card_rect_, radius, 2, palette_.shadow);
+        nfui::fill_rounded_rect(target, card_rect_, radius,
+                                palette_.surface, palette_.border);
+
+        // 3. N brand square. Coral fill with the design radius (6 logical
+        // px = small pill, matches the rest of the framework's buttons).
+        const int brand_radius = dpi_.logical_to_pixels(6);
+        nfui::fill_rounded_rect(target, brand_rect_, brand_radius,
+                                palette_.accent, palette_.accent);
+
+        // Draw "N" centred in the square using the brand-mark font (bold
+        // xl). Use a slightly smaller pt so the glyph clears the square's
+        // edges on every DPI.
+        HFONT brand_font = fonts_.bold(dpi_.dpi(), nfui::font_pt::lg);
+        nfui::draw_text(target, brand_rect_, L"N", brand_font,
+                        palette_.accent_text,
                         DT_CENTER | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX);
 
-        // Title and subtitle to the right of the mark.
-        const int icon_gap = dpi_.logical_to_pixels(kIconGap);
-        const int text_left = icon_x + icon_size + icon_gap;
-        const int text_right = client.right - margin;
+        // 4. Page title. xl bold, left aligned next to the brand square.
+        HFONT title_font = fonts_.bold(dpi_.dpi(), nfui::font_pt::xl);
+        nfui::draw_text(target, title_rect_, L"Dialog Tour", title_font,
+                        palette_.text,
+                        DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX);
 
-        RECT title_rc{
-            text_left,
-            client.top + dpi_.logical_to_pixels(24),
-            text_right,
-            client.top + dpi_.logical_to_pixels(60),
-        };
-        HFONT title_font = fonts_.bold(dpi_value, nfui::font_pt::xl);
-        nfui::draw_text(target, title_rc, L"Dialog Tour", title_font, p.text,
-                        DT_LEFT | DT_TOP | DT_SINGLELINE | DT_NOPREFIX);
-
-        RECT subtitle_rc{
-            text_left,
-            title_rc.bottom + dpi_.logical_to_pixels(4),
-            text_right,
-            header.bottom - dpi_.logical_to_pixels(24),
-        };
-        HFONT subtitle_font = fonts_.regular(dpi_value, nfui::font_pt::base);
-        nfui::draw_text(target, subtitle_rc,
-                        L"Demonstrates modal, modeless, and lifecycle routing in a native shell.",
-                        subtitle_font, p.text_secondary,
+        // 5. Description. sm muted, word-wrapped.
+        HFONT desc_font = fonts_.regular(dpi_.dpi(), nfui::font_pt::sm);
+        nfui::draw_text(target, desc_rect_,
+                        L"Click each button to see modal, modeless, and "
+                        L"dismissed dialogs. The status line below tracks the "
+                        L"last event.",
+                        desc_font, palette_.text_secondary,
                         DT_LEFT | DT_TOP | DT_WORDBREAK | DT_NOPREFIX);
 
-        // 1px divider above the status strip so it reads as anchored chrome.
-        const int status_h = dpi_.logical_to_pixels(kStatusH);
-        const int status_y = client.bottom - dpi_.logical_to_pixels(kMarginOuter) - status_h;
-        nfui::draw_line(target,
-                        {client.left + margin, status_y},
-                        {client.right - margin, status_y},
-                        p.border, 1);
+        // 6. Three stacked coral buttons. Hover swaps to accent_hover.
+        const int btn_radius = dpi_.logical_to_pixels(6);
+        HFONT btn_font = fonts_.bold(dpi_.dpi(), nfui::font_pt::base);
+        paint_button(target, about_btn_, L"Show About (modal)",
+                     btn_radius, btn_font);
+        paint_button(target, prefs_btn_, L"Show Preferences (modeless)",
+                     btn_radius, btn_font);
+        paint_button(target, close_btn_, L"Close modeless",
+                     btn_radius, btn_font);
+
+        // 7. 2px horizontal divider just below the button group.
+        const int div_top    = divider_y_;
+        const int div_bottom = div_top + dpi_.logical_to_pixels(2);
+        RECT divider_rect{card_rect_.left + dpi_.logical_to_pixels(kPadX),
+                          div_top,
+                          card_rect_.right - dpi_.logical_to_pixels(kPadX),
+                          div_bottom};
+        nfui::fill_rect(target, divider_rect, palette_.border);
+
+        // 8. Debug line. xs mono, text_secondary. The format is fixed and
+        // the only field that varies per click is `last=`.
+        HFONT debug_font = fonts_.mono(dpi_.dpi(), nfui::font_pt::xs);
+        nfui::draw_text(target, debug_rect_, debug_text(), debug_font,
+                        palette_.text_secondary,
+                        DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX);
+    }
+
+    void paint_button(HDC target, const ButtonSlot& slot,
+                      const wchar_t* label, int radius, HFONT font) noexcept {
+        const nfui::Color fill = slot.hover ? palette_.accent_hover
+                                            : palette_.accent;
+        nfui::fill_rounded_rect(target, slot.rect, radius, fill, fill);
+        nfui::draw_text(target, slot.rect, label, font,
+                        palette_.accent_text,
+                        DT_CENTER | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX);
+    }
+
+    [[nodiscard]] std::wstring debug_text() const {
+        std::wstring text = L"about=";
+        if (!about_done_) {
+            text += L"unset";
+        } else {
+            text += about_ok_ ? L"ok" : L"cancel";
+        }
+        text += prefs_open_ ? L" prefs_open=yes" : L" prefs_open=no";
+        text += L" last=";
+        text += last_event_;
+        return text;
+    }
+
+    void invalidate_debug() noexcept {
+        if (hwnd() != nullptr) {
+            InvalidateRect(hwnd(), nullptr, FALSE);
+        }
+    }
+
+    // CP35: re-evaluate hover state for the three buttons against the
+    // cursor position, then redraw whatever changed. Arms a one-shot
+    // WM_MOUSELEAVE so a cursor that leaves the window still clears the
+    // highlight.
+    void update_hover(POINT pt) noexcept {
+        const bool about_hit  = PtInRect(&about_btn_.rect,  pt) != FALSE;
+        const bool prefs_hit  = PtInRect(&prefs_btn_.rect,  pt) != FALSE;
+        const bool close_hit  = PtInRect(&close_btn_.rect,  pt) != FALSE;
+        if (about_hit  != about_btn_.hover ||
+            prefs_hit  != prefs_btn_.hover ||
+            close_hit  != close_btn_.hover) {
+            about_btn_.hover = about_hit;
+            prefs_btn_.hover = prefs_hit;
+            close_btn_.hover = close_hit;
+            InvalidateRect(hwnd(), nullptr, FALSE);
+        }
+        if (!tracking_leave_ && (about_hit || prefs_hit || close_hit)) {
+            TRACKMOUSEEVENT tme{};
+            tme.cbSize    = sizeof(tme);
+            tme.dwFlags   = TME_LEAVE;
+            tme.hwndTrack = hwnd();
+            TrackMouseEvent(&tme);
+            tracking_leave_ = true;
+        }
     }
 
     static INT_PTR CALLBACK about_dlg_proc(HWND dlg, UINT msg, WPARAM wp, LPARAM) {
+        if (msg == WM_INITDIALOG) {
+            // CP31: present the dismiss action as a plain close label instead
+            // of the stock "OK" jargon.
+            SetDlgItemTextW(dlg, IDOK, L"Close");
+            return TRUE;
+        }
         if (msg == WM_COMMAND && LOWORD(wp) == IDOK) {
             EndDialog(dlg, IDOK);
             return TRUE;
@@ -458,6 +525,11 @@ private:
                 const WORD code = HIWORD(wp);
                 const WORD id   = LOWORD(wp);
                 if (code == BN_CLICKED && id == IDOK) {
+                    // CP15: validation no longer pops a native MessageBoxW
+                    // (the old chrome bypasses every visual contract in the
+                    // framework). An empty name is encoded as "<empty>" in
+                    // the payload so the main window's status strip reports
+                    // the truth without flashing native chrome.
                     wchar_t name[128]{};
                     GetDlgItemTextW(dlg, IDC_NFUI_PREFS_NAME, name, 128);
                     PrefsPayload p{};
@@ -472,6 +544,9 @@ private:
                         SendMessageW(main_hwnd, WM_NFUI_PREFS_SUBMITTED, 0,
                                      reinterpret_cast<LPARAM>(encoded.c_str()));
                     }
+                    // Modeless path: DestroyWindow tears down the HWND that
+                    // CreateDialogParamW allocated; the framework's
+                    // OwnedHwnd RAII cleans up via WM_NCDESTROY.
                     DestroyWindow(dlg);
                     g_modeless_dlg = nullptr;
                     return TRUE;
@@ -496,20 +571,37 @@ private:
     nfui::Dialog about_{};
     nfui::Dialog prefs_{};
     nfui::ThemePalette palette_;
+    nfui::ThemeMode theme_mode_{nfui::ThemeMode::light};
     nfui::FontCache fonts_;
-    nfui::Button about_btn_;
-    nfui::Button prefs_btn_;
-    nfui::Button close_btn_;
-    nfui::StaticText status_label_;
+    nfui::IconHandle small_icon_;
+    nfui::IconHandle large_icon_;
     nfui::DpiScale dpi_{96};
-    HICON app_icon_{};
-    int last_about_result_{-1};
-    std::wstring last_payload_{L"none"};
+
+    // CP35: card geometry + hit-test cache. All rectangles are device
+    // pixels; layout_card() refreshes them on every WM_SIZE / WM_DPICHANGED.
+    RECT    card_rect_{};
+    RECT    brand_rect_{};
+    RECT    title_rect_{};
+    RECT    desc_rect_{};
+    int     divider_y_{};
+    RECT    debug_rect_{};
+    ButtonSlot about_btn_{};
+    ButtonSlot prefs_btn_{};
+    ButtonSlot close_btn_{};
+    bool    tracking_leave_{false};
+
+    // CP35: state driving the debug line.
+    bool         about_done_{false};
+    bool         about_ok_{false};
+    bool         prefs_open_{false};
+    std::wstring last_event_{L"none"};
+    std::wstring last_payload_{L"<none>"};
+    int          last_about_result_{-1};
 };
 
 } // namespace
 
-int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, LPWSTR, int cmd_show) {
+int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, LPWSTR cmd_line, int cmd_show) {
     nfui::Application app({instance, cmd_show});
 
     if (!nfui::Application::initialize_process_dpi() ||
@@ -517,7 +609,23 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, LPWSTR, int cmd_show) {
         return 1;
     }
 
+    // CP32: --theme seeds the palette before create_main. Audit quotes
+    // the value (--theme "dark"); strip the leading quote.
+    auto parse_theme = [](PCWSTR cl) noexcept {
+        if (cl == nullptr) return nfui::ThemeMode::light;
+        const wchar_t* tag = wcsstr(cl, L"--theme");
+        if (tag == nullptr) return nfui::ThemeMode::light;
+        tag += 7;
+        while (*tag == L' ' || *tag == L'\t') ++tag;
+        if (*tag == L'"') ++tag;
+        if (wcsncmp(tag, L"dark", 4) == 0 && (tag[4] == L' ' || tag[4] == 0 || tag[4] == L'"')) return nfui::ThemeMode::dark;
+        if (wcsncmp(tag, L"high_contrast", 13) == 0) return nfui::ThemeMode::high_contrast;
+        return nfui::ThemeMode::light;
+    };
+    const nfui::ThemeMode initial_mode = parse_theme(cmd_line);
+
     TourWindow window(instance);
+    window.set_initial_theme(initial_mode);
     if (!window.create_main(cmd_show)) {
         return 2;
     }

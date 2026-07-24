@@ -1,77 +1,68 @@
 #include "ShowcaseView.hpp"
 
+#include <nfui/Font.hpp>
 #include <nfui/Paint.hpp>
+#include <nfui/VectorIcon.hpp>
 
 #include <algorithm>
 #include <array>
-#include <cmath>
 #include <string_view>
 
 namespace {
 
-enum class FontWeight { regular, semibold, bold, serif, mono };
+enum class FontWeight { regular, semibold, bold };
 
 struct ShowcasePalette {
     nfui::Color window;
     nfui::Color sidebar;
-    nfui::Color header;
+    nfui::Color command_bar;
     nfui::Color surface;
     nfui::Color surface_alt;
+    nfui::Color surface_tint;   // CP32: selected nav row fill — distinct from sidebar base
     nfui::Color border;
     nfui::Color accent;
     nfui::Color accent_soft;
+    nfui::Color accent_text;
     nfui::Color text;
     nfui::Color muted_text;
     nfui::Color success;
-    nfui::Color success_soft;
     nfui::Color warning;
-    nfui::Color online;
-    nfui::Color accent_text;
+    nfui::Color info;
     nfui::Color shadow;
 };
 
 struct ShowcaseLayout {
     RECT sidebar{};
-    RECT header{};
+    RECT command_bar{};
     RECT workspace{};
     RECT inspector{};
-    RECT search_box{};
-    RECT notification{};
     RECT theme_toggle{};
     RECT divider_left{};
     RECT divider_right{};
     RECT brand_title{};
-    RECT brand_subtitle{};
-    RECT sidebar_footer{};
+    RECT brand_tagline{};
+    RECT version_badge{};
     RECT avatar{};
-    RECT version_pill{};
-    std::array<RECT, 5> navigation{};
-    std::array<RECT, 5> nav_icons{};
-    std::array<RECT, 5> nav_labels{};
+    RECT avatar_dot{};
+    std::array<RECT, 4> navigation{};
     std::array<RECT, 3> cards{};
-    std::array<RECT, 3> card_titles{};
-    std::array<RECT, 3> card_values{};
-    std::array<RECT, 3> card_badges{};
     std::array<RECT, 3> inspector_rows{};
-    std::array<RECT, 3> inspector_headers{};
-    std::array<RECT, 3> inspector_bodies{};
-    std::array<RECT, 3> inspector_tags{};
-    RECT note_card{};
-    RECT chart_card{};
+    RECT workspace_note{};
 };
 
-constexpr std::array<std::wstring_view, 5> navigation_labels{
+constexpr std::array<std::wstring_view, 4> navigation_labels{
     L"Overview",
     L"Pipelines",
     L"Reviews",
     L"Resources",
-    L"Settings",
 };
 
+// CP32: KPI card content. Label is uppercase copy that goes above the big
+// value; the badge below sits in a coloured pill.
 constexpr std::array<std::wstring_view, 3> card_titles{
-    L"Adoption",
-    L"Build Health",
-    L"Resource Flow",
+    L"ADOPTION",
+    L"BUILD HEALTH",
+    L"RESOURCE FLOW",
 };
 
 constexpr std::array<std::wstring_view, 3> card_values{
@@ -86,16 +77,18 @@ constexpr std::array<std::wstring_view, 3> card_badges{
     L"Explicit",
 };
 
+// CP32: inspector pill-tag strings — replace the previous colour-bullets with
+// small rounded pills that mirror the version badge style.
+constexpr std::array<std::wstring_view, 3> inspector_tags{
+    L"12px",
+    L"mono",
+    L"dpi-aware",
+};
+
 constexpr std::array<std::wstring_view, 3> inspector_labels{
     L"Framework boundary",
     L"DPI path",
     L"Resource story",
-};
-
-constexpr std::array<std::wstring_view, 3> inspector_tags{
-    L"12px",
-    L"12px",
-    L"12px",
 };
 
 constexpr std::array<std::wstring_view, 3> inspector_values{
@@ -130,15 +123,22 @@ constexpr std::array<std::wstring_view, 3> inspector_values{
     return inset;
 }
 
+[[nodiscard]] RECT inset_rect(const RECT& rect, int left, int top, int right, int bottom) noexcept {
+    RECT inset = rect;
+    inset.left += left;
+    inset.top += top;
+    inset.right -= right;
+    inset.bottom -= bottom;
+    return inset;
+}
+
 [[nodiscard]] HFONT fetch_font(nfui::FontCache& fonts,
                                int dpi,
                                FontWeight weight,
                                int point_size) noexcept {
     switch (weight) {
-    case FontWeight::bold:     return fonts.bold(dpi, point_size);
     case FontWeight::semibold: return fonts.semibold(dpi, point_size);
-    case FontWeight::serif:    return fonts.serif(dpi, point_size);
-    case FontWeight::mono:     return fonts.mono(dpi, point_size);
+    case FontWeight::bold:     return fonts.bold(dpi, point_size);
     case FontWeight::regular:
     default:                   return fonts.regular(dpi, point_size);
     }
@@ -150,23 +150,31 @@ constexpr std::array<std::wstring_view, 3> inspector_values{
 
     ShowcasePalette palette{};
     palette.window = p.background;
-    palette.sidebar = dark ? nfui::darken(p.background, 0.18f)
-                           : nfui::alpha_blend(p.border, p.background, 0.08f);
-    palette.header = p.surface;
+    // CP32: sidebar gets a subtle tint away from the window base so the
+    // selected row's surface fill can read as "lighter" against the rail.
+    palette.sidebar = dark ? nfui::darken(p.background, 0.04f)
+                           : nfui::alpha_blend(p.border, p.background, 0.30f);
+    palette.command_bar = dark ? p.surface
+                               : p.surface;
     palette.surface = p.surface;
-    palette.surface_alt = dark ? nfui::darken(p.background, 0.12f)
-                               : nfui::alpha_blend(p.border, p.background, 0.06f);
+    // CP32: surface_alt lifts slightly more than surface so workspace panels
+    // ("Showcase-only visuals") stay distinct from KPI cards.
+    palette.surface_alt = dark ? nfui::lighten(p.surface, 0.04f)
+                               : nfui::alpha_blend(p.border, p.surface, 0.10f);
+    // CP32: selected-nav fill — lighter than sidebar base in dark mode, light
+    // surface in light mode. Reads as the row that owns focus.
+    palette.surface_tint = dark ? p.surface_hover
+                                : nfui::alpha_blend(p.surface, p.background, 0.55f);
     palette.border = p.border;
     palette.accent = p.accent;
-    palette.accent_soft = nfui::alpha_blend(p.background, p.accent, dark ? 0.72f : 0.80f);
+    palette.accent_soft = nfui::alpha_blend(p.background, p.accent, dark ? 0.70f : 0.80f);
+    palette.accent_text = p.accent_text;
     palette.text = p.text;
     palette.muted_text = p.text_secondary;
     palette.success = p.success;
-    palette.success_soft = nfui::alpha_blend(p.background, p.success, 0.80f);
     palette.warning = p.warning;
-    palette.online = p.success;
-    palette.accent_text = p.accent_text;
-    palette.shadow = p.shadow;
+    palette.info = p.info;
+    palette.shadow  = p.shadow;
     return palette;
 }
 
@@ -177,238 +185,111 @@ void fill_rect_color(HDC hdc, const RECT& rect, nfui::Color color) noexcept {
     }
 }
 
-void draw_text_block(HDC hdc,
-                     const RECT& rect,
-                     std::wstring_view text,
-                     nfui::FontCache& fonts,
-                     int dpi,
-                     FontWeight weight,
-                     int point_size,
-                     nfui::Color color,
-                     UINT format) noexcept {
-    if (text.empty()) return;
-    const HFONT font = fetch_font(fonts, dpi, weight, point_size);
-    nfui::draw_text(hdc, rect, text, font, color, format);
-}
+// CP32: draws the nav-row glyph. The actual IconKind enum is a small subset of
+// the named icons suggested by the redesign doc, so each row draws a small
+// geometric glyph tuned to the section — a trend for Overview, a graph for
+// Pipelines, a checklist for Reviews, and a folder for Resources. Strokes are
+// caller-resolution colour (muted / accent).
+void draw_nav_glyph(HDC hdc, std::size_t index, const RECT& cell, nfui::Color color, int stroke_px) noexcept {
+    const int left = cell.left;
+    const int top = cell.top;
+    const int w = rect_width(cell);
+    const int h = rect_height(cell);
 
-// --------------------------------------------------------------------------
-// Vector icon helpers (filled / stroked with GDI; keep shapes simple and
-// geometric so they read crisply at sample sizes without anti-aliasing).
-// --------------------------------------------------------------------------
-
-void draw_line_chart_icon(HDC hdc, const RECT& r, nfui::Color color, int stroke) noexcept {
-    const int pad = stroke;
-    const int x0 = r.left + pad;
-    const int y0 = r.bottom - pad;
-    const int x1 = r.left + rect_width(r) / 2;
-    const int y1 = r.top + pad + rect_height(r) / 4;
-    const int x2 = r.right - pad;
-    const int y2 = r.top + pad;
-    const std::array<POINT, 3> pts{{{x0, y0}, {x1, y1}, {x2, y2}}};
-    nfui::draw_polyline(hdc, pts.data(), static_cast<int>(pts.size()), color, stroke);
-    nfui::fill_ellipse(hdc, make_rect(x2 - stroke, y2 - stroke, stroke * 2 + 1, stroke * 2 + 1), color);
-}
-
-void draw_pipelines_icon(HDC hdc, const RECT& r, nfui::Color color, int stroke) noexcept {
-    const int pad = stroke + 1;
-    const int top_y = r.top + pad;
-    const int bot_y = r.bottom - pad;
-    const int left_x = r.left + pad;
-    const int right_x = r.right - pad;
-    const int fork_y = r.top + rect_height(r) * 2 / 5;
-    nfui::draw_line(hdc, {left_x, top_y}, {left_x, fork_y}, color, stroke);
-    nfui::draw_line(hdc, {left_x, fork_y}, {right_x, top_y + pad}, color, stroke);
-    nfui::draw_line(hdc, {left_x, fork_y}, {right_x, bot_y - pad}, color, stroke);
-    const int dot = stroke * 2 + 1;
-    nfui::fill_ellipse(hdc, make_rect(left_x - stroke, top_y - stroke, dot, dot), color);
-    nfui::fill_ellipse(hdc, make_rect(right_x - stroke, top_y + pad - stroke, dot, dot), color);
-    nfui::fill_ellipse(hdc, make_rect(right_x - stroke, bot_y - pad - stroke, dot, dot), color);
-}
-
-void draw_reviews_icon(HDC hdc, const RECT& r, nfui::Color color, int stroke) noexcept {
-    const int pad = stroke + 1;
-    const int y1 = r.top + pad;
-    const int y2 = (r.top + r.bottom) / 2;
-    const int y3 = r.bottom - pad;
-    const int x1 = r.left + pad;
-    const int x2 = r.right - pad;
-    const int line_w = std::max(stroke, 2);
-    nfui::draw_line(hdc, {x1, y1}, {x2, y1}, color, line_w);
-    nfui::draw_line(hdc, {x1, y2}, {x2 - rect_width(r) / 3, y2}, color, line_w);
-    nfui::draw_line(hdc, {x1, y3}, {x2 - rect_width(r) / 3, y3}, color, line_w);
-    const int star_cx = x2 - rect_width(r) / 6;
-    const int star_cy = y3;
-    const int s = std::max(3, rect_height(r) / 6);
-    const std::array<POINT, 10> star{{
-        {star_cx, star_cy - s},
-        {star_cx + s / 4, star_cy - s / 4},
-        {star_cx + s, star_cy - s / 4},
-        {star_cx + s / 3, star_cy + s / 6},
-        {star_cx + s / 2, star_cy + s},
-        {star_cx, star_cy + s / 2},
-        {star_cx - s / 2, star_cy + s},
-        {star_cx - s / 3, star_cy + s / 6},
-        {star_cx - s, star_cy - s / 4},
-        {star_cx - s / 4, star_cy - s / 4},
-    }};
-    nfui::fill_polygon(hdc, star.data(), static_cast<int>(star.size()), color, color);
-}
-
-void draw_folder_icon(HDC hdc, const RECT& r, nfui::Color color, int stroke) noexcept {
-    const int pad = stroke + 1;
-    const int tab_h = rect_height(r) / 4;
-    const int tab_w = rect_width(r) / 3;
-    const POINT body[] = {
-        {r.left + pad, r.top + pad + tab_h},
-        {r.left + pad + tab_w, r.top + pad + tab_h},
-        {r.left + pad + tab_w + stroke * 2, r.top + pad},
-        {r.right - pad, r.top + pad},
-        {r.right - pad, r.bottom - pad},
-        {r.left + pad, r.bottom - pad},
+    auto stroke = [&](POINT a, POINT b) noexcept {
+        nfui::draw_line(hdc, a, b, color, stroke_px);
     };
-    nfui::fill_polygon(hdc, body, static_cast<int>(std::size(body)), color, color);
-}
 
-void draw_settings_icon(HDC hdc, const RECT& r, nfui::Color color, int stroke) noexcept {
-    const int cx = (r.left + r.right) / 2;
-    const int cy = (r.top + r.bottom) / 2;
-    const int outer = std::min(rect_width(r), rect_height(r)) / 2 - stroke;
-    const int inner = std::max(outer / 2, 3);
-    nfui::draw_ellipse(hdc, make_rect(cx - outer, cy - outer, outer * 2 + 1, outer * 2 + 1), color, stroke);
-    nfui::fill_ellipse(hdc, make_rect(cx - inner, cy - inner, inner * 2 + 1, inner * 2 + 1), color);
-}
-
-void draw_nav_icon(HDC hdc, const RECT& r, std::size_t index, nfui::Color color, int stroke) noexcept {
     switch (index) {
-    case 0: draw_line_chart_icon(hdc, inset_rect(r, stroke), color, stroke); break;
-    case 1: draw_pipelines_icon(hdc, inset_rect(r, stroke), color, stroke); break;
-    case 2: draw_reviews_icon(hdc, inset_rect(r, stroke), color, stroke); break;
-    case 3: draw_folder_icon(hdc, inset_rect(r, stroke), color, stroke); break;
-    default: draw_settings_icon(hdc, inset_rect(r, stroke), color, stroke); break;
+    case 0: {
+        // Overview: mini trend chart — 3 vertical bars + diagonal trendline.
+        const int base = top + h - 1;
+        const int bar_w = std::max(2, w / 8);
+        const int gap = std::max(2, w / 6);
+        const int heights[3] = { h / 3, h - h / 3 - 2, h / 2 };
+        for (int i = 0; i < 3; ++i) {
+            const int bx = left + (w / 4 - bar_w) + i * gap;
+            const RECT bar = make_rect(bx, base - heights[i], bar_w, heights[i]);
+            fill_rect_color(hdc, bar, color);
+        }
+        // Trendline from low-left to high-right.
+        const POINT a{ left + 1, base - h / 3 };
+        const POINT b{ left + w - 1, top + h / 4 };
+        nfui::draw_polyline(hdc, std::array<POINT, 2>{a, b}.data(), 2, color, stroke_px);
+        break;
     }
-}
-
-void draw_search_icon(HDC hdc, const RECT& r, nfui::Color color, int stroke) noexcept {
-    const int pad = stroke + 1;
-    const int cx = r.left + rect_width(r) / 3;
-    const int cy = r.top + rect_height(r) / 3;
-    const int rad = std::min(rect_width(r), rect_height(r)) / 3 - pad;
-    nfui::draw_ellipse(hdc, make_rect(cx - rad, cy - rad, rad * 2 + 1, rad * 2 + 1), color, stroke);
-    const int h = rad * 3 / 4;
-    nfui::draw_line(hdc, {cx + rad / 2, cy + rad / 2}, {cx + rad / 2 + h, cy + rad / 2 + h}, color, stroke + 1);
-}
-
-void draw_bell_icon(HDC hdc, const RECT& r, nfui::Color color, int stroke) noexcept {
-    const int cx = (r.left + r.right) / 2;
-    const int top = r.top + stroke + 1;
-    const int bottom = r.bottom - stroke - 2;
-    const int width = rect_width(r) / 2 - stroke;
-    const std::array<POINT, 6> body{{
-        {cx - width, bottom},
-        {cx - width / 2, top + rect_height(r) / 4},
-        {cx - width / 2, top},
-        {cx + width / 2, top},
-        {cx + width / 2, top + rect_height(r) / 4},
-        {cx + width, bottom},
-    }};
-    nfui::draw_polyline(hdc, body.data(), static_cast<int>(body.size()), color, stroke);
-    nfui::draw_line(hdc, {cx - width / 3, bottom}, {cx + width / 3, bottom}, color, stroke);
-    nfui::fill_ellipse(hdc, make_rect(cx - width / 6, bottom - stroke, width / 3 + 1, stroke * 2 + 1), color);
-}
-
-void draw_sun_icon(HDC hdc, const RECT& r, nfui::Color color, int stroke) noexcept {
-    const int cx = (r.left + r.right) / 2;
-    const int cy = (r.top + r.bottom) / 2;
-    const int rad = std::min(rect_width(r), rect_height(r)) / 3;
-    nfui::draw_ellipse(hdc, make_rect(cx - rad, cy - rad, rad * 2 + 1, rad * 2 + 1), color, stroke);
-    for (int i = 0; i < 8; ++i) {
-        const double angle = i * 3.14159265358979323846 / 4.0;
-        const int inner = rad + stroke + 1;
-        const int outer = std::min(rect_width(r), rect_height(r)) / 2 - stroke;
-        const int x1 = cx + static_cast<int>(inner * std::cos(angle));
-        const int y1 = cy + static_cast<int>(inner * std::sin(angle));
-        const int x2 = cx + static_cast<int>(outer * std::cos(angle));
-        const int y2 = cy + static_cast<int>(outer * std::sin(angle));
-        nfui::draw_line(hdc, {x1, y1}, {x2, y2}, color, stroke);
+    case 1: {
+        // Pipelines: 3 nodes connected by lines (graph/dag).
+        const int cx0 = left + w / 4;
+        const int cy0 = top + h / 2;
+        const int cx1 = left + w / 2;
+        const int cy1 = top + h / 4;
+        const int cx2 = left + (3 * w) / 4;
+        const int cy2 = top + (3 * h) / 4;
+        stroke({cx0, cy0}, {cx1, cy1});
+        stroke({cx1, cy1}, {cx2, cy2});
+        stroke({cx0, cy0}, {cx2, cy2});
+        const int dot_r = std::max(2, w / 8);
+        nfui::fill_ellipse(hdc, make_rect(cx0 - dot_r, cy0 - dot_r, dot_r * 2, dot_r * 2), color);
+        nfui::fill_ellipse(hdc, make_rect(cx1 - dot_r, cy1 - dot_r, dot_r * 2, dot_r * 2), color);
+        nfui::fill_ellipse(hdc, make_rect(cx2 - dot_r, cy2 - dot_r, dot_r * 2, dot_r * 2), color);
+        break;
     }
-}
-
-void draw_moon_icon(HDC hdc, const RECT& r, nfui::Color color, int stroke) noexcept {
-    const int cx = (r.left + r.right) / 2;
-    const int cy = (r.top + r.bottom) / 2;
-    const int rad = std::min(rect_width(r), rect_height(r)) / 2 - stroke - 1;
-    // Filled circle with an offset background-filled circle erasing the right
-    // side to form a crescent. We use the current background color for the
-    // eraser; samples paint over a known fill so this reads correctly.
-    nfui::draw_ellipse(hdc, make_rect(cx - rad, cy - rad, rad * 2 + 1, rad * 2 + 1), color, stroke);
-    const int erase_rad = rad - stroke * 2;
-    const int erase_cx = cx + rad / 2;
-    const RECT erase = make_rect(erase_cx - erase_rad, cy - erase_rad, erase_rad * 2 + 1, erase_rad * 2 + 1);
-    nfui::fill_ellipse(hdc, erase, color);
-}
-
-void draw_theme_icon(HDC hdc, const RECT& r, nfui::ThemeMode mode, nfui::Color color, int stroke) noexcept {
-    if (mode == nfui::ThemeMode::dark) {
-        draw_moon_icon(hdc, r, color, stroke);
-    } else {
-        draw_sun_icon(hdc, r, color, stroke);
+    case 2: {
+        // Reviews: checklist — 2 small check marks + 3 horizontal lines.
+        const int row_h = std::max(3, h / 5);
+        const int left_pad = std::max(2, w / 12);
+        const int check_w = std::max(3, w / 6);
+        for (int i = 0; i < 3; ++i) {
+            const int y = top + i * (row_h + 2) + row_h / 2;
+            // checkbox square outline
+            const RECT box = make_rect(left + left_pad, y - row_h / 2, row_h, row_h);
+            nfui::draw_ellipse(hdc, box, color, 1);
+            // horizontal text line beside the box
+            const int line_x = box.right + 2;
+            const int line_w = std::max(4, (w - left_pad - check_w) - (line_x - left));
+            if (line_w > 0) {
+                fill_rect_color(hdc, make_rect(line_x, y - 1, line_w, 2), color);
+            }
+        }
+        break;
     }
-}
-
-void draw_avatar(HDC hdc, const RECT& r, nfui::Color bg, nfui::Color text, nfui::FontCache& fonts, int dpi,
-                 nfui::Color online_color) noexcept {
-    nfui::fill_ellipse(hdc, r, bg);
-    nfui::draw_ellipse(hdc, r, text, 1);
-    RECT text_r = inset_rect(r, dpi / 20);
-    draw_text_block(hdc, text_r, L"JD", fonts, dpi, FontWeight::semibold, nfui::font_pt::sm, text,
-                    DT_CENTER | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX);
-    const int dot = std::max(6, dpi / 16);
-    const RECT dot_r = make_rect(r.right - dot * 3 / 2, r.bottom - dot * 3 / 2, dot, dot);
-    nfui::fill_ellipse(hdc, dot_r, online_color);
-    nfui::draw_ellipse(hdc, dot_r, text, 1);
-}
-
-void draw_pill(HDC hdc, const RECT& r, int radius, nfui::Color fill, nfui::Color border,
-               std::wstring_view text, nfui::FontCache& fonts, int dpi, FontWeight weight, int pt,
-               nfui::Color text_color) noexcept {
-    nfui::fill_rounded_rect(hdc, r, radius, fill, border);
-    RECT text_r = inset_rect(r, dpi / 32);
-    draw_text_block(hdc, text_r, text, fonts, dpi, weight, pt, text_color,
-                    DT_CENTER | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX);
-}
-
-void draw_bar_chart(HDC hdc, const RECT& r, int radius, const std::array<float, 6>& values,
-                    nfui::Color bar_color, nfui::Color bg, nfui::Color border) noexcept {
-    nfui::fill_rounded_rect(hdc, r, radius, bg, border);
-    const int pad = std::max(radius, 12);
-    const RECT plot = inset_rect(r, pad);
-    const int n = static_cast<int>(values.size());
-    const int gap = pad / 2;
-    const int bar_w = std::max(4, (rect_width(plot) - gap * (n - 1)) / n);
-    const int max_h = rect_height(plot);
-    for (std::size_t i = 0; i < values.size(); ++i) {
-        const int h = static_cast<int>(max_h * values[i] / 100.0f);
-        const int x = plot.left + static_cast<int>(i) * (bar_w + gap);
-        const int y = plot.bottom - h;
-        const RECT bar = make_rect(x, y, bar_w, h);
-        nfui::fill_rounded_rect(hdc, bar, std::min(bar_w / 3, 4), bar_color, bar_color);
+    case 3:
+    default: {
+        // Resources: folder glyph — tab on top-left + body.
+        const int tab_h = std::max(2, h / 5);
+        const int tab_w = w / 3;
+        const RECT tab = make_rect(left, top + 1, tab_w, tab_h);
+        fill_rect_color(hdc, tab, color);
+        const RECT body = make_rect(left, top + tab_h - 1, w, h - tab_h + 1);
+        // Hollow body: outline only — draw an edge that matches the tab.
+        nfui::draw_polyline(hdc,
+                            std::array<POINT, 5>{
+                                POINT{left, top + tab_h - 1},
+                                POINT{left, top + h - 1},
+                                POINT{left + w, top + h - 1},
+                                POINT{left + w, top + tab_h - 1},
+                                POINT{left + tab_w, top + tab_h - 1}}.data(),
+                            5, color, stroke_px);
+        break;
+    }
     }
 }
 
 [[nodiscard]] ShowcaseLayout build_layout(const RECT& client_rect, const nfui::DpiScale& dpi) noexcept {
     ShowcaseLayout layout{};
-    const int outer = dpi.logical_to_pixels(20);
+    const int outer = dpi.logical_to_pixels(24);
     const int gap = dpi.logical_to_pixels(16);
-    const int small_gap = dpi.logical_to_pixels(12);
-    const int sidebar_width = dpi.logical_to_pixels(280);
-    const int inspector_width = dpi.logical_to_pixels(300);
-    const int header_height = dpi.logical_to_pixels(120);
-    const int nav_height = dpi.logical_to_pixels(44);
-    const int nav_gap = dpi.logical_to_pixels(8);
-    const int icon_size = dpi.logical_to_pixels(20);
-    const int card_height = dpi.logical_to_pixels(150);
-    const int inspector_row_height = dpi.logical_to_pixels(120);
+    const int sidebar_width = dpi.logical_to_pixels(336);
+    const int inspector_width = dpi.logical_to_pixels(320);
+    const int command_height = dpi.logical_to_pixels(116);
+    const int nav_height = dpi.logical_to_pixels(40);
+    const int nav_gap = dpi.logical_to_pixels(4);
+    const int card_height = dpi.logical_to_pixels(180);
+    const int inspector_row_height = dpi.logical_to_pixels(140);
+    const int note_height = dpi.logical_to_pixels(140);
 
+    const int client_width = rect_width(client_rect);
     const int client_height = rect_height(client_rect);
     const int content_top = client_rect.top + outer;
     const int content_bottom = client_rect.bottom - outer;
@@ -419,13 +300,12 @@ void draw_bar_chart(HDC hdc, const RECT& r, int radius, const std::array<float, 
                                std::max(client_height - outer * 2, 0));
 
     const int workspace_left = layout.sidebar.right + gap;
-    const int workspace_right = client_rect.right - outer - inspector_width - gap;
-    const int workspace_width = std::max(workspace_right - workspace_left, dpi.logical_to_pixels(480));
-    layout.header = make_rect(workspace_left, content_top, workspace_width, header_height);
+    const int workspace_width = std::max(client_width - sidebar_width - inspector_width - outer * 2 - gap * 2, dpi.logical_to_pixels(480));
+    layout.command_bar = make_rect(workspace_left, content_top, workspace_width, command_height);
     layout.workspace = make_rect(workspace_left,
-                                 layout.header.bottom + gap,
+                                 layout.command_bar.bottom + gap,
                                  workspace_width,
-                                 std::max(static_cast<int>(content_bottom - layout.header.bottom - gap), 0));
+                                 std::max(static_cast<int>(content_bottom - layout.command_bar.bottom - gap), 0));
     layout.inspector = make_rect(layout.workspace.right + gap,
                                  content_top,
                                  inspector_width,
@@ -434,72 +314,37 @@ void draw_bar_chart(HDC hdc, const RECT& r, int radius, const std::array<float, 
     layout.divider_left = make_rect(layout.sidebar.right + gap / 2, content_top, 1, layout.sidebar.bottom - content_top);
     layout.divider_right = make_rect(layout.workspace.right + gap / 2, content_top, 1, layout.sidebar.bottom - content_top);
 
-    // Branding at top of sidebar (tighter horizontal padding so the xl brand fits)
-    const int brand_pad = dpi.logical_to_pixels(12);
-    const int brand_top = layout.sidebar.top + gap;
-    layout.brand_title = make_rect(layout.sidebar.left + brand_pad,
-                                   brand_top,
-                                   sidebar_width - brand_pad * 2,
-                                   dpi.logical_to_pixels(44));
-    layout.brand_subtitle = make_rect(layout.sidebar.left + brand_pad,
-                                      layout.brand_title.bottom + dpi.logical_to_pixels(2),
-                                      sidebar_width - brand_pad * 2,
-                                      dpi.logical_to_pixels(22));
+    // Brand area occupies the top of the sidebar.
+    const int brand_pad = dpi.logical_to_pixels(8);
+    layout.brand_title = make_rect(layout.sidebar.left + gap + brand_pad,
+                                   layout.sidebar.top + dpi.logical_to_pixels(20),
+                                   rect_width(layout.sidebar) - (gap + brand_pad) * 2,
+                                   dpi.logical_to_pixels(36));
+    layout.brand_tagline = make_rect(layout.sidebar.left + gap + brand_pad,
+                                     layout.brand_title.bottom + dpi.logical_to_pixels(2),
+                                     rect_width(layout.sidebar) - (gap + brand_pad) * 2,
+                                     dpi.logical_to_pixels(40));
 
-    // Navigation rows
-    const int nav_left = layout.sidebar.left + gap;
-    const int nav_width = sidebar_width - gap * 2;
-    const int nav_top_start = layout.brand_subtitle.bottom + dpi.logical_to_pixels(28);
+    // Nav rows begin below the brand block (after tagline + breathing room).
+    const int nav_left = layout.sidebar.left + dpi.logical_to_pixels(12);
+    const int nav_width = sidebar_width - dpi.logical_to_pixels(24);
+    const int nav_top_start = layout.brand_tagline.bottom + dpi.logical_to_pixels(40);
     for (std::size_t index = 0; index < layout.navigation.size(); ++index) {
         const int y = nav_top_start + static_cast<int>(index) * (nav_height + nav_gap);
         layout.navigation[index] = make_rect(nav_left, y, nav_width, nav_height);
-        layout.nav_icons[index] = make_rect(nav_left + small_gap,
-                                            y + (nav_height - icon_size) / 2,
-                                            icon_size,
-                                            icon_size);
-        layout.nav_labels[index] = make_rect(layout.nav_icons[index].right + small_gap,
-                                           y,
-                                           nav_width - small_gap * 2 - icon_size - dpi.logical_to_pixels(4),
-                                           nav_height);
     }
 
-    // Sidebar footer: version pill + avatar
-    const int footer_height = dpi.logical_to_pixels(56);
-    const int avatar_size = dpi.logical_to_pixels(40);
-    layout.sidebar_footer = make_rect(layout.sidebar.left + gap,
-                                      layout.sidebar.bottom - footer_height - gap,
-                                      sidebar_width - gap * 2,
-                                      footer_height);
-    layout.version_pill = make_rect(layout.sidebar_footer.left,
-                                      layout.sidebar_footer.top + (footer_height - dpi.logical_to_pixels(28)) / 2,
-                                      dpi.logical_to_pixels(64),
-                                      dpi.logical_to_pixels(28));
-    layout.avatar = make_rect(layout.sidebar_footer.right - avatar_size,
-                              layout.sidebar_footer.top + (footer_height - avatar_size) / 2,
-                              avatar_size,
-                              avatar_size);
+    // Theme toggle — pinned top-right of the command bar with a more prominent
+    // footprint than the previous build.
+    const int toggle_width = dpi.logical_to_pixels(160);
+    const int toggle_height = dpi.logical_to_pixels(40);
+    const int toggle_pad = dpi.logical_to_pixels(16);
+    layout.theme_toggle = make_rect(layout.command_bar.right - toggle_width - toggle_pad,
+                                    layout.command_bar.top + toggle_pad,
+                                    toggle_width,
+                                    toggle_height);
 
-    // Header controls: search, notification, theme toggle aligned right
-    const int header_ctrl_h = dpi.logical_to_pixels(40);
-    const int header_ctrl_y = layout.header.top + (header_height - header_ctrl_h) / 2;
-    const int search_width = dpi.logical_to_pixels(170);
-    const int icon_btn_size = dpi.logical_to_pixels(40);
-    const int ctrl_gap = dpi.logical_to_pixels(12);
-
-    layout.theme_toggle = make_rect(layout.header.right - icon_btn_size,
-                                    header_ctrl_y,
-                                    icon_btn_size,
-                                    header_ctrl_h);
-    layout.notification = make_rect(layout.theme_toggle.left - ctrl_gap - icon_btn_size,
-                                    header_ctrl_y,
-                                    icon_btn_size,
-                                    header_ctrl_h);
-    layout.search_box = make_rect(layout.notification.left - ctrl_gap - search_width,
-                                  header_ctrl_y,
-                                  search_width,
-                                  header_ctrl_h);
-
-    // KPI cards
+    // KPI cards row.
     const int card_gap = gap;
     const int total_card_gap = card_gap * 2;
     const int card_width = std::max((workspace_width - total_card_gap) / 3, dpi.logical_to_pixels(160));
@@ -507,50 +352,45 @@ void draw_bar_chart(HDC hdc, const RECT& r, int radius, const std::array<float, 
     for (std::size_t index = 0; index < layout.cards.size(); ++index) {
         const int x = layout.workspace.left + static_cast<int>(index) * (card_width + card_gap);
         layout.cards[index] = make_rect(x, cards_top, card_width, card_height);
-        layout.card_titles[index] = make_rect(x, cards_top + gap, card_width, dpi.logical_to_pixels(24));
-        layout.card_values[index] = make_rect(x, cards_top + dpi.logical_to_pixels(38), card_width, dpi.logical_to_pixels(46));
-        const int badge_w = dpi.logical_to_pixels(120);
-        const int badge_h = dpi.logical_to_pixels(30);
-        layout.card_badges[index] = make_rect(x + (card_width - badge_w) / 2,
-                                              layout.cards[index].bottom - gap - badge_h,
-                                              badge_w,
-                                              badge_h);
     }
 
-    // Main content: note card + chart card split the remaining workspace height
-    const int content_top_y = layout.cards[0].bottom + gap;
-    const int content_height = std::max(static_cast<int>(layout.workspace.bottom - content_top_y), 0);
-    const int note_height = content_height / 2;
-    const int chart_height = content_height - gap - note_height;
-    layout.note_card = make_rect(layout.workspace.left, content_top_y, workspace_width, note_height);
-    layout.chart_card = make_rect(layout.workspace.left,
-                                  layout.note_card.bottom + gap,
-                                  workspace_width,
-                                  std::max(chart_height, 0));
-
-    // Inspector rows
-    const int inspector_row_top = layout.inspector.top + dpi.logical_to_pixels(90);
+    // Inspector rows — title (with tag pill) on top, body paragraph below.
+    const int inspector_row_top = layout.inspector.top + dpi.logical_to_pixels(118);
     const int inspector_row_width = inspector_width - gap * 2;
     for (std::size_t index = 0; index < layout.inspector_rows.size(); ++index) {
         const int y = inspector_row_top + static_cast<int>(index) * (inspector_row_height + gap);
-        layout.inspector_rows[index] = make_rect(layout.inspector.left + gap, y, inspector_row_width, inspector_row_height);
-        const int tag_w = dpi.logical_to_pixels(54);
-        const int tag_h = dpi.logical_to_pixels(24);
-        layout.inspector_headers[index] = make_rect(layout.inspector_rows[index].left + small_gap,
-                                                    y + small_gap,
-                                                    inspector_row_width - small_gap * 2 - tag_w - small_gap,
-                                                    tag_h);
-        layout.inspector_tags[index] = make_rect(layout.inspector_rows[index].right - small_gap - tag_w,
-                                                 y + small_gap,
-                                                 tag_w,
-                                                 tag_h);
-        const int body_top = layout.inspector_headers[index].bottom + dpi.logical_to_pixels(4);
-        const int body_bottom = layout.inspector_rows[index].bottom - small_gap;
-        layout.inspector_bodies[index] = make_rect(layout.inspector_rows[index].left + small_gap,
-                                                   body_top,
-                                                   inspector_row_width - small_gap * 2,
-                                                   std::max(body_bottom - body_top, 0));
+        layout.inspector_rows[index] = make_rect(layout.inspector.left + gap,
+                                                 y,
+                                                 inspector_row_width,
+                                                 inspector_row_height);
     }
+
+    layout.workspace_note = make_rect(layout.workspace.left,
+                                      layout.cards[0].bottom + gap,
+                                      workspace_width,
+                                      note_height);
+
+    // CP32: bottom of the sidebar hosts a small version pill (left) + an
+    // avatar with status dot (right).
+    const int bottom_band_h = dpi.logical_to_pixels(56);
+    const int version_w = dpi.logical_to_pixels(72);
+    const int version_h = dpi.logical_to_pixels(28);
+    const int avatar_d = dpi.logical_to_pixels(36);
+    const int side_pad = dpi.logical_to_pixels(20);
+    const int bottom_y = layout.sidebar.bottom - dpi.logical_to_pixels(20) - bottom_band_h;
+    layout.version_badge = make_rect(layout.sidebar.left + side_pad,
+                                     bottom_y + (bottom_band_h - version_h) / 2,
+                                     version_w,
+                                     version_h);
+    layout.avatar = make_rect(layout.sidebar.right - side_pad - avatar_d,
+                             bottom_y + (bottom_band_h - avatar_d) / 2,
+                             avatar_d,
+                             avatar_d);
+    const int dot_size = dpi.logical_to_pixels(11);
+    layout.avatar_dot = make_rect(layout.avatar.right - dot_size + dpi.logical_to_pixels(2),
+                                  layout.avatar.bottom - dot_size + dpi.logical_to_pixels(2),
+                                  dot_size,
+                                  dot_size);
 
     return layout;
 }
@@ -614,23 +454,23 @@ bool ShowcaseView::on_mouse_move(POINT point) noexcept {
 bool ShowcaseView::on_left_button_down(POINT point) noexcept {
     const ShowcaseLayout layout = build_layout(client_rect_, dpi_scale_);
     if (PtInRect(&layout.theme_toggle, point) != FALSE) {
+        // CP22: clicking the toggle also moves focus there, so a keyboard
+        // user can keep the same affordance on-screen when they switch to
+        // the keyboard. Toggle always paints differently (theme change), so
+        // always returns true.
         focus_index_ = 0;
         toggle_theme();
         return true;
     }
 
-    if (PtInRect(&layout.notification, point) != FALSE) {
-        focus_index_ = 6;
-        return true;
-    }
-
-    if (PtInRect(&layout.search_box, point) != FALSE) {
-        focus_index_ = 5;
-        return true;
-    }
-
     for (std::size_t index = 0; index < layout.navigation.size(); ++index) {
         if (PtInRect(&layout.navigation[index], point) != FALSE) {
+            // CP22: capture the prior focus before the assignment so we
+            // can return true when EITHER the focus OR the selected nav
+            // moved. Without this, clicking an already-selected nav row
+            // (the default state on first launch) moved focus from -1
+            // → index+1 but the function returned false, so the focus
+            // ring never redrew. (Found by the CP22 adversarial review.)
             const int prior_focus = focus_index_;
             const int new_focus   = static_cast<int>(index) + 1;
             const bool focus_changed   = prior_focus != new_focus;
@@ -655,14 +495,14 @@ bool ShowcaseView::clear_hover() noexcept {
 }
 
 void ShowcaseView::set_focus_index(int index) noexcept {
-    // 0=toggle, 1..5=nav, 6=notification, 5 would conflict with nav so use 6 for notification
-    if (index >= -1 && index <= 6) {
+    // 0..4 are valid; -1 clears focus.
+    if (index >= -1 && index <= 4) {
         focus_index_ = index;
     }
 }
 
 void ShowcaseView::cycle_focus(bool reverse) noexcept {
-    constexpr int kCount = 7;  // 0=toggle, 1..5=nav, 6=notification
+    constexpr int kCount = 5;  // 0 = toggle, 1..4 = nav[0..3]
     if (focus_index_ < 0) {
         focus_index_ = reverse ? (kCount - 1) : 0;
         return;
@@ -679,14 +519,14 @@ bool ShowcaseView::activate_focused() noexcept {
         toggle_theme();
         return true;
     }
-    if (focus_index_ >= 1 && focus_index_ <= 5) {
+    if (focus_index_ >= 1 && focus_index_ <= 4) {
         const int nav_index = focus_index_ - 1;
         if (selected_navigation_ != nav_index) {
             selected_navigation_ = nav_index;
         }
         return true;
     }
-    return focus_index_ == 6;
+    return false;
 }
 
 RECT ShowcaseView::focused_rect() const noexcept {
@@ -694,10 +534,8 @@ RECT ShowcaseView::focused_rect() const noexcept {
     const ShowcaseLayout layout = build_layout(client_rect_, dpi_scale_);
     if (focus_index_ == 0) {
         r = layout.theme_toggle;
-    } else if (focus_index_ >= 1 && focus_index_ <= 5) {
+    } else if (focus_index_ >= 1 && focus_index_ <= 4) {
         r = layout.navigation[focus_index_ - 1];
-    } else if (focus_index_ == 6) {
-        r = layout.notification;
     }
     return r;
 }
@@ -705,311 +543,386 @@ RECT ShowcaseView::focused_rect() const noexcept {
 void ShowcaseView::paint(HDC hdc, nfui::FontCache& fonts) const noexcept {
     const ShowcasePalette palette = palette_for(theme_mode_);
     const ShowcaseLayout layout = build_layout(client_rect_, dpi_scale_);
-    const int radius = dpi_scale_.logical_to_pixels(12);
-    const int small_radius = dpi_scale_.logical_to_pixels(8);
-    const int pill_radius = dpi_scale_.logical_to_pixels(12);
-    const int tiny_radius = dpi_scale_.logical_to_pixels(4);
+    const bool dark = theme_mode_ == nfui::ThemeMode::dark;
     const int gap = dpi_scale_.logical_to_pixels(16);
-    const int small_gap = dpi_scale_.logical_to_pixels(12);
-    const int icon_stroke = std::max(1, dpi_scale_.logical_to_pixels(2));
+    const int toggle_pad = dpi_scale_.logical_to_pixels(16);
+    const int indicator_inset = dpi_scale_.logical_to_pixels(4);
+    const int radius = dpi_scale_.logical_to_pixels(10);
+    const int small_radius = dpi_scale_.logical_to_pixels(8);
+    const int pill_radius = dpi_scale_.logical_to_pixels(999);
 
+    // Backdrop + sidebar.
     fill_rect_color(hdc, client_rect_, palette.window);
     fill_rect_color(hdc, layout.sidebar, palette.sidebar);
-    fill_rect_color(hdc, layout.divider_left, palette.border);
-    fill_rect_color(hdc, layout.divider_right, palette.border);
 
-    // Header card
-    nfui::paint_drop_shadow(hdc, layout.header, radius, 1, palette.shadow);
-    nfui::fill_rounded_rect(hdc, layout.header, radius, palette.header, palette.border);
+    // Command bar — flat surface card (no border, the surface lift does the work).
+    nfui::fill_rounded_rect(hdc, layout.command_bar, radius, palette.command_bar, palette.command_bar);
 
-    // Inspector panel
-    nfui::paint_drop_shadow(hdc, layout.inspector, radius, 1, palette.shadow);
-    nfui::fill_rounded_rect(hdc, layout.inspector, radius, palette.surface_alt, palette.border);
+    // Inspector rail.
+    nfui::fill_rounded_rect(hdc, layout.inspector, radius, palette.surface_alt, palette.surface_alt);
 
-    // Branding
-    draw_text_block(hdc,
+    // Brand block at top of the sidebar.
+    nfui::draw_text(hdc,
                     layout.brand_title,
                     L"NativeFrame UI",
-                    fonts,
-                    dpi(),
-                    FontWeight::serif,
-                    nfui::font_pt::xl,
-                    palette.accent,
-                    DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX);
-    draw_text_block(hdc,
-                    layout.brand_subtitle,
+                    fetch_font(fonts, dpi(), FontWeight::bold, nfui::font_pt::xl),
+                    palette.text,
+                    DT_LEFT | DT_TOP | DT_SINGLELINE | DT_END_ELLIPSIS | DT_NOPREFIX);
+    nfui::draw_text(hdc,
+                    layout.brand_tagline,
                     L"Modern Win32 showcase",
-                    fonts,
-                    dpi(),
-                    FontWeight::regular,
-                    nfui::font_pt::sm,
+                    fetch_font(fonts, dpi(), FontWeight::regular, nfui::font_pt::sm),
                     palette.muted_text,
-                    DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX);
+                    DT_LEFT | DT_TOP | DT_SINGLELINE | DT_END_ELLIPSIS | DT_NOPREFIX);
 
-    // Navigation
+    // CP32: nav rows — glyph cell on the left + label. Selected row gets a
+    // 2-px coral bar at the left edge AND a tinted fill so the row clearly
+    // owns focus. The bar is inset 4 logical px top/bottom, not 3 px.
     for (std::size_t index = 0; index < layout.navigation.size(); ++index) {
         const bool selected = selected_navigation_ == static_cast<int>(index);
         if (selected) {
-            const int bar_w = dpi_scale_.logical_to_pixels(2);
-            const RECT bar = make_rect(layout.navigation[index].left,
-                                       layout.navigation[index].top,
-                                       bar_w,
-                                       rect_height(layout.navigation[index]));
-            fill_rect_color(hdc, bar, palette.accent);
-            const RECT wash = make_rect(layout.navigation[index].left + bar_w,
-                                        layout.navigation[index].top,
-                                        rect_width(layout.navigation[index]) - bar_w,
-                                        rect_height(layout.navigation[index]));
-            nfui::fill_rounded_rect(hdc, wash, small_radius, palette.surface_alt, palette.surface_alt);
+            nfui::fill_rounded_rect(hdc, layout.navigation[index], small_radius,
+                                    palette.surface_tint, palette.surface_tint);
+            const int indicator_width = dpi_scale_.logical_to_pixels(2);
+            RECT indicator = make_rect(layout.navigation[index].left,
+                                       layout.navigation[index].top + indicator_inset,
+                                       indicator_width,
+                                       rect_height(layout.navigation[index]) - indicator_inset * 2);
+            fill_rect_color(hdc, indicator, palette.accent);
         }
 
-        draw_nav_icon(hdc, layout.nav_icons[index], index,
-                      selected ? palette.accent : palette.muted_text, icon_stroke);
-        draw_text_block(hdc,
-                        layout.nav_labels[index],
+        const int glyph_pad = dpi_scale_.logical_to_pixels(12);
+        const int glyph_box = rect_height(layout.navigation[index]) - dpi_scale_.logical_to_pixels(10);
+        RECT glyph = make_rect(layout.navigation[index].left + glyph_pad,
+                               layout.navigation[index].top + (rect_height(layout.navigation[index]) - glyph_box) / 2,
+                               glyph_box,
+                               glyph_box);
+        const nfui::Color glyph_color = selected ? palette.accent : palette.muted_text;
+        draw_nav_glyph(hdc, index, glyph, glyph_color, std::max(1, dpi_scale_.logical_to_pixels(1)));
+
+        RECT label_rect = make_rect(glyph.right + dpi_scale_.logical_to_pixels(10),
+                                    layout.navigation[index].top,
+                                    layout.navigation[index].right - (glyph.right + dpi_scale_.logical_to_pixels(10)),
+                                    rect_height(layout.navigation[index]));
+        nfui::draw_text(hdc,
+                        label_rect,
                         navigation_labels[index],
-                        fonts,
-                        dpi(),
-                        FontWeight::semibold,
-                        nfui::font_pt::base,
+                        fetch_font(fonts, dpi(), selected ? FontWeight::semibold : FontWeight::regular, nfui::font_pt::base),
                         selected ? palette.text : palette.muted_text,
                         DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX);
     }
 
-    // Sidebar footer
-    draw_pill(hdc, layout.version_pill, tiny_radius,
-              palette.surface_alt, palette.border,
-              L"v1.4.0", fonts, dpi(),
-              FontWeight::semibold, nfui::font_pt::xs, palette.text);
-    draw_avatar(hdc, layout.avatar, palette.accent, palette.accent_text,
-                fonts, dpi(), palette.online);
-
-    // Header content
-    RECT title_area = make_rect(layout.header.left + gap,
-                                layout.header.top + gap,
-                                layout.search_box.left - layout.header.left - gap * 2,
-                                dpi_scale_.logical_to_pixels(30));
-    draw_text_block(hdc,
-                    title_area,
-                    L"Product Growth Showcase",
-                    fonts,
-                    dpi(),
-                    FontWeight::semibold,
-                    nfui::font_pt::md,
-                    palette.text,
-                    DT_LEFT | DT_TOP | DT_SINGLELINE | DT_NOPREFIX | DT_END_ELLIPSIS);
-    title_area.top += dpi_scale_.logical_to_pixels(30);
-    title_area.bottom = title_area.top + dpi_scale_.logical_to_pixels(44);
-    draw_text_block(hdc,
-                    title_area,
-                    L"Focused on evaluation-ready light and dark shells, explicit resources, and DPI-aware composition.",
-                    fonts,
-                    dpi(),
-                    FontWeight::regular,
-                    nfui::font_pt::sm,
-                    palette.muted_text,
-                    DT_LEFT | DT_TOP | DT_WORDBREAK | DT_NOPREFIX | DT_END_ELLIPSIS);
-
-    // Search box
-    nfui::fill_rounded_rect(hdc, layout.search_box, small_radius, palette.surface, palette.border);
-    const int search_icon_w = dpi_scale_.logical_to_pixels(18);
-    const RECT search_icon_r = make_rect(layout.search_box.left + small_gap,
-                                         layout.search_box.top + (rect_height(layout.search_box) - search_icon_w) / 2,
-                                         search_icon_w,
-                                         search_icon_w);
-    draw_search_icon(hdc, search_icon_r, palette.muted_text, icon_stroke);
-    RECT search_text = make_rect(search_icon_r.right + small_gap / 2,
-                                 layout.search_box.top,
-                                 layout.search_box.right - search_icon_r.right - small_gap * 3 / 2,
-                                 rect_height(layout.search_box));
-    draw_text_block(hdc,
-                    search_text,
-                    L"Search...",
-                    fonts,
-                    dpi(),
-                    FontWeight::regular,
-                    nfui::font_pt::sm,
-                    palette.muted_text,
-                    DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX);
-
-    // Notification button
-    nfui::fill_rounded_rect(hdc, layout.notification, small_radius,
-                            focus_index_ == 6 ? palette.accent_soft : palette.surface,
-                            palette.border);
-    const int bell_size = dpi_scale_.logical_to_pixels(20);
-    const RECT bell_r = make_rect(layout.notification.left + (rect_width(layout.notification) - bell_size) / 2,
-                                  layout.notification.top + (rect_height(layout.notification) - bell_size) / 2,
-                                  bell_size,
-                                  bell_size);
-    draw_bell_icon(hdc, bell_r, palette.text, icon_stroke);
-
-    // Theme toggle button
-    nfui::fill_rounded_rect(hdc, layout.theme_toggle, small_radius,
-                            focus_index_ == 0 ? palette.accent_soft : palette.surface,
-                            palette.border);
-    const int theme_icon_size = dpi_scale_.logical_to_pixels(20);
-    const RECT theme_icon_r = make_rect(layout.theme_toggle.left + (rect_width(layout.theme_toggle) - theme_icon_size) / 2,
-                                        layout.theme_toggle.top + (rect_height(layout.theme_toggle) - theme_icon_size) / 2,
-                                        theme_icon_size,
-                                        theme_icon_size);
-    draw_theme_icon(hdc, theme_icon_r, theme_mode_, palette.text, icon_stroke);
-
-    // KPI cards
-    for (std::size_t index = 0; index < layout.cards.size(); ++index) {
-        const bool hovered = hovered_card_ == static_cast<int>(index);
-        const nfui::Color fill = hovered
-                                     ? nfui::alpha_blend(palette.accent, palette.surface, 0.15f)
-                                     : palette.surface;
-        const nfui::Color border = hovered ? palette.accent : palette.border;
-        nfui::paint_drop_shadow(hdc, layout.cards[index], small_radius, 1, palette.shadow);
-        nfui::fill_rounded_rect(hdc, layout.cards[index], small_radius, fill, border);
-
-        draw_text_block(hdc,
-                        layout.card_titles[index],
-                        card_titles[index],
-                        fonts,
-                        dpi(),
-                        FontWeight::regular,
-                        nfui::font_pt::sm,
-                        palette.muted_text,
+    // CP32: bottom of the sidebar — version pill (coral soft fill + coral text)
+    // and avatar (coral circle with JD + green status dot).
+    nfui::fill_rounded_rect(hdc, layout.version_badge, pill_radius, palette.accent_soft, palette.accent_soft);
+    {
+        RECT badge_text = inset_rect(layout.version_badge, dpi_scale_.logical_to_pixels(8));
+        nfui::draw_text(hdc,
+                        badge_text,
+                        L"v1.4.0",
+                        fetch_font(fonts, dpi(), FontWeight::semibold, nfui::font_pt::sm),
+                        palette.accent,
                         DT_CENTER | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX);
-
-        draw_text_block(hdc,
-                        layout.card_values[index],
-                        card_values[index],
-                        fonts,
-                        dpi(),
-                        FontWeight::semibold,
-                        nfui::font_pt::xl,
-                        palette.text,
-                        DT_CENTER | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX);
-
-        nfui::Color badge_fill;
-        nfui::Color badge_border;
-        nfui::Color badge_text = palette.text;
-        if (index == 0) {
-            badge_fill = palette.success_soft;
-            badge_border = palette.success;
-        } else if (index == 1) {
-            badge_fill = nfui::alpha_blend(palette.window, palette.success, 0.85f);
-            badge_border = palette.success;
-        } else {
-            badge_fill = palette.accent_soft;
-            badge_border = palette.accent;
-        }
-        draw_pill(hdc, layout.card_badges[index], pill_radius,
-                  badge_fill, badge_border,
-                  card_badges[index], fonts, dpi(),
-                  FontWeight::semibold, nfui::font_pt::xs, badge_text);
     }
 
-    // Note card
-    nfui::paint_drop_shadow(hdc, layout.note_card, radius, 1, palette.shadow);
-    nfui::fill_rounded_rect(hdc, layout.note_card, radius, palette.surface, palette.border);
-    RECT note_title = make_rect(layout.note_card.left + gap,
-                                layout.note_card.top + gap,
-                                rect_width(layout.note_card) - gap * 2,
-                                dpi_scale_.logical_to_pixels(30));
-    draw_text_block(hdc,
-                    note_title,
-                    L"Showcase-only visuals",
-                    fonts,
-                    dpi(),
-                    FontWeight::semibold,
-                    nfui::font_pt::md,
-                    palette.text,
-                    DT_LEFT | DT_TOP | DT_SINGLELINE | DT_NOPREFIX);
-    RECT note_body = make_rect(layout.note_card.left + gap,
-                               note_title.bottom + dpi_scale_.logical_to_pixels(4),
-                               rect_width(layout.note_card) - gap * 2,
-                               rect_height(layout.note_card) - gap - note_title.bottom + layout.note_card.top);
-    draw_text_block(hdc,
-                    note_body,
-                    L"These visuals are for demonstration purposes, highlighting the capabilities of the NativeFrame UI system in a product context. They are not representative of the final product's full data or functionality.",
-                    fonts,
-                    dpi(),
-                    FontWeight::regular,
-                    nfui::font_pt::xs,
-                    palette.muted_text,
-                    DT_LEFT | DT_TOP | DT_WORDBREAK | DT_NOPREFIX);
+    {
+        // Avatar: in dark mode the circle is filled coral with white initials
+        // so the right-rail reads as branded. In light mode the circle gets a
+        // surface fill with a coral ring so it doesn't compete with the nav
+        // and stays tasteful against the cream background.
+        const nfui::Color avatar_fill = dark ? palette.accent : palette.surface;
+        const nfui::Color avatar_border = dark ? palette.accent : palette.accent;
+        const nfui::Color initials_color = dark ? palette.accent_text : palette.accent;
+        nfui::fill_ellipse(hdc, layout.avatar, avatar_fill);
+        nfui::draw_ellipse(hdc, layout.avatar, avatar_border, std::max(1, dpi_scale_.logical_to_pixels(1)));
+        nfui::draw_text(hdc,
+                        layout.avatar,
+                        L"JD",
+                        fetch_font(fonts, dpi(), FontWeight::semibold, nfui::font_pt::base),
+                        initials_color,
+                        DT_CENTER | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX);
 
-    // Chart card
-    nfui::paint_drop_shadow(hdc, layout.chart_card, radius, 1, palette.shadow);
-    nfui::fill_rounded_rect(hdc, layout.chart_card, radius, palette.surface, palette.border);
-    RECT chart_title = make_rect(layout.chart_card.left + gap,
-                                 layout.chart_card.top + gap,
-                                 rect_width(layout.chart_card) - gap * 2,
-                                 dpi_scale_.logical_to_pixels(26));
-    draw_text_block(hdc,
-                    chart_title,
-                    L"Adoption trend",
-                    fonts,
-                    dpi(),
-                    FontWeight::semibold,
-                    nfui::font_pt::md,
-                    palette.text,
-                    DT_LEFT | DT_TOP | DT_SINGLELINE | DT_NOPREFIX);
-    const RECT chart_plot = make_rect(layout.chart_card.left + gap,
-                                      chart_title.bottom + dpi_scale_.logical_to_pixels(4),
-                                      rect_width(layout.chart_card) - gap * 2,
-                                      rect_height(layout.chart_card) - gap - chart_title.bottom + layout.chart_card.top);
-    constexpr std::array<float, 6> chart_values{40.0f, 55.0f, 45.0f, 70.0f, 85.0f, 65.0f};
-    draw_bar_chart(hdc, chart_plot, small_radius, chart_values, palette.accent, palette.surface_alt, palette.border);
+        // Status dot at bottom-right (5-px green disc). A thin outer halo
+        // matches the sidebar paint so the dot reads against the avatar.
+        const int dot_inset = dpi_scale_.logical_to_pixels(2);
+        RECT halo = inset_rect(layout.avatar_dot, -dot_inset, -dot_inset, -dot_inset, -dot_inset);
+        nfui::fill_ellipse(hdc, halo, palette.sidebar);
+        nfui::fill_ellipse(hdc, layout.avatar_dot, palette.success);
+    }
 
-    // Inspector header
-    RECT inspector_title = make_rect(layout.inspector.left + gap,
-                                     layout.inspector.top + gap,
-                                     rect_width(layout.inspector) - gap * 2,
-                                     dpi_scale_.logical_to_pixels(30));
-    draw_text_block(hdc,
-                    inspector_title,
-                    L"Inspector",
-                    fonts,
-                    dpi(),
-                    FontWeight::semibold,
-                    nfui::font_pt::md,
-                    palette.text,
-                    DT_LEFT | DT_TOP | DT_SINGLELINE | DT_NOPREFIX);
-    inspector_title.top += dpi_scale_.logical_to_pixels(28);
-    draw_text_block(hdc,
-                    inspector_title,
-                    L"Readable implementation notes for reviewers and release screenshots.",
-                    fonts,
-                    dpi(),
-                    FontWeight::regular,
-                    nfui::font_pt::sm,
-                    palette.muted_text,
-                    DT_LEFT | DT_TOP | DT_WORDBREAK | DT_NOPREFIX);
-
-    // Inspector rows
-    for (std::size_t index = 0; index < layout.inspector_rows.size(); ++index) {
-        nfui::paint_drop_shadow(hdc, layout.inspector_rows[index], small_radius, 1, palette.shadow);
-        nfui::fill_rounded_rect(hdc, layout.inspector_rows[index], small_radius, palette.surface, palette.border);
-        draw_text_block(hdc,
-                        layout.inspector_headers[index],
-                        inspector_labels[index],
-                        fonts,
-                        dpi(),
-                        FontWeight::semibold,
-                        nfui::font_pt::sm,
+    // Workspace — hero card "Product Growth Showcase" + description; the
+    // description text reads as body copy, not as muted subtitle.
+    {
+        RECT hero_title = make_rect(layout.command_bar.left + gap,
+                                    layout.command_bar.top + gap,
+                                    layout.command_bar.right - layout.command_bar.left - toggle_pad - dpi_scale_.logical_to_pixels(180) - gap * 2,
+                                    dpi_scale_.logical_to_pixels(32));
+        nfui::draw_text(hdc,
+                        hero_title,
+                        L"Product Growth Showcase",
+                        fetch_font(fonts, dpi(), FontWeight::semibold, nfui::font_pt::md),
                         palette.text,
-                        DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX);
-        draw_pill(hdc, layout.inspector_tags[index], tiny_radius,
-                  palette.surface_alt, palette.border,
-                  inspector_tags[index], fonts, dpi(),
-                  FontWeight::regular, nfui::font_pt::xs, palette.text);
-        draw_text_block(hdc,
-                        layout.inspector_bodies[index],
-                        inspector_values[index],
-                        fonts,
-                        dpi(),
-                        FontWeight::regular,
-                        nfui::font_pt::xs,
+                        DT_LEFT | DT_TOP | DT_SINGLELINE | DT_END_ELLIPSIS | DT_NOPREFIX);
+
+        RECT hero_body = make_rect(layout.command_bar.left + gap,
+                                    hero_title.bottom + dpi_scale_.logical_to_pixels(6),
+                                    rect_width(hero_title),
+                                    dpi_scale_.logical_to_pixels(56));
+        nfui::draw_text(hdc,
+                        hero_body,
+                        L"Focused on evaluation-ready light and dark shells, explicit resources, and DPI-aware composition.",
+                        fetch_font(fonts, dpi(), FontWeight::regular, nfui::font_pt::sm),
                         palette.muted_text,
                         DT_LEFT | DT_TOP | DT_WORDBREAK | DT_NOPREFIX);
     }
 
-    // Focus ring (drawn last so it sits on top).
+    // Theme toggle — more prominent: the toggle paints with a coral border in
+    // dark mode (brand emphasis) and a neutral border in light mode. The label
+    // is the canonical action copy and uses base-text colour.
+    {
+        const nfui::Color toggle_border = dark ? palette.accent : palette.border;
+        nfui::fill_rounded_rect(hdc, layout.theme_toggle, small_radius, palette.surface, toggle_border);
+        const std::wstring_view toggle_text =
+            theme_mode_ == nfui::ThemeMode::dark ? L"Switch to light" : L"Switch to dark";
+        RECT toggle_label = inset_rect(layout.theme_toggle, dpi_scale_.logical_to_pixels(10));
+        nfui::draw_text(hdc,
+                        toggle_label,
+                        toggle_text,
+                        fetch_font(fonts, dpi(), FontWeight::semibold, nfui::font_pt::base),
+                        palette.text,
+                        DT_CENTER | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX);
+    }
+
+    // KPI cards — small uppercase label, big value, pill badge centred below.
+    for (std::size_t index = 0; index < layout.cards.size(); ++index) {
+        const bool hovered = hovered_card_ == static_cast<int>(index);
+        const nfui::Color fill = hovered
+                                     ? nfui::alpha_blend(palette.accent, palette.surface, 0.12f)
+                                     : palette.surface;
+        const nfui::Color border = hovered ? palette.accent : palette.border;
+        const int card_elevation = 1;
+        nfui::paint_drop_shadow(hdc, layout.cards[index], radius,
+                                card_elevation, palette.shadow);
+        nfui::fill_rounded_rect(hdc, layout.cards[index], radius, fill, border);
+
+        // Top: small uppercase label.
+        const int label_pad = dpi_scale_.logical_to_pixels(16);
+        RECT card_label = make_rect(layout.cards[index].left + label_pad,
+                                    layout.cards[index].top + label_pad,
+                                    rect_width(layout.cards[index]) - label_pad * 2,
+                                    dpi_scale_.logical_to_pixels(20));
+        nfui::draw_text(hdc,
+                        card_label,
+                        card_titles[index],
+                        fetch_font(fonts, dpi(), FontWeight::semibold, nfui::font_pt::sm),
+                        palette.muted_text,
+                        DT_LEFT | DT_TOP | DT_SINGLELINE | DT_NOPREFIX);
+
+        // Middle: large bold value. Anchored to the card center vertically so
+        // the title and pill stay balanced.
+        RECT card_value = make_rect(layout.cards[index].left + label_pad,
+                                    layout.cards[index].top + dpi_scale_.logical_to_pixels(46),
+                                    rect_width(layout.cards[index]) - label_pad * 2,
+                                    dpi_scale_.logical_to_pixels(48));
+        nfui::draw_text(hdc,
+                        card_value,
+                        card_values[index],
+                        fetch_font(fonts, dpi(), FontWeight::bold, nfui::font_pt::lg),
+                        palette.text,
+                        DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX);
+
+        // Bottom: a coloured pill whose size hugs its label. Each row uses
+        // the semantic colour (Stable / green, Release Ready / blue, Explicit /
+        // coral) per the design spec.
+        nfui::Color semantic{};
+        nfui::Color pill_fill{};
+        nfui::Color pill_border{};
+        nfui::Color pill_text{};
+        switch (index) {
+        case 0: // Stable — success/green.
+            semantic    = palette.success;
+            pill_fill   = nfui::alpha_blend(palette.success, palette.surface, 0.18f);
+            pill_border = nfui::alpha_blend(palette.success, palette.surface, 0.55f);
+            pill_text   = dark ? nfui::lighten(palette.success, 0.10f) : palette.success;
+            break;
+        case 1: // Release Ready — success/green (matches the Stable pill so
+                // both read as "ready" — Explicit is the only coral pill).
+            semantic    = palette.success;
+            pill_fill   = nfui::alpha_blend(palette.success, palette.surface, 0.18f);
+            pill_border = nfui::alpha_blend(palette.success, palette.surface, 0.55f);
+            pill_text   = dark ? nfui::lighten(palette.success, 0.10f) : palette.success;
+            break;
+        case 2: // Explicit — accent/coral.
+            semantic    = palette.accent;
+            pill_fill   = nfui::alpha_blend(palette.accent, palette.surface, 0.18f);
+            pill_border = nfui::alpha_blend(palette.accent, palette.surface, 0.55f);
+            pill_text   = palette.accent;
+            break;
+        default:
+            semantic    = palette.accent;
+            pill_fill   = palette.accent_soft;
+            pill_border = palette.accent_soft;
+            pill_text   = palette.accent;
+            break;
+        }
+        // Compute a pill that hugs the label width. Pill width = text width
+        // + 2*padding; height = 24 logical px.
+        HDC measure_hdc = CreateCompatibleDC(hdc);
+        HFONT measure_font = fetch_font(fonts, dpi(), FontWeight::semibold, nfui::font_pt::xs);
+        HFONT old_font = static_cast<HFONT>(SelectObject(measure_hdc, measure_font));
+        SIZE text_size{};
+        GetTextExtentPoint32W(measure_hdc, card_badges[index].data(),
+                              static_cast<int>(card_badges[index].size()), &text_size);
+        SelectObject(measure_hdc, old_font);
+        DeleteDC(measure_hdc);
+        const int pill_h = dpi_scale_.logical_to_pixels(24);
+        const int pill_w = text_size.cx + dpi_scale_.logical_to_pixels(20);
+        const int pill_pad_x = dpi_scale_.logical_to_pixels(16);
+        const int pill_y = layout.cards[index].bottom - dpi_scale_.logical_to_pixels(20) - pill_h;
+        RECT pill_rect = make_rect(layout.cards[index].left + pill_pad_x, pill_y, pill_w, pill_h);
+        nfui::fill_rounded_rect(hdc, pill_rect, pill_radius, pill_fill, pill_border);
+        RECT pill_text_rect = inset_rect(pill_rect, dpi_scale_.logical_to_pixels(10), 0,
+                                        dpi_scale_.logical_to_pixels(10), 0);
+        nfui::draw_text(hdc,
+                        pill_text_rect,
+                        card_badges[index],
+                        measure_font,
+                        pill_text,
+                        DT_CENTER | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX);
+        (void)semantic; // silence unused-but-reserved warning on some toolchains.
+    }
+
+    // Workspace note card — "Showcase-only visuals" copy in a flat panel.
+    nfui::fill_rounded_rect(hdc, layout.workspace_note, radius, palette.surface_alt, palette.surface_alt);
+    {
+        const int note_pad = gap;
+        RECT note_title = make_rect(layout.workspace_note.left + note_pad,
+                                    layout.workspace_note.top + note_pad,
+                                    rect_width(layout.workspace_note) - note_pad * 2,
+                                    dpi_scale_.logical_to_pixels(28));
+        nfui::draw_text(hdc,
+                        note_title,
+                        L"Showcase-only visuals",
+                        fetch_font(fonts, dpi(), FontWeight::semibold, nfui::font_pt::md),
+                        palette.text,
+                        DT_LEFT | DT_TOP | DT_SINGLELINE | DT_NOPREFIX);
+
+        RECT note_body = make_rect(layout.workspace_note.left + note_pad,
+                                    note_title.bottom + dpi_scale_.logical_to_pixels(8),
+                                    rect_width(layout.workspace_note) - note_pad * 2,
+                                    layout.workspace_note.bottom - (note_title.bottom + dpi_scale_.logical_to_pixels(8)));
+        nfui::draw_text(hdc,
+                        note_body,
+                        L"These visuals are for demonstration purposes, highlighting the capabilities of the NativeFrame UI system in a product context. They are not representative of the final product's full data or functionality.",
+                        fetch_font(fonts, dpi(), FontWeight::regular, nfui::font_pt::sm),
+                        palette.muted_text,
+                        DT_LEFT | DT_TOP | DT_WORDBREAK | DT_NOPREFIX);
+    }
+
+    // Inspector — header + body intro, then 3 rows with a label-tag-pill pair.
+    {
+        RECT inspector_header = make_rect(layout.inspector.left + gap,
+                                          layout.inspector.top + gap,
+                                          rect_width(layout.inspector) - gap * 2,
+                                          dpi_scale_.logical_to_pixels(36));
+        nfui::draw_text(hdc,
+                        inspector_header,
+                        L"Inspector",
+                        fetch_font(fonts, dpi(), FontWeight::semibold, nfui::font_pt::md),
+                        palette.text,
+                        DT_LEFT | DT_TOP | DT_SINGLELINE | DT_NOPREFIX);
+
+        RECT inspector_intro = make_rect(layout.inspector.left + gap,
+                                         inspector_header.bottom + dpi_scale_.logical_to_pixels(6),
+                                         rect_width(layout.inspector) - gap * 2,
+                                         dpi_scale_.logical_to_pixels(60));
+        nfui::draw_text(hdc,
+                        inspector_intro,
+                        L"Readable implementation notes for reviewers and release screenshots.",
+                        fetch_font(fonts, dpi(), FontWeight::regular, nfui::font_pt::sm),
+                        palette.muted_text,
+                        DT_LEFT | DT_TOP | DT_WORDBREAK | DT_NOPREFIX);
+    }
+
+    for (std::size_t index = 0; index < layout.inspector_rows.size(); ++index) {
+        nfui::fill_rounded_rect(hdc, layout.inspector_rows[index], small_radius, palette.surface, palette.surface);
+        // Subtle border for the inspector cards in dark mode so the lighter
+        // surface still separates from the surface_alt background.
+        {
+            HBRUSH brush = CreateSolidBrush(palette.border.rgb);
+            HPEN pen = CreatePen(PS_SOLID, 1, palette.border.rgb);
+            HBRUSH old_brush = static_cast<HBRUSH>(SelectObject(hdc, GetStockObject(NULL_BRUSH)));
+            HPEN old_pen = static_cast<HPEN>(SelectObject(hdc, pen));
+            RoundRect(hdc, layout.inspector_rows[index].left, layout.inspector_rows[index].top,
+                      layout.inspector_rows[index].right, layout.inspector_rows[index].bottom,
+                      small_radius * 2, small_radius * 2);
+            SelectObject(hdc, old_pen);
+            SelectObject(hdc, old_brush);
+            DeleteObject(pen);
+            DeleteObject(brush);
+        }
+
+        const int row_pad = dpi_scale_.logical_to_pixels(16);
+        RECT label_rect = make_rect(layout.inspector_rows[index].left + row_pad,
+                                    layout.inspector_rows[index].top + row_pad,
+                                    rect_width(layout.inspector_rows[index]) - row_pad * 2 - dpi_scale_.logical_to_pixels(60),
+                                    dpi_scale_.logical_to_pixels(24));
+        nfui::draw_text(hdc,
+                        label_rect,
+                        inspector_labels[index],
+                        fetch_font(fonts, dpi(), FontWeight::semibold, nfui::font_pt::base),
+                        palette.text,
+                        DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX);
+
+        // Right-edge tag pill — neutral fill, muted text. Width hugs the tag.
+        HDC measure_hdc = CreateCompatibleDC(hdc);
+        HFONT tag_font = fetch_font(fonts, dpi(), FontWeight::regular, nfui::font_pt::xs);
+        HFONT old_font = static_cast<HFONT>(SelectObject(measure_hdc, tag_font));
+        SIZE text_size{};
+        GetTextExtentPoint32W(measure_hdc, inspector_tags[index].data(),
+                              static_cast<int>(inspector_tags[index].size()), &text_size);
+        SelectObject(measure_hdc, old_font);
+        DeleteDC(measure_hdc);
+        const int tag_h = dpi_scale_.logical_to_pixels(22);
+        const int tag_w = text_size.cx + dpi_scale_.logical_to_pixels(16);
+        RECT tag_rect = make_rect(layout.inspector_rows[index].right - row_pad - tag_w,
+                                  layout.inspector_rows[index].top + row_pad + dpi_scale_.logical_to_pixels(1),
+                                  tag_w,
+                                  tag_h);
+        // Tag pill: high-contrast, readable in both themes. Use a soft surface
+        // fill with a border hairline so the pill reads as a chip, not a blob.
+        const nfui::Color tag_fill = dark ? nfui::alpha_blend(palette.muted_text, palette.surface, 0.18f)
+                                          : palette.surface_alt;
+        const nfui::Color tag_border = dark ? nfui::alpha_blend(palette.muted_text, palette.surface, 0.40f)
+                                            : palette.border;
+        nfui::fill_rounded_rect(hdc, tag_rect, pill_radius, tag_fill, tag_border);
+        nfui::draw_text(hdc,
+                        inset_rect(tag_rect, dpi_scale_.logical_to_pixels(8), 0,
+                                   dpi_scale_.logical_to_pixels(8), 0),
+                        inspector_tags[index],
+                        tag_font,
+                        dark ? palette.text : palette.muted_text,
+                        DT_CENTER | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX);
+
+        RECT body_rect = make_rect(layout.inspector_rows[index].left + row_pad,
+                                   label_rect.bottom + dpi_scale_.logical_to_pixels(8),
+                                   rect_width(layout.inspector_rows[index]) - row_pad * 2,
+                                   layout.inspector_rows[index].bottom - (label_rect.bottom + dpi_scale_.logical_to_pixels(8)) - row_pad);
+        nfui::draw_text(hdc,
+                        body_rect,
+                        inspector_values[index],
+                        fetch_font(fonts, dpi(), FontWeight::regular, nfui::font_pt::sm),
+                        palette.muted_text,
+                        DT_LEFT | DT_TOP | DT_WORDBREAK | DT_NOPREFIX);
+    }
+
+    // CP22: focus ring for the currently-focused affordance. Drawn LAST
+    // (after the affordance's own fill + text) using paint_focus_border —
+    // a stroke-only rounded ring at `focused` rect inset by 2 logical px
+    // on each side. Stroking only (not filling) means the affordance's
+    // surface + label stay visible underneath; the previous version called
+    // fill_rounded_rect with palette.window as the fill, which obliterated
+    // the focused control's chrome. (Found by the CP22 adversarial review.)
     if (focus_index_ >= 0) {
         const RECT focused = focused_rect();
         if (focused.right > focused.left && focused.bottom > focused.top) {

@@ -1,7 +1,18 @@
-// NativeFrameUIIconGallery -- polished vector icon showcase (CP32-v2).
+// NativeFrameUIIconGallery -- CP32 redesign of the vector-icon showcase.
 //
-// Modern chrome: monochrome vector glyphs on white cards, clean header,
-// search box, filter chips, and a row of owner-drawn icon buttons.
+// Layout matches the cp28 redesign reference (3 rows x 8 columns of cards):
+//   - Title "Vector Icon Gallery" (xl=28 bold) + descriptive subtitle
+//   - Theme toggle top-right (Light / Dark / High Contrast buttons)
+//   - Search bar: rounded rect with magnifier icon + placeholder caption
+//   - Filter chip row: 5 pills (All / Navigation / Status / Actions / Media);
+//     clicking a chip updates the selected state and repaints
+//   - 24-card icon grid laid out in 3 rows x 8 columns of 120x120 cards;
+//     glyphs come from nfui::IconKind (the enum ships 14 glyphs so a few
+//     repeat to fill the grid)
+//   - "Icon Buttons (Button::set_icon)" section header + 4 coral Buttons
+//
+// All visual chrome is drawn via foundation helpers (fill_rounded_rect,
+// fill_ellipse, draw_text, draw_vector_icon). No public APIs change.
 
 #include <nfui/NativeFrameUI.hpp>
 #include <nfui/VectorIcon.hpp>
@@ -12,342 +23,67 @@
 
 #include <array>
 #include <string_view>
-#include <vector>
 
 namespace {
 
-// --------------------------------------------------------------------------
-// Layout tokens (logical pixels). The 4/8/12/16 grid keeps every sample
-// aligned with the CP32 design system.
-// --------------------------------------------------------------------------
-constexpr int kOuterPad   = 24;
-constexpr int kGap        = 16;
-constexpr int kSmallGap   = 8;
-constexpr int kTinyGap    = 4;
-constexpr int kHeaderH    = 72;
-constexpr int kSearchH    = 40;
-constexpr int kChipH      = 32;
-constexpr int kCardMinW   = 120;
-constexpr int kCardH      = 112;
-constexpr int kIconSize   = 36;
-constexpr int kLabelH     = 18;
-constexpr int kIBtnH      = 34;
-constexpr int kIBtnW      = 120;
-constexpr int kColumns    = 8;
-
-// --------------------------------------------------------------------------
-// Theme / action identifiers.
-// --------------------------------------------------------------------------
-constexpr int id_btn_light   = 2001;
-constexpr int id_btn_dark    = 2002;
-constexpr int id_btn_hc      = 2003;
-constexpr int id_btn_search  = 2011;
-constexpr int id_btn_settings = 2012;
-constexpr int id_btn_add     = 2013;
-constexpr int id_btn_close   = 2014;
-
-// --------------------------------------------------------------------------
-// Custom GDI icon helpers. These are simple geometric primitives drawn at
-// the same stroke width as the framework vector icons so the whole grid reads
-// as one consistent monochrome set.
-// --------------------------------------------------------------------------
-
-[[nodiscard]] RECT make_rect(int left, int top, int width, int height) noexcept {
-    RECT r{};
-    r.left   = left;
-    r.top    = top;
-    r.right  = left + std::max(width, 0);
-    r.bottom = top + std::max(height, 0);
-    return r;
-}
-
-[[nodiscard]] int rect_width(const RECT& r) noexcept { return r.right - r.left; }
-[[nodiscard]] int rect_height(const RECT& r) noexcept { return r.bottom - r.top; }
-
-void draw_mail_icon(HDC dc, const RECT& r, nfui::Color color, int stroke) noexcept {
-    const int pad = stroke + 3;
-    const int left  = r.left + pad;
-    const int right = r.right - pad;
-    const int top   = r.top + pad;
-    const int bottom = r.bottom - pad;
-    const int mid_y = (top + bottom) / 2;
-    // Envelope body.
-    nfui::draw_line(dc, {left, top},    {right, top},    color, stroke);
-    nfui::draw_line(dc, {right, top},   {right, bottom}, color, stroke);
-    nfui::draw_line(dc, {right, bottom},{left, bottom},  color, stroke);
-    nfui::draw_line(dc, {left, bottom}, {left, top},     color, stroke);
-    // Flap.
-    nfui::draw_line(dc, {left, top}, {left + (right - left) / 2, mid_y}, color, stroke);
-    nfui::draw_line(dc, {right, top}, {left + (right - left) / 2, mid_y}, color, stroke);
-}
-
-void draw_star_icon(HDC dc, const RECT& r, nfui::Color color, int stroke) noexcept {
-    const int cx = (r.left + r.right) / 2;
-    const int cy = (r.top + r.bottom) / 2;
-    const int s = std::max(3, std::min(rect_width(r), rect_height(r)) / 3);
-    const std::array<POINT, 10> star{{
-        {cx, cy - s},
-        {cx + s / 4, cy - s / 4},
-        {cx + s, cy - s / 4},
-        {cx + s / 3, cy + s / 6},
-        {cx + s / 2, cy + s},
-        {cx, cy + s / 2},
-        {cx - s / 2, cy + s},
-        {cx - s / 3, cy + s / 6},
-        {cx - s, cy - s / 4},
-        {cx - s / 4, cy - s / 4},
-    }};
-    nfui::fill_polygon(dc, star.data(), static_cast<int>(star.size()), color, color);
-    (void)stroke; // filled shape
-}
-
-void draw_home_icon(HDC dc, const RECT& r, nfui::Color color, int stroke) noexcept {
-    const int pad = stroke + 2;
-    const int left   = r.left + pad;
-    const int right  = r.right - pad;
-    const int top    = r.top + pad;
-    const int bottom = r.bottom - pad;
-    const int roof_h = (bottom - top) * 2 / 5;
-    const int mid_x  = (left + right) / 2;
-    const POINT roof[] = {
-        {left, top + roof_h},
-        {mid_x, top},
-        {right, top + roof_h},
-    };
-    nfui::draw_polyline(dc, roof, static_cast<int>(std::size(roof)), color, stroke);
-    const RECT body = make_rect(left + stroke * 2, top + roof_h, right - left - stroke * 4, bottom - (top + roof_h) - stroke);
-    nfui::draw_line(dc, {body.left, body.top}, {body.left, body.bottom}, color, stroke);
-    nfui::draw_line(dc, {body.right, body.top}, {body.right, body.bottom}, color, stroke);
-    nfui::draw_line(dc, {body.left, body.bottom}, {body.right, body.bottom}, color, stroke);
-}
-
-void draw_user_icon(HDC dc, const RECT& r, nfui::Color color, int stroke) noexcept {
-    const int cx = (r.left + r.right) / 2;
-    const int pad = stroke + 3;
-    const int head_r = std::min(rect_width(r), rect_height(r)) / 5;
-    // Head circle.
-    nfui::draw_ellipse(dc, make_rect(cx - head_r, r.top + pad, head_r * 2 + 1, head_r * 2 + 1), color, stroke);
-    // Shoulders: wide arc drawn as the top half of an ellipse.
-    const int body_top = r.top + pad + head_r + kTinyGap;
-    const int body_h = r.bottom - body_top - pad;
-    const int body_w = std::max(body_h * 3 / 2, rect_width(r) * 2 / 3);
-    const int body_cy = body_top + body_h / 2;
-    // Clip to upper half manually by drawing an arc with GDI.
-    {
-        HDC hdc = dc;
-        const RECT body = make_rect(cx - body_w / 2, body_top, body_w, body_h);
-        HPEN pen = CreatePen(PS_SOLID, stroke, color.rgb);
-        HGDIOBJ old = SelectObject(hdc, pen);
-        HGDIOBJ old_brush = SelectObject(hdc, GetStockObject(NULL_BRUSH));
-        // Upper arc from 180 to 360 degrees.
-        Arc(hdc, body.left, body.top, body.right, body.bottom,
-            body.left, body_cy, body.right, body_cy);
-        SelectObject(hdc, old_brush);
-        SelectObject(hdc, old);
-        DeleteObject(pen);
-    }
-}
-
-void draw_bell_icon(HDC dc, const RECT& r, nfui::Color color, int stroke) noexcept {
-    const int cx = (r.left + r.right) / 2;
-    const int pad = stroke + 3;
-    const int top    = r.top + pad;
-    const int bottom = r.bottom - pad;
-    const int width  = rect_width(r) / 2 - stroke;
-    // Bell body: rounded-top rectangle.
-    const int body_h = bottom - top - stroke * 2;
-    const RECT body = make_rect(cx - width / 2, top, width, body_h * 4 / 5);
-    nfui::draw_ellipse(dc, make_rect(body.left, body.top - body_h / 10,
-                                      rect_width(body), rect_height(body) / 2 + body_h / 10),
-                       color, stroke);
-    nfui::draw_line(dc, {body.left, body.top + rect_height(body) / 4}, {body.left, body.bottom}, color, stroke);
-    nfui::draw_line(dc, {body.right, body.top + rect_height(body) / 4}, {body.right, body.bottom}, color, stroke);
-    nfui::draw_line(dc, {body.left, body.bottom}, {body.right, body.bottom}, color, stroke);
-    // Clapper.
-    const int clapper_r = std::max(3, width / 4);
-    nfui::draw_ellipse(dc, make_rect(cx - clapper_r, body.bottom, clapper_r * 2 + 1, clapper_r * 2 + 1),
-                       color, stroke);
-}
-
-void draw_calendar_icon(HDC dc, const RECT& r, nfui::Color color, int stroke) noexcept {
-    const int pad = stroke + 3;
-    const int left   = r.left + pad;
-    const int right  = r.right - pad;
-    const int top    = r.top + pad + rect_height(r) / 6;
-    const int bottom = r.bottom - pad;
-    // Body.
-    const POINT body[] = {
-        {left, top},
-        {right, top},
-        {right, bottom},
-        {left, bottom},
-    };
-    nfui::draw_polyline(dc, body, static_cast<int>(std::size(body)), color, stroke);
-    // Header rings.
-    const int ring_r = rect_height(r) / 10;
-    const int ring_y = r.top + pad + ring_r;
-    const int ring_span = (right - left) / 3;
-    nfui::draw_ellipse(dc, make_rect(left + ring_span - ring_r, ring_y - ring_r, ring_r * 2 + 1, ring_r * 2 + 1), color, stroke);
-    nfui::draw_ellipse(dc, make_rect(right - ring_span - ring_r, ring_y - ring_r, ring_r * 2 + 1, ring_r * 2 + 1), color, stroke);
-    // Grid dots.
-    const int cols = 3;
-    const int rows = 3;
-    const int cell_w = (right - left) / cols;
-    const int cell_h = (bottom - top) / (rows + 1);
-    const int dot = std::max(2, stroke);
-    for (int row = 1; row <= rows; ++row) {
-        for (int col = 0; col < cols; ++col) {
-            const int x = left + col * cell_w + cell_w / 2 - dot / 2;
-            const int y = top + row * cell_h + cell_h / 2 - dot / 2;
-            nfui::fill_ellipse(dc, make_rect(x, y, dot, dot), color);
-        }
-    }
-}
-
-void draw_folder_icon(HDC dc, const RECT& r, nfui::Color color, int stroke) noexcept {
-    const int pad = stroke + 2;
-    const int tab_h = rect_height(r) / 4;
-    const int tab_w = rect_width(r) / 3;
-    const int left  = r.left + pad;
-    const int right = r.right - pad;
-    const int top   = r.top + pad;
-    const int bottom = r.bottom - pad;
-    // Outline folder with tab.
-    nfui::draw_line(dc, {left, top + tab_h}, {left + tab_w, top + tab_h}, color, stroke);
-    nfui::draw_line(dc, {left + tab_w, top + tab_h}, {left + tab_w + stroke * 2, top}, color, stroke);
-    nfui::draw_line(dc, {left + tab_w + stroke * 2, top}, {right, top}, color, stroke);
-    nfui::draw_line(dc, {right, top}, {right, bottom}, color, stroke);
-    nfui::draw_line(dc, {right, bottom}, {left, bottom}, color, stroke);
-    nfui::draw_line(dc, {left, bottom}, {left, top + tab_h}, color, stroke);
-}
-
-void draw_file_icon(HDC dc, const RECT& r, nfui::Color color, int stroke) noexcept {
-    const int pad = stroke + 3;
-    const int left   = r.left + pad;
-    const int right  = r.right - pad;
-    const int top    = r.top + pad;
-    const int bottom = r.bottom - pad;
-    const int fold   = (right - left) / 3;
-    const POINT body[] = {
-        {left, top},
-        {right - fold, top},
-        {right, top + fold},
-        {right, bottom},
-        {left, bottom},
-    };
-    nfui::draw_polyline(dc, body, static_cast<int>(std::size(body)), color, stroke);
-    nfui::draw_line(dc, {right - fold, top}, {right - fold, top + fold}, color, stroke);
-    nfui::draw_line(dc, {right - fold, top + fold}, {right, top + fold}, color, stroke);
-}
-
-void draw_download_icon(HDC dc, const RECT& r, nfui::Color color, int stroke) noexcept {
-    const int cx = (r.left + r.right) / 2;
-    const int pad = stroke + 4;
-    const int top_y    = r.top + pad;
-    const int bottom_y = r.bottom - pad;
-    const int head_w   = rect_width(r) / 3;
-    const POINT arrow[] = {
-        {cx - head_w / 2, top_y + (bottom_y - top_y) / 3},
-        {cx, bottom_y - stroke * 2},
-        {cx + head_w / 2, top_y + (bottom_y - top_y) / 3},
-    };
-    nfui::draw_polyline(dc, arrow, static_cast<int>(std::size(arrow)), color, stroke);
-    nfui::draw_line(dc, {cx, top_y}, {cx, bottom_y - stroke * 2}, color, stroke);
-    nfui::draw_line(dc, {cx - head_w, bottom_y}, {cx + head_w, bottom_y}, color, stroke);
-}
-
-void draw_heart_icon(HDC dc, const RECT& r, nfui::Color color, int stroke) noexcept {
-    const int cx = (r.left + r.right) / 2;
-    const int cy = (r.top + r.bottom) / 2 + rect_height(r) / 16;
-    const int w  = rect_width(r) / 2 - stroke * 2;
-    const int h  = rect_height(r) / 2 - stroke * 2;
-    // Two upper circles form the lobes.
-    const int lobe_r = std::max(3, w / 2);
-    const int lobe_y = cy - h / 3;
-    nfui::draw_ellipse(dc, make_rect(cx - w / 2 - lobe_r / 2, lobe_y - lobe_r,
-                                      lobe_r * 2 + 1, lobe_r * 2 + 1), color, stroke);
-    nfui::draw_ellipse(dc, make_rect(cx + w / 2 - lobe_r * 3 / 2, lobe_y - lobe_r,
-                                      lobe_r * 2 + 1, lobe_r * 2 + 1), color, stroke);
-    // Lower triangle point.
-    const POINT heart[] = {
-        {cx - w / 2, lobe_y},
-        {cx, r.bottom - stroke - 2},
-        {cx + w / 2, lobe_y},
-    };
-    nfui::fill_polygon(dc, heart, static_cast<int>(std::size(heart)), color, color);
-}
-
-void draw_share_icon(HDC dc, const RECT& r, nfui::Color color, int stroke) noexcept {
-    const int pad = stroke + 4;
-    const int left   = r.left + pad;
-    const int right  = r.right - pad;
-    const int top    = r.top + pad;
-    const int bottom = r.bottom - pad;
-    const int dot    = std::max(3, stroke * 2);
-    const int mid_y  = (top + bottom) / 2;
-    // Three dots.
-    nfui::fill_ellipse(dc, make_rect(left - dot / 2, top - dot / 2, dot, dot), color);
-    nfui::fill_ellipse(dc, make_rect(right - dot / 2, mid_y - dot / 2, dot, dot), color);
-    nfui::fill_ellipse(dc, make_rect(left - dot / 2, bottom - dot / 2, dot, dot), color);
-    // Connecting lines.
-    nfui::draw_line(dc, {left + dot / 2, top + dot / 2}, {right - dot / 2, mid_y - dot / 2}, color, stroke);
-    nfui::draw_line(dc, {left + dot / 2, bottom - dot / 2}, {right - dot / 2, mid_y + dot / 2}, color, stroke);
-}
-
-// --------------------------------------------------------------------------
-// Icon entry. Either a framework vector glyph or a custom GDI primitive.
-// --------------------------------------------------------------------------
-enum class IconSource { vector, custom };
-
-using CustomIconFn = void (*)(HDC, const RECT&, nfui::Color, int);
-
-struct IconEntry {
-    std::wstring_view label;
-    IconSource source;
+struct GlyphEntry {
     nfui::IconKind kind;
-    CustomIconFn custom;
+    std::wstring_view label;
 };
 
-constexpr std::array<IconEntry, 24> kIcons{{
-    {L"Chevron Down", IconSource::vector, nfui::IconKind::chevron_down, nullptr},
-    {L"Chevron Up",   IconSource::vector, nfui::IconKind::chevron_up,   nullptr},
-    {L"Chevron Left", IconSource::vector, nfui::IconKind::chevron_left, nullptr},
-    {L"Chevron Right",IconSource::vector, nfui::IconKind::chevron_right,nullptr},
-    {L"Check",        IconSource::vector, nfui::IconKind::check,        nullptr},
-    {L"Close",        IconSource::vector, nfui::IconKind::close,        nullptr},
-    {L"Plus",         IconSource::vector, nfui::IconKind::plus,         nullptr},
-    {L"Minus",        IconSource::vector, nfui::IconKind::minus,        nullptr},
-
-    {L"Search",       IconSource::vector, nfui::IconKind::search,        nullptr},
-    {L"Settings",     IconSource::vector, nfui::IconKind::gear,          nullptr},
-    {L"Mail",         IconSource::custom, nfui::IconKind::none,          draw_mail_icon},
-    {L"Menu",         IconSource::vector, nfui::IconKind::hamburger,     nullptr},
-    {L"Info",         IconSource::vector, nfui::IconKind::info,          nullptr},
-    {L"Warning",      IconSource::vector, nfui::IconKind::warning,       nullptr},
-    {L"Star",         IconSource::custom, nfui::IconKind::none,          draw_star_icon},
-    {L"Home",         IconSource::custom, nfui::IconKind::none,          draw_home_icon},
-
-    {L"User",         IconSource::custom, nfui::IconKind::none,          draw_user_icon},
-    {L"Bell",         IconSource::custom, nfui::IconKind::none,          draw_bell_icon},
-    {L"Calendar",     IconSource::custom, nfui::IconKind::none,          draw_calendar_icon},
-    {L"Folder",       IconSource::custom, nfui::IconKind::none,          draw_folder_icon},
-    {L"File",         IconSource::custom, nfui::IconKind::none,          draw_file_icon},
-    {L"Download",     IconSource::custom, nfui::IconKind::none,          draw_download_icon},
-    {L"Heart",        IconSource::custom, nfui::IconKind::none,          draw_heart_icon},
-    {L"Share",        IconSource::custom, nfui::IconKind::none,          draw_share_icon},
+// CP32: 24 cards in 3 rows x 8 columns. The IconKind enum currently ships
+// 14 glyphs (chevrons, check/close/plus/minus, search/gear, info/warning,
+// dot, hamburger); we cycle through them with mild repetition so the grid
+// stays visually balanced without inventing new glyph assets.
+constexpr std::array<GlyphEntry, 24> kGlyphs{{
+    { nfui::IconKind::chevron_down,  L"Chevron Down" },
+    { nfui::IconKind::chevron_up,    L"Chevron Up" },
+    { nfui::IconKind::chevron_left,  L"Chevron Left" },
+    { nfui::IconKind::chevron_right, L"Chevron Right" },
+    { nfui::IconKind::check,         L"Check" },
+    { nfui::IconKind::close,         L"Close" },
+    { nfui::IconKind::plus,          L"Plus" },
+    { nfui::IconKind::minus,         L"Minus" },
+    { nfui::IconKind::search,        L"Search" },
+    { nfui::IconKind::gear,          L"Settings" },
+    { nfui::IconKind::gear,          L"Settings" },
+    { nfui::IconKind::hamburger,     L"Menu" },
+    { nfui::IconKind::info,          L"Info" },
+    { nfui::IconKind::warning,       L"Warning" },
+    { nfui::IconKind::dot,           L"Dot" },
+    { nfui::IconKind::chevron_down,  L"Chevron Down" },
+    { nfui::IconKind::chevron_up,    L"Chevron Up" },
+    { nfui::IconKind::chevron_left,  L"Chevron Left" },
+    { nfui::IconKind::chevron_right, L"Chevron Right" },
+    { nfui::IconKind::check,         L"Check" },
+    { nfui::IconKind::close,         L"Close" },
+    { nfui::IconKind::plus,          L"Plus" },
+    { nfui::IconKind::minus,         L"Minus" },
 }};
 
-constexpr std::array<std::wstring_view, 5> kChips{{
-    L"All",
-    L"Navigation",
-    L"Status",
-    L"Actions",
-    L"Media",
+constexpr int kColumns = 8;
+constexpr int kRows    = 3;
+
+struct ChipEntry {
+    std::wstring_view label;
+};
+
+constexpr std::array<ChipEntry, 5> kChips{{
+    { L"All" },
+    { L"Navigation" },
+    { L"Status" },
+    { L"Actions" },
+    { L"Media" },
 }};
 
-// --------------------------------------------------------------------------
-// Main window.
-// --------------------------------------------------------------------------
+constexpr int id_btn_light    = 2001;
+constexpr int id_btn_dark     = 2002;
+constexpr int id_btn_hc       = 2003;
+constexpr int id_btn_search   = 2011;
+constexpr int id_btn_settings = 2012;
+constexpr int id_btn_add      = 2013;
+constexpr int id_btn_close    = 2014;
+
 class IconGalleryWindow final : public nfui::Window {
 public:
     explicit IconGalleryWindow(HINSTANCE instance)
@@ -363,7 +99,7 @@ public:
             L"NativeFrame UI — Vector Icon Gallery",
             WS_OVERLAPPEDWINDOW | WS_CLIPCHILDREN,
             0,
-            CW_USEDEFAULT, CW_USEDEFAULT, 1200, 760,
+            CW_USEDEFAULT, CW_USEDEFAULT, 1240, 720,
         };
         if (!create(params)) return false;
         apply_window_icon();
@@ -381,15 +117,57 @@ protected:
     LRESULT handle_message(UINT message, WPARAM wparam, LPARAM lparam) override {
         switch (message) {
         case WM_ERASEBKGND:
-            return 1;
+            return 1;  // custom-painted; never let the system gray bg show
         case WM_SIZE:
             layout();
+            return 0;
+        case WM_LBUTTONDOWN: {
+            const int x = GET_X_LPARAM(lparam);
+            const int y = GET_Y_LPARAM(lparam);
+            RECT client{};
+            GetClientRect(hwnd(), &client);
+            const int hit = hit_test_chip(client.right - client.left,
+                                          client.bottom - client.top, x, y);
+            if (hit >= 0) {
+                selected_chip_ = hit;
+                InvalidateRect(hwnd(), nullptr, FALSE);
+            }
+            return 0;
+        }
+        case WM_MOUSEMOVE: {
+            const int x = GET_X_LPARAM(lparam);
+            const int y = GET_Y_LPARAM(lparam);
+            const int idx = hit_test_card(x, y);
+            const bool moved = (idx >= 0) &&
+                               (x != hover_pt_.x || y != hover_pt_.y);
+            if (idx != hover_idx_ || moved) {
+                hover_idx_ = idx;
+                hover_pt_ = { x, y };
+                InvalidateRect(hwnd(), nullptr, FALSE);
+            }
+            if (!tracking_mouse_) {
+                TRACKMOUSEEVENT tme{
+                    sizeof(TRACKMOUSEEVENT),
+                    TME_LEAVE,
+                    hwnd(),
+                    HOVER_DEFAULT
+                };
+                if (TrackMouseEvent(&tme)) tracking_mouse_ = true;
+            }
+            return 0;
+        }
+        case WM_MOUSELEAVE:
+            tracking_mouse_ = false;
+            if (hover_idx_ != -1) {
+                hover_idx_ = -1;
+                InvalidateRect(hwnd(), nullptr, FALSE);
+            }
             return 0;
         case WM_COMMAND: {
             const int id = LOWORD(wparam);
             const int code = HIWORD(wparam);
             if (code == BN_CLICKED) {
-                if (id == id_btn_light)   set_theme(nfui::ThemeMode::light);
+                if (id == id_btn_light)       set_theme(nfui::ThemeMode::light);
                 else if (id == id_btn_dark)  set_theme(nfui::ThemeMode::dark);
                 else if (id == id_btn_hc)    set_theme(nfui::ThemeMode::high_contrast);
             }
@@ -435,14 +213,16 @@ private:
     }
 
     [[nodiscard]] bool build_controls() noexcept {
-        if (!make_child(btn_light_,   id_btn_light,   L"Light"))   return false;
-        if (!make_child(btn_dark_,    id_btn_dark,    L"Dark"))    return false;
-        if (!make_child(btn_hc_,       id_btn_hc,      L"High Contrast")) return false;
+        if (!make_child(btn_light_,   id_btn_light,   L"Light"))          return false;
+        if (!make_child(btn_dark_,    id_btn_dark,    L"Dark"))           return false;
+        if (!make_child(btn_hc_,      id_btn_hc,      L"High Contrast"))  return false;
 
-        if (!make_child(btn_search_,  id_btn_search,   L"Search"))  return false;
+        // Bottom icon-button row: each carries a leading vector glyph via
+        // ButtonStyle::icon, mirroring the "Button::set_icon" demo.
+        if (!make_child(btn_search_,   id_btn_search,   L"Search"))   return false;
         if (!make_child(btn_settings_, id_btn_settings, L"Settings")) return false;
-        if (!make_child(btn_add_,      id_btn_add,      L"Add"))     return false;
-        if (!make_child(btn_close_,    id_btn_close,    L"Close"))   return false;
+        if (!make_child(btn_add_,      id_btn_add,      L"Add"))      return false;
+        if (!make_child(btn_close_,    id_btn_close,    L"Close"))    return false;
 
         auto apply_icon = [](nfui::Button& b, nfui::IconKind k) {
             nfui::ButtonStyle s = b.style();
@@ -452,7 +232,7 @@ private:
         apply_icon(btn_search_,   nfui::IconKind::search);
         apply_icon(btn_settings_, nfui::IconKind::gear);
         apply_icon(btn_add_,      nfui::IconKind::plus);
-        apply_icon(btn_close_,     nfui::IconKind::close);
+        apply_icon(btn_close_,    nfui::IconKind::close);
         return true;
     }
 
@@ -470,8 +250,102 @@ private:
                  &btn_search_, &btn_settings_, &btn_add_, &btn_close_ };
     }
 
-    [[nodiscard]] int scale(int logical) const noexcept {
-        return dpi_.logical_to_pixels(logical);
+    struct PageMetrics {
+        int pad;
+        int gap;
+        int cw;
+        int ch;
+        // Vertical bands (top → bottom).
+        int title_y;
+        int subtitle_y;
+        int search_y;
+        int search_h;
+        int chip_y;
+        int chip_h;
+        int grid_y;
+        int grid_bottom;
+        int section_y;
+        int buttons_y;
+        // Grid dimensions.
+        int card_w;
+        int card_h;
+        int grid_x;
+        // Chip dimensions.
+        int chip_w;
+    };
+
+    [[nodiscard]] PageMetrics compute_page_metrics(int cw, int ch) const noexcept {
+        PageMetrics m{};
+        m.cw = cw;
+        m.ch = ch;
+        m.pad = dpi_.logical_to_pixels(24);
+        m.gap = dpi_.logical_to_pixels(16);
+
+        // Vertical placement.
+        m.title_y    = m.pad;
+        m.subtitle_y = m.title_y    + dpi_.logical_to_pixels(40);
+        m.search_y   = m.subtitle_y + dpi_.logical_to_pixels(28);
+        m.search_h   = dpi_.logical_to_pixels(44);
+        m.chip_y     = m.search_y   + m.search_h + dpi_.logical_to_pixels(12);
+        m.chip_h     = dpi_.logical_to_pixels(32);
+
+        m.card_w = dpi_.logical_to_pixels(120);
+        m.card_h = dpi_.logical_to_pixels(120);
+        m.grid_y = m.chip_y + m.chip_h + dpi_.logical_to_pixels(20);
+        m.grid_bottom = m.grid_y
+                        + kRows * m.card_h
+                        + (kRows - 1) * m.gap;
+        m.section_y = m.grid_bottom + dpi_.logical_to_pixels(20);
+        m.buttons_y = m.section_y  + dpi_.logical_to_pixels(36);
+
+        // Centre the grid horizontally so narrow windows still look balanced.
+        const int grid_w = kColumns * m.card_w + (kColumns - 1) * m.gap;
+        m.grid_x = m.pad + ((cw - 2 * m.pad) - grid_w) / 2;
+        if (m.grid_x < m.pad) m.grid_x = m.pad;
+
+        // Chip width sized to fit 5 chips across the content area.
+        const int chip_gap = dpi_.logical_to_pixels(8);
+        m.chip_w = ((cw - 2 * m.pad) - 4 * chip_gap) / 5;
+        return m;
+    }
+
+    [[nodiscard]] RECT card_rect(const PageMetrics& m, size_t i) const noexcept {
+        const int col = static_cast<int>(i) % kColumns;
+        const int row = static_cast<int>(i) / kColumns;
+        const int cx = m.grid_x + col * (m.card_w + m.gap);
+        const int cy = m.grid_y  + row * (m.card_h + m.gap);
+        return { cx, cy, cx + m.card_w, cy + m.card_h };
+    }
+
+    [[nodiscard]] RECT chip_rect(const PageMetrics& m, size_t i) const noexcept {
+        const int chip_gap = dpi_.logical_to_pixels(8);
+        const int x = m.pad + static_cast<int>(i) * (m.chip_w + chip_gap);
+        return { x, m.chip_y, x + m.chip_w, m.chip_y + m.chip_h };
+    }
+
+    [[nodiscard]] int hit_test_chip(int cw, int ch, int x, int y) const noexcept {
+        if (hwnd() == nullptr) return -1;
+        const PageMetrics m = compute_page_metrics(cw, ch);
+        for (size_t i = 0; i < kChips.size(); ++i) {
+            const RECT r = chip_rect(m, i);
+            if (x >= r.left && x < r.right && y >= r.top && y < r.bottom)
+                return static_cast<int>(i);
+        }
+        return -1;
+    }
+
+    [[nodiscard]] int hit_test_card(int x, int y) const noexcept {
+        if (hwnd() == nullptr) return -1;
+        RECT client{};
+        GetClientRect(hwnd(), &client);
+        const PageMetrics m = compute_page_metrics(client.right, client.bottom);
+        if (m.card_w <= 0 || m.card_h <= 0) return -1;
+        for (size_t i = 0; i < kGlyphs.size(); ++i) {
+            const RECT r = card_rect(m, i);
+            if (x >= r.left && x < r.right && y >= r.top && y < r.bottom)
+                return static_cast<int>(i);
+        }
+        return -1;
     }
 
     void layout() noexcept {
@@ -480,27 +354,29 @@ private:
         RECT client{};
         GetClientRect(hwnd(), &client);
         const int cw = client.right - client.left;
-        const int ch = client.bottom - client.top;
-        const int pad = scale(kOuterPad);
-        const int gap = scale(kGap);
-        const int btn_h = scale(32);
-        const int btn_w = scale(88);
+        const PageMetrics m = compute_page_metrics(cw, client.bottom);
 
-        // Theme toggle row at the top-right.
-        int x = cw - pad - btn_w;
-        move(btn_hc_, x, pad, btn_w, btn_h); x -= btn_w + kTinyGap;
-        move(btn_dark_, x, pad, btn_w, btn_h); x -= btn_w + kTinyGap;
-        move(btn_light_, x, pad, btn_w, btn_h);
+        // Theme toggle: 3 segmented buttons at the top-right.
+        const int btn_w = dpi_.logical_to_pixels(104);
+        const int btn_h = dpi_.logical_to_pixels(32);
+        int x = cw - m.pad - btn_w;
+        move(btn_hc_,    x, m.title_y + dpi_.logical_to_pixels(4),
+              btn_w, btn_h); x -= btn_w - dpi_.logical_to_pixels(1);
+        move(btn_dark_,  x, m.title_y + dpi_.logical_to_pixels(4),
+              btn_w, btn_h); x -= btn_w - dpi_.logical_to_pixels(1);
+        move(btn_light_, x, m.title_y + dpi_.logical_to_pixels(4),
+              btn_w, btn_h);
 
-        // Icon-button row anchored to the bottom-left.
-        const int ibtn_w = scale(kIBtnW);
-        const int ibtn_h = scale(kIBtnH);
-        const int ibtn_y = ch - pad - ibtn_h;
-        int ix = pad;
-        move(btn_search_,  ix, ibtn_y, ibtn_w, ibtn_h); ix += ibtn_w + gap;
-        move(btn_settings_, ix, ibtn_y, ibtn_w, ibtn_h); ix += ibtn_w + gap;
-        move(btn_add_,      ix, ibtn_y, ibtn_w, ibtn_h); ix += ibtn_w + gap;
-        move(btn_close_,    ix, ibtn_y, ibtn_w, ibtn_h);
+        // Bottom row of icon buttons.
+        const int ibtn_w = dpi_.logical_to_pixels(120);
+        int ix = m.pad;
+        move(btn_search_,   ix, m.buttons_y, ibtn_w, btn_h);
+        ix += ibtn_w + m.gap;
+        move(btn_settings_, ix, m.buttons_y, ibtn_w, btn_h);
+        ix += ibtn_w + m.gap;
+        move(btn_add_,      ix, m.buttons_y, ibtn_w, btn_h);
+        ix += ibtn_w + m.gap;
+        move(btn_close_,    ix, m.buttons_y, ibtn_w, btn_h);
 
         InvalidateRect(hwnd(), nullptr, FALSE);
     }
@@ -510,6 +386,63 @@ private:
             SetWindowPos(c.hwnd(), nullptr, x, y, w, h,
                          SWP_NOACTIVATE | SWP_NOZORDER);
         }
+    }
+
+    void draw_icon_card(HDC dc, const RECT& card, int radius, int glyph_box,
+                        int label_h, int glyph_label_gap, int stroke,
+                        nfui::IconKind kind, nfui::Color icon_color,
+                        std::wstring_view label, HFONT label_font,
+                        bool hovered) const noexcept {
+        const nfui::Color fill = hovered ? palette_.surface_hover : palette_.surface;
+        nfui::fill_rounded_rect(dc, card, radius, fill, palette_.border);
+        if (card.right <= card.left || card.bottom <= card.top) return;
+
+        const int content_h = glyph_box + glyph_label_gap + label_h;
+        const int gy = card.top + ((card.bottom - card.top) - content_h) / 2;
+        const int gx = card.left + ((card.right - card.left) - glyph_box) / 2;
+        RECT glyph{ gx, gy, gx + glyph_box, gy + glyph_box };
+        nfui::draw_vector_icon(dc, kind, glyph, icon_color, stroke);
+
+        RECT label_rc{ card.left, glyph.bottom + glyph_label_gap,
+                         card.right, glyph.bottom + glyph_label_gap + label_h };
+        nfui::draw_text(dc, label_rc, label, label_font,
+                        palette_.text_secondary,
+                        DT_CENTER | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS);
+    }
+
+    void paint_tooltip(HDC dc, HFONT font) const noexcept {
+        if (hover_idx_ < 0 ||
+            hover_idx_ >= static_cast<int>(kGlyphs.size())) return;
+
+        const auto label = kGlyphs[hover_idx_].label;
+        RECT text_rc{ 0, 0, 0, 0 };
+        nfui::draw_text(dc, text_rc, label, font, palette_.text,
+                        DT_SINGLELINE | DT_NOPREFIX | DT_CALCRECT);
+        const int tw = text_rc.right - text_rc.left;
+        const int th = text_rc.bottom - text_rc.top;
+        if (tw <= 0 || th <= 0) return;
+
+        const int tip_pad = dpi_.logical_to_pixels(6);
+        const int offset  = dpi_.logical_to_pixels(12);
+        int x = hover_pt_.x + offset;
+        int y = hover_pt_.y - offset - th - 2 * tip_pad;
+        int w = tw + 2 * tip_pad;
+        int h = th + 2 * tip_pad;
+
+        RECT client{};
+        GetClientRect(hwnd(), &client);
+        if (x + w > client.right)  x = client.right  - w - tip_pad;
+        if (x < client.left)       x = client.left   + tip_pad;
+        if (y < client.top)        y = client.top    + tip_pad;
+        if (y + h > client.bottom) y = client.bottom - h - tip_pad;
+
+        const RECT tip{ x, y, x + w, y + h };
+        nfui::fill_rounded_rect(dc, tip, dpi_.logical_to_pixels(4),
+                                palette_.surface, palette_.border);
+        const RECT text_draw{ tip.left + tip_pad, tip.top + tip_pad,
+                              tip.right - tip_pad, tip.bottom - tip_pad };
+        nfui::draw_text(dc, text_draw, label, font, palette_.text,
+                        DT_CENTER | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX);
     }
 
     void paint_gallery(HDC dc) noexcept {
@@ -523,139 +456,95 @@ private:
         HDC target = mem.valid() ? mem.dc() : dc;
         const RECT bounds = mem.valid() ? RECT{0, 0, cw, ch} : client;
 
-        const int pad = scale(kOuterPad);
-        const int gap = scale(kGap);
-        const int small_gap = scale(kSmallGap);
-        const int tiny_gap = scale(kTinyGap);
-
         nfui::fill_rect(target, bounds, palette_.background);
 
-        const HFONT title_font = fonts_.serif(dpi_.dpi(), nfui::font_pt::xl);
-        const HFONT subtitle_font = fonts_.regular(dpi_.dpi(), nfui::font_pt::sm);
-        const HFONT chip_font = fonts_.semibold(dpi_.dpi(), nfui::font_pt::base);
-        const HFONT label_font = fonts_.regular(dpi_.dpi(), nfui::font_pt::xs);
-        const HFONT section_font = fonts_.semibold(dpi_.dpi(), nfui::font_pt::md);
+        const PageMetrics m = compute_page_metrics(cw, ch);
 
-        // Header text (left).
-        const int header_h = scale(kHeaderH);
-        RECT header{ pad, pad, cw - pad - scale(3 * 88 + 2 * kTinyGap + kOuterPad), pad + header_h };
-        RECT title_r = header;
-        title_r.bottom = title_r.top + scale(38);
-        nfui::draw_text(target, title_r, L"Vector Icon Gallery", title_font,
-                        palette_.text, DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX);
-        RECT sub_r = header;
-        sub_r.top = title_r.bottom + tiny_gap;
-        nfui::draw_text(target, sub_r,
-            L"GDI-primitive glyphs on a 16x16 grid — DPI-scaled, palette-coloured. Toggle the theme top-right.",
+        // CP32: page typography uses the new xs/sm/base/md/xl scale.
+        const HFONT title_font    = fonts_.bold    (dpi_.dpi(), nfui::font_pt::xl);
+        const HFONT subtitle_font = fonts_.regular (dpi_.dpi(), nfui::font_pt::sm);
+        const HFONT chip_font     = fonts_.regular (dpi_.dpi(), nfui::font_pt::xs);
+        const HFONT section_font  = fonts_.semibold(dpi_.dpi(), nfui::font_pt::md);
+        const HFONT label_font    = fonts_.regular (dpi_.dpi(), nfui::font_pt::sm);
+
+        // Title + subtitle.
+        const int title_h = dpi_.logical_to_pixels(40);
+        RECT title_rc{ m.pad, m.title_y, cw - m.pad, m.title_y + title_h };
+        nfui::draw_text(target, title_rc, L"Vector Icon Gallery", title_font,
+                        palette_.text,
+                        DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX);
+
+        const int subtitle_h = dpi_.logical_to_pixels(20);
+        RECT subtitle_rc{ m.pad, m.subtitle_y, cw - m.pad, m.subtitle_y + subtitle_h };
+        nfui::draw_text(target, subtitle_rc,
+            L"GDI-primitive glyphs on a 16x16 grid — DPI-scaled, palette-coloured. "
+            L"Toggle the theme top-right.",
             subtitle_font, palette_.text_secondary,
-            DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX | DT_END_ELLIPSIS);
+            DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS);
 
-        // Search box.
-        const int search_y = pad + header_h + gap;
-        const int search_h = scale(kSearchH);
-        RECT search_r{ pad, search_y, cw - pad, search_y + search_h };
-        const int search_radius = scale(8);
-        nfui::fill_rounded_rect(target, search_r, search_radius, palette_.surface, palette_.border);
-        // Search glyph.
-        const int search_icon_size = scale(18);
-        RECT search_icon_r = make_rect(search_r.left + small_gap,
-                                         search_r.top + (search_h - search_icon_size) / 2,
-                                         search_icon_size, search_icon_size);
-        nfui::draw_vector_icon(target, nfui::IconKind::search, search_icon_r,
-                               palette_.text_secondary, scale(2));
-        // Placeholder text.
-        RECT search_text_r = make_rect(search_icon_r.right + small_gap,
-                                       search_r.top,
-                                       search_r.right - search_icon_r.right - small_gap * 2,
-                                       search_h);
-        nfui::draw_text(target, search_text_r, L"Search icons by name or category",
-                        subtitle_font, palette_.text_secondary,
-                        DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX);
+        // Search bar: pill-shaped surface with magnifier icon + placeholder.
+        const RECT search_rc{ m.pad, m.search_y,
+                              cw - m.pad, m.search_y + m.search_h };
+        nfui::fill_rounded_rect(target, search_rc, m.search_h / 2,
+                                palette_.surface, palette_.border);
+        const int icon_box = dpi_.logical_to_pixels(20);
+        const int pad_x    = dpi_.logical_to_pixels(16);
+        RECT icon_rc{ search_rc.left + pad_x,
+                      search_rc.top + (m.search_h - icon_box) / 2,
+                      search_rc.left + pad_x + icon_box,
+                      search_rc.top + (m.search_h - icon_box) / 2 + icon_box };
+        nfui::draw_vector_icon(target, nfui::IconKind::search, icon_rc,
+                               palette_.text_secondary,
+                               dpi_.logical_to_pixels(2));
+        RECT placeholder_rc{ icon_rc.right + dpi_.logical_to_pixels(8),
+                             search_rc.top,
+                             search_rc.right - pad_x,
+                             search_rc.bottom };
+        nfui::draw_text(target, placeholder_rc,
+            L"Search icons by name or category", chip_font,
+            palette_.text_secondary,
+            DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS);
 
-        // Filter chips.
-        const int chip_y = search_y + search_h + gap;
-        const int chip_h = scale(kChipH);
-        int chip_x = pad;
-        for (std::size_t i = 0; i < kChips.size(); ++i) {
-            const bool selected = (i == 0);
-            // Measure text to size the pill tightly.
-            int text_w = 0;
-            if (chip_font != nullptr) {
-                HGDIOBJ old = SelectObject(target, chip_font);
-                SIZE sz{};
-                if (GetTextExtentPoint32W(target, kChips[i].data(), static_cast<int>(kChips[i].size()), &sz)) {
-                    text_w = sz.cx;
-                }
-                if (old && old != HGDI_ERROR) SelectObject(target, old);
-            }
-            const int chip_w = text_w + scale(24);
-            RECT chip_r = make_rect(chip_x, chip_y, chip_w, chip_h);
-            const int chip_radius = chip_h / 2;
-            if (selected) {
-                nfui::fill_rounded_rect(target, chip_r, chip_radius, palette_.accent, palette_.accent);
-                nfui::draw_text(target, chip_r, kChips[i], chip_font,
-                                palette_.accent_text,
-                                DT_CENTER | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX);
-            } else {
-                nfui::fill_rounded_rect(target, chip_r, chip_radius, palette_.surface, palette_.border);
-                nfui::draw_text(target, chip_r, kChips[i], chip_font,
-                                palette_.text,
-                                DT_CENTER | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX);
-            }
-            chip_x += chip_w + small_gap;
+        // Filter chip row: active chip uses accent fill + accent_text; the
+        // rest use surface fill + text colour.
+        const int chip_radius = m.chip_h / 2;
+        for (size_t i = 0; i < kChips.size(); ++i) {
+            const RECT chip = chip_rect(m, i);
+            if (chip.right <= chip.left || chip.bottom <= chip.top) continue;
+            const bool active = (static_cast<int>(i) == selected_chip_);
+            const nfui::Color fill = active ? palette_.accent : palette_.surface;
+            const nfui::Color text_color = active ? palette_.accent_text : palette_.text;
+            nfui::fill_rounded_rect(target, chip, chip_radius, fill, palette_.border);
+            nfui::draw_text(target, chip, kChips[i].label, chip_font, text_color,
+                            DT_CENTER | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX);
         }
 
-        // Icon grid.
-        const int grid_top = chip_y + chip_h + gap;
-        const int grid_bottom = ch - pad - scale(kIBtnH) - scale(28) - gap;
-        const int avail_w = cw - 2 * pad;
-        const int avail_h = std::max(0, grid_bottom - grid_top);
-        const int card_w = std::max(scale(kCardMinW), (avail_w - (kColumns - 1) * gap) / kColumns);
-        const int rows = (static_cast<int>(kIcons.size()) + kColumns - 1) / kColumns;
-        const int card_h = std::max(scale(kCardH), (avail_h - (rows - 1) * gap) / rows);
-        const int card_radius = scale(10);
-        const int icon_size = scale(kIconSize);
-        const int label_h = scale(kLabelH);
-        const int icon_label_gap = scale(8);
-        const int stroke = scale(2);
-
-        for (std::size_t i = 0; i < kIcons.size(); ++i) {
-            const int col = static_cast<int>(i) % kColumns;
-            const int row = static_cast<int>(i) / kColumns;
-            const int cx = pad + col * (card_w + gap);
-            const int cy = grid_top + row * (card_h + gap);
-            RECT card = make_rect(cx, cy, card_w, card_h);
+        // Icon grid: 3 rows x 8 columns of 120x120 cards.
+        const int card_radius      = dpi_.logical_to_pixels(8);
+        const int glyph_box        = dpi_.logical_to_pixels(40);
+        const int label_h          = dpi_.logical_to_pixels(20);
+        const int glyph_label_gap  = dpi_.logical_to_pixels(12);
+        const int stroke           = dpi_.logical_to_pixels(2);
+        for (size_t i = 0; i < kGlyphs.size(); ++i) {
+            const RECT card = card_rect(m, i);
             if (card.right <= card.left || card.bottom <= card.top) continue;
-            nfui::fill_rounded_rect(target, card, card_radius, palette_.surface, palette_.border);
-
-            // Centre icon + label as a single unit.
-            const int content_h = icon_size + icon_label_gap + label_h;
-            const int gy = card.top + (card_h - content_h) / 2;
-            const int gx = card.left + (card_w - icon_size) / 2;
-            RECT icon_r = make_rect(gx, gy, icon_size, icon_size);
-
-            const auto& entry = kIcons[i];
-            if (entry.source == IconSource::vector) {
-                nfui::draw_vector_icon(target, entry.kind, icon_r, palette_.text, stroke);
-            } else if (entry.custom != nullptr) {
-                entry.custom(target, icon_r, palette_.text, stroke);
-            }
-
-            RECT label_r = make_rect(card.left + small_gap,
-                                     icon_r.bottom + icon_label_gap,
-                                     card_w - small_gap * 2,
-                                     label_h);
-            nfui::draw_text(target, label_r, entry.label, label_font,
-                            palette_.text_secondary,
-                            DT_CENTER | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX | DT_END_ELLIPSIS);
+            const bool hovered = (hover_idx_ == static_cast<int>(i));
+            draw_icon_card(target, card, card_radius, glyph_box, label_h,
+                           glyph_label_gap, stroke, kGlyphs[i].kind,
+                           palette_.accent, kGlyphs[i].label, label_font,
+                           hovered);
         }
 
-        // Icon-buttons section caption.
-        const int caption_y = ch - pad - scale(kIBtnH) - scale(24);
-        RECT caption_r = make_rect(pad, caption_y, cw - pad, scale(24));
-        nfui::draw_text(target, caption_r, L"Icon Buttons (Button::set_icon)",
-                        section_font, palette_.text,
-                        DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX);
+        // "Icon Buttons (Button::set_icon)" section header (md=16 muted).
+        const int section_h = dpi_.logical_to_pixels(24);
+        RECT section_rc{ m.pad, m.section_y, cw - m.pad, m.section_y + section_h };
+        nfui::draw_text(target, section_rc,
+            L"Icon Buttons (Button::set_icon)", section_font,
+            palette_.text_secondary,
+            DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX);
+
+        // Hover tooltip caption for the gallery card under the cursor.
+        paint_tooltip(target, label_font);
     }
 
     void apply_window_icon() noexcept {
@@ -681,6 +570,11 @@ private:
     nfui::ThemePalette palette_{};
     nfui::ThemeMode mode_{nfui::ThemeMode::light};
     nfui::DpiScale dpi_{};
+
+    int selected_chip_{ 0 };   // CP32: active filter chip index (0 = All).
+    int hover_idx_{ -1 };
+    POINT hover_pt_{};
+    bool tracking_mouse_{ false };
 
     nfui::Button btn_light_, btn_dark_, btn_hc_;
     nfui::Button btn_search_, btn_settings_, btn_add_, btn_close_;
