@@ -465,9 +465,15 @@ private:
         GetClientRect(hwnd(), &client);
         const nfui::DpiScale dpi(GetDpiForWindow(hwnd()));
 
-        const int outer = dpi.logical_to_pixels(24);
-        const int gap = dpi.logical_to_pixels(16);
-        const int header_h = dpi.logical_to_pixels(72);
+        // CP37: retuned for the unified 940×700 compact window. Header band
+        // drops 72 → 56, outer 24 → 12, gap 16 → 12, so the chart grid below
+        // gets the full canvas. The 5 charts are now arranged in a 2-column
+        // grid (3 rows) instead of a single vertical stack — the previous
+        // chart_h 220 px per card × 5 = 1100 px in a 700-tall window left
+        // ~70% of the content below the fold.
+        const int outer = dpi.logical_to_pixels(12);
+        const int gap = dpi.logical_to_pixels(12);
+        const int header_h = dpi.logical_to_pixels(56);
 
         // Title row sits inside the header band so it shares the brand line
         // with the theme toggle. The toggle rect is reused by hover + click
@@ -492,30 +498,32 @@ private:
         // Per-card reserved vertical space: title strip + legend strip +
         // inner padding. The chart HWND sits between them inside the card
         // chrome (rounded rect + border + drop shadow painted by the parent).
-        const int card_padding = dpi.logical_to_pixels(16);
-        const int card_title_h = dpi.logical_to_pixels(22);
-        const int card_legend_h = dpi.logical_to_pixels(22);
-        const int card_gap = dpi.logical_to_pixels(8);
+        const int card_padding = dpi.logical_to_pixels(8);
+        const int card_title_h = dpi.logical_to_pixels(16);
+        const int card_legend_h = dpi.logical_to_pixels(16);
+        const int card_gap = dpi.logical_to_pixels(6);
 
-        // 5 cards in a vertical stack: each card spans the full content
-        // width. The references ask for "five chart cards stacked vertically";
-        // stacking gives each chart enough horizontal room for value labels
-        // above bars and inline value labels at the end of HBar segments,
-        // and it keeps the chart-vs-card chrome relationship one-to-one so
-        // a reviewer can see the design system in action.
-        const int card_w = std::max(area_right - area_left,
-                                    dpi.logical_to_pixels(720));
+        // CP37: 2-column grid (3 rows) instead of a single vertical stack.
+        // 5 charts split across 2 columns: cards 0/2/4 in column 1 and
+        // cards 1/3 in column 2 with the empty 6th cell receiving no
+        // chrome. Each card drops chart_h 220 → 140 so all 5 charts fit
+        // inside the 700-tall compact viewport with breathing room, while
+        // keeping enough vertical room for the bar / hbar geometry to
+        // render with proper height.
+        const int grid_gap = dpi.logical_to_pixels(12);
+        const int card_w = std::max((area_right - area_left - grid_gap) / 2,
+                                    dpi.logical_to_pixels(360));
         const int card_inner_w = std::max(card_w - card_padding * 2,
-                                          dpi.logical_to_pixels(360));
-        const int chart_h = dpi.logical_to_pixels(220);
+                                          dpi.logical_to_pixels(340));
+        const int chart_h = dpi.logical_to_pixels(140);
         const int card_h = card_padding + card_title_h + card_gap
                             + chart_h + card_gap + card_legend_h + card_padding;
 
         const int card_count = 5;
-        const int total_h = card_count * card_h + (card_count - 1) * gap;
-        const int max_total_h = std::max(area_bottom - area_top,
-                                        total_h + dpi.logical_to_pixels(120));
-        const int stack_top = area_top + std::max(0, (max_total_h - total_h) / 2);
+        const int rows = (card_count + 1) / 2;  // 5 → 3 rows
+        const int row_gap = dpi.logical_to_pixels(8);
+        const int col_gap = grid_gap;
+        const int stack_top = area_top;
 
         cards_.clear();
         cards_.reserve(card_count);
@@ -549,9 +557,12 @@ private:
         };
 
         for (std::size_t i = 0; i < card_count; ++i) {
-            const int card_top = stack_top + static_cast<int>(i) * (card_h + gap);
+            const int col = static_cast<int>(i % 2);
+            const int row = static_cast<int>(i / 2);
+            const int card_left  = area_left + col * (card_w + col_gap);
+            const int card_top   = stack_top + row * (card_h + row_gap);
             CardLayout layout{};
-            layout.card = make_rect(area_left, card_top, card_w, card_h);
+            layout.card = make_rect(card_left, card_top, card_w, card_h);
             layout.title = make_rect(layout.card.left + card_padding,
                                      layout.card.top + card_padding,
                                      card_inner_w, card_title_h);
