@@ -26,6 +26,14 @@ void paint_drop_shadow(HDC dc, const RECT& bounds, int radius,
 
 void fill_rounded_rect(HDC dc, const RECT& bounds, int radius, Color fill, Color border) noexcept;
 void fill_rect(HDC dc, const RECT& bounds, Color fill) noexcept;
+// CP37: per-pixel alpha fill. The `color` supplies RGB; alpha is supplied
+// separately (0..255) and is composited against whatever is already in the
+// destination DC. Internally uses a 32bpp DIB + Win32 AlphaBlend, so the
+// underlying pixels (e.g. the data lines behind a rubber-band) stay
+// visible. Falls back to an opaque fill_rect when the DC rejects the
+// per-pixel-alpha path.
+void fill_rect_alpha(HDC dc, const RECT& bounds, Color color,
+                     unsigned char alpha) noexcept;
 void draw_line(HDC dc, POINT a, POINT b, Color color, int width) noexcept;
 void fill_polygon(HDC dc, const POINT* points, int count, Color fill, Color border) noexcept;
 void draw_polyline(HDC dc, const POINT* points, int count, Color color, int width) noexcept;

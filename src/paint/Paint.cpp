@@ -71,6 +71,75 @@ void fill_rect(HDC dc, const RECT& bounds, Color fill) noexcept {
     DeleteObject(brush);
 }
 
+void fill_rect_alpha(HDC dc, const RECT& bounds, Color color,
+                     unsigned char alpha) noexcept {
+    if (dc == nullptr) return;
+    if (alpha == 0) return;  // nothing to draw
+    const int w = bounds.right - bounds.left;
+    const int h = bounds.bottom - bounds.top;
+    if (w <= 0 || h <= 0) return;
+
+    // Opaque fast path — keep parity with fill_rect for fully-opaque calls
+    // so existing callers don't pay the DIB setup cost.
+    if (alpha == 0xFF) {
+        fill_rect(dc, bounds, color);
+        return;
+    }
+
+    // Allocate a 32bpp DIB so we have a per-pixel alpha channel. Top-down
+    // (negative height) so pixel (0,0) maps to the rect's top-left without
+    // an extra flip pass.
+    BITMAPINFOHEADER bi{};
+    bi.biSize = sizeof(bi);
+    bi.biWidth = w;
+    bi.biHeight = -h;
+    bi.biPlanes = 1;
+    bi.biBitCount = 32;
+    bi.biCompression = BI_RGB;
+    void* bits = nullptr;
+    HBITMAP dib = CreateDIBSection(dc, reinterpret_cast<BITMAPINFO*>(&bi),
+                                   DIB_RGB_COLORS, &bits, nullptr, 0);
+    if (dib == nullptr || bits == nullptr) {
+        if (dib) DeleteObject(dib);
+        // Fall back to opaque fill so the caller still gets a visible result
+        // (slightly wrong visual, but better than silently dropping the draw).
+        fill_rect(dc, bounds, color);
+        return;
+    }
+    HDC mem = CreateCompatibleDC(dc);
+    if (mem == nullptr) {
+        DeleteObject(dib);
+        fill_rect(dc, bounds, color);
+        return;
+    }
+    HGDIOBJ old_bmp = SelectObject(mem, dib);
+
+    // BGRA: DIBs default to BGRX top-down on Windows. Set every pixel to
+    // (B, G, R, alpha) so AlphaBlend composites it over the destination.
+    const unsigned char bch = static_cast<unsigned char>(GetBValue(color.rgb));
+    const unsigned char gch = static_cast<unsigned char>(GetGValue(color.rgb));
+    const unsigned char rch = static_cast<unsigned char>(GetRValue(color.rgb));
+    auto* pixels = static_cast<unsigned char*>(bits);
+    const int stride = w * 4;
+    for (int y = 0; y < h; ++y) {
+        unsigned char* row = pixels + y * stride;
+        for (int x = 0; x < w; ++x) {
+            row[x * 4 + 0] = bch;
+            row[x * 4 + 1] = gch;
+            row[x * 4 + 2] = rch;
+            row[x * 4 + 3] = alpha;
+        }
+    }
+
+    BLENDFUNCTION bf{AC_SRC_OVER, 0, 255, AC_SRC_ALPHA};
+    AlphaBlend(dc, bounds.left, bounds.top, w, h,
+               mem, 0, 0, w, h, bf);
+
+    SelectObject(mem, old_bmp);
+    DeleteDC(mem);
+    DeleteObject(dib);
+}
+
 void draw_line(HDC dc, POINT a, POINT b, Color color, int width) noexcept {
     if (dc == nullptr) return;
     HPEN pen = CreatePen(PS_SOLID, width < 1 ? 1 : width, color.rgb);

@@ -4,9 +4,6 @@
 #include <cstddef>
 #include <windows.h>
 
-#include <array>
-#include <cstddef>
-
 namespace nfui {
 
 enum class ThemeMode {
@@ -63,6 +60,17 @@ struct ThemeMetrics {
 [[nodiscard]] ThemeTokens  theme_tokens(ThemeMode mode) noexcept;   // back-compat
 [[nodiscard]] ThemePalette theme_palette(ThemeMode mode) noexcept;
 [[nodiscard]] ThemeMetrics theme_metrics() noexcept;
+
+// Detect the current system theme by querying the Windows registry
+// (AppsUseLightTheme) and high-contrast system parameter. Returns
+// ThemeMode::dark, ThemeMode::light, or ThemeMode::high_contrast.
+// Never returns ThemeMode::system. Thread-safe, no HWND required.
+[[nodiscard]] ThemeMode detect_system_theme_mode() noexcept;
+
+// Resolve ThemeMode::system to the detected system mode; all other
+// modes pass through unchanged. Convenience wrapper around
+// detect_system_theme_mode() for callers that hold a user preference.
+[[nodiscard]] ThemeMode resolve_theme_mode(ThemeMode preferred) noexcept;
 
 // CP31: 8-color categorical palette for chart series. Returns the full array
 // for a mode so callers can build legends, or use chart_series_color() below

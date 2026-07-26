@@ -1,4 +1,5 @@
 #include <nfui/NativeFrameUI.hpp>
+#include <nfui/Persistence.hpp>
 
 #include "NativeFrameUIResource.h"
 
@@ -128,7 +129,8 @@ public:
             return false;
         }
         populate_controls();
-        dirty_ = true;
+        load_persisted_settings();
+        dirty_ = false;
         layout_controls();
         apply_native_fonts();
         ShowWindow(hwnd(), show_command);
@@ -211,6 +213,7 @@ protected:
             break;
         case id_save:
             if (notification_code == BN_CLICKED || notification_code == 0) {
+                save_persisted_settings();
                 dirty_ = false;
                 InvalidateRect(hwnd(), nullptr, FALSE);
                 return true;
@@ -529,6 +532,57 @@ private:
             DestroyIcon(small_icon_);
             small_icon_ = nullptr;
         }
+    }
+
+    // --- Persistence --------------------------------------------------------
+
+    [[nodiscard]] nfui::SettingsState gather_state() const noexcept {
+        nfui::SettingsState state{};
+        // Profile name
+        wchar_t buf[256]{};
+        GetWindowTextW(profile_name_.hwnd(), buf, 256);
+        state.profile_name = buf;
+        // Workspace root
+        GetWindowTextW(workspace_root_.hwnd(), buf, 256);
+        state.workspace_root = buf;
+        // Theme index from the hidden combo
+        state.theme_index = std::clamp(
+            static_cast<int>(SendMessageW(theme_combo_.hwnd(), CB_GETCURSEL, 0, 0)), 0, 2);
+        // Checkboxes
+        state.auto_save = SendMessageW(auto_save_.hwnd(), BM_GETCHECK, 0, 0) == BST_CHECKED;
+        state.splash = SendMessageW(splash_.hwnd(), BM_GETCHECK, 0, 0) == BST_CHECKED;
+        state.verbose = SendMessageW(verbose_.hwnd(), BM_GETCHECK, 0, 0) == BST_CHECKED;
+        // Selected category
+        state.selected_category = std::max(0,
+            static_cast<int>(SendMessageW(categories_.hwnd(), LB_GETCURSEL, 0, 0)));
+        return state;
+    }
+
+    void apply_state(const nfui::SettingsState& state) noexcept {
+        SetWindowTextW(profile_name_.hwnd(), state.profile_name.c_str());
+        SetWindowTextW(workspace_root_.hwnd(), state.workspace_root.c_str());
+        SendMessageW(theme_combo_.hwnd(), CB_SETCURSEL, state.theme_index, 0);
+        SendMessageW(auto_save_.hwnd(), BM_SETCHECK, state.auto_save ? BST_CHECKED : BST_UNCHECKED, 0);
+        SendMessageW(splash_.hwnd(), BM_SETCHECK, state.splash ? BST_CHECKED : BST_UNCHECKED, 0);
+        SendMessageW(verbose_.hwnd(), BM_SETCHECK, state.verbose ? BST_CHECKED : BST_UNCHECKED, 0);
+        SendMessageW(categories_.hwnd(), LB_SETCURSEL, state.selected_category, 0);
+    }
+
+    void save_persisted_settings() noexcept {
+        const std::wstring path = nfui::appdata_path(L"settings.dat");
+        if (path.empty()) return;
+        const nfui::SettingsState state = gather_state();
+        nfui::save_state_to_file(path, nfui::encode_settings_state(state));
+    }
+
+    void load_persisted_settings() noexcept {
+        const std::wstring path = nfui::appdata_path(L"settings.dat");
+        if (path.empty()) return;
+        auto result = nfui::load_state_from_file(path);
+        if (!result.has_value()) return; // First launch or corrupt — use defaults.
+        auto decoded = nfui::decode_settings_state(result.value());
+        if (!decoded.has_value()) return;
+        apply_state(decoded.value());
     }
 
     HINSTANCE instance_{};

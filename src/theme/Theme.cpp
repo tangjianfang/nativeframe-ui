@@ -10,6 +10,41 @@ Color to_color(COLORREF c) noexcept { return Color{c}; }
 int clamp_byte(int v) noexcept { return v < 0 ? 0 : (v > 255 ? 255 : v); }
 }
 
+ThemeMode detect_system_theme_mode() noexcept {
+    // High Contrast takes priority over the light/dark registry setting.
+    HIGHCONTRASTW hc{};
+    hc.cbSize = sizeof(hc);
+    if (SystemParametersInfoW(SPI_GETHIGHCONTRAST, sizeof(hc), &hc, 0) &&
+        (hc.dwFlags & HCF_HIGHCONTRASTON) != 0) {
+        return ThemeMode::high_contrast;
+    }
+
+    // Query the per-user app theme preference from the registry.
+    // HKCU\Software\Microsoft\Windows\CurrentVersion\Themes\Personalize
+    // AppsUseLightTheme: 0 = dark, 1 (or missing) = light.
+    DWORD value = 1;
+    DWORD size = sizeof(value);
+    LSTATUS status = RegGetValueW(
+        HKEY_CURRENT_USER,
+        L"Software\\Microsoft\\Windows\\CurrentVersion\\Themes\\Personalize",
+        L"AppsUseLightTheme",
+        RRF_RT_REG_DWORD,
+        nullptr,
+        &value,
+        &size);
+    if (status == ERROR_SUCCESS && value == 0) {
+        return ThemeMode::dark;
+    }
+    return ThemeMode::light;
+}
+
+ThemeMode resolve_theme_mode(ThemeMode preferred) noexcept {
+    if (preferred == ThemeMode::system) {
+        return detect_system_theme_mode();
+    }
+    return preferred;
+}
+
 ThemePalette theme_palette(ThemeMode mode) noexcept {
     switch (mode) {
     case ThemeMode::dark:
@@ -71,6 +106,7 @@ ThemePalette theme_palette(ThemeMode mode) noexcept {
             to_color(RGB(255, 255, 255)), // CP16: shadow tint — HC uses a white halo so the shadow reads as a glow, not a smudge
         };
     case ThemeMode::system:
+        return theme_palette(detect_system_theme_mode());
     case ThemeMode::light:
     default:
         return ThemePalette{
@@ -180,6 +216,7 @@ const std::array<Color, 8>& chart_series_palette(ThemeMode mode) noexcept {
     case ThemeMode::high_contrast:
         return chart_series_hc;
     case ThemeMode::system:
+        return chart_series_palette(detect_system_theme_mode());
     case ThemeMode::light:
     default:
         return chart_series_light;
