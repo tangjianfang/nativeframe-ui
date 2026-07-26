@@ -1,18 +1,24 @@
 #pragma once
 
+#include <nfui/ChartInteraction.hpp>
 #include <nfui/Font.hpp>
 #include <nfui/Theme.hpp>
 #include <nfui/Window.hpp>
 
 #include <cstddef>
+#include <memory>
 #include <optional>
+#include <set>
 #include <string>
 #include <string_view>
+#include <utility>
 #include <vector>
 
 #include <windows.h>
 
 namespace nfui {
+
+class ChartGroup;  // CP40: declared in <nfui/ChartGroup.hpp>; friended below.
 
 // Process-lifetime GDI+ bring-up for the chart line + spline renderers.
 // Must be called BEFORE the first paint of a LineChartView / SplineChartView
@@ -32,21 +38,23 @@ enum class ChartKind {
     area,
 };
 
-struct ChartPoint {
-    double x{};
-    double y{};
-};
+// ChartPoint and ChartAxisRange are defined in ChartInteraction.hpp
+// (included above) to avoid circular header dependencies.
 
+// A single data series on a chart. `name` is a borrowed string view (the
+// caller is responsible for keeping the underlying string alive while the
+// series is in use; ChartView does not copy it). `color` is used for the
+// line/area/bar fill, the legend swatch, and the point markers. Set
+// `visible = false` to exclude the series from rendering, hit-testing,
+// statistics, and the legend column; toggle at runtime via
+// ChartView::set_series_visible(idx, bool). Invisible series still occupy
+// their slot in `set_series()` — the index is stable across visibility
+// changes so callers can pair the setter with a checkbox state.
 struct ChartSeries {
     std::wstring_view name;       // borrowed; non-owning
     Color color{};
     std::vector<ChartPoint> points;
-};
-
-struct ChartAxisRange {
-    double min{};
-    double max{};
-    std::wstring_view label_format = L"{:.0f}";  // printf-style placeholders
+    bool visible{true};
 };
 
 struct ChartLayout {
@@ -95,8 +103,8 @@ struct ChartLayout {
 // alive until the next paint.
 class ChartView : public Window {
 public:
-    ChartView() = default;
-    ~ChartView() override = default;
+    ChartView();
+    ~ChartView() override;  // Defined in ChartInteraction.cpp (InteractionImpl is incomplete here).
 
     ChartView(const ChartView&) = delete;
     ChartView& operator=(const ChartView&) = delete;
@@ -117,6 +125,40 @@ public:
     void set_axis_y(ChartAxisRange axis) noexcept;
     void set_palette(const ThemePalette* palette) noexcept;
     void set_font_cache(FontCache* fonts) noexcept;
+
+    // Per-series visibility (CP39 — series checklist). Hidden series are
+    // skipped by every renderer (line/spline/area/bar/hbar) and excluded
+    // from the legend column, stacked-bar/hbar column/row sums, and the
+    // interaction hit-test/hover/drag/range-select pipelines. `idx` is
+    // the slot in the `set_series()` vector; out-of-range calls are
+    // ignored silently so the host can pair the setter with a checkbox
+    // state without bounding checks.
+    void set_series_visible(std::size_t idx, bool visible) noexcept;
+    [[nodiscard]] bool is_series_visible(std::size_t idx) const noexcept;
+    [[nodiscard]] std::size_t series_count() const noexcept { return series_.size(); }
+
+    // CP39: chart-level settings (theme, kind, overlay toggles, animation
+    // duration, hit tolerance). The interaction-owned fields
+    // (animation_ms, hit_tolerance_px, show_crosshair, show_tooltip) are
+    // forwarded into the active ChartInteractionOptions when interaction
+    // is enabled. Out-of-range fields are clamped (animation_ms <= 5000,
+    // hit_tolerance_px in [1,64]). When any field changes, the
+    // ChartCallbacks::on_settings_changed callback (if set) is invoked.
+    //
+    // CP40: not noexcept — the settings struct now owns std::wstring
+    // axis labels, so the copy-in / copy-out may allocate. Allocation
+    // failures must propagate rather than terminate.
+    void apply_settings(ChartSettings settings);
+    [[nodiscard]] ChartSettings settings() const;
+
+    // CP40: export the chart's client surface to a raster file. Returns
+    // false for a null, hidden, zero-sized, uncapturable, or unencodable
+    // HWND. Both methods reuse the existing WM_PRINTCLIENT path so the
+    // exported image matches the on-screen render exactly (including the
+    // interaction overlay). PNG uses 32bpp BGRA with opaque alpha; BMP
+    // uses 32bpp BGR.
+    [[nodiscard]] bool export_to_png(const std::wstring& path) const noexcept;
+    [[nodiscard]] bool export_to_bmp(const std::wstring& path) const noexcept;
     // CP34: hide the in-renderer legend column when the host draws its
     // own (e.g. NativeFrameUICharts paints a per-card footer legend). The
     // default stays true so existing call sites that don't pass this
@@ -131,6 +173,31 @@ public:
         fonts_ = fonts;
     }
 
+    // --- Interaction API (opt-in; default is disabled) -----------------------
+
+    // Enables the interaction controller with the given options.
+    void enable_interaction(ChartInteractionOptions opts) noexcept;
+    void disable_interaction() noexcept;
+    [[nodiscard]] bool interaction_enabled() const noexcept;
+
+    void set_callbacks(ChartCallbacks callbacks);
+
+    // View range management (zoom/pan).
+    void set_visible_range(ChartAxisRange x, ChartAxisRange y) noexcept;
+    void reset_view() noexcept;
+    [[nodiscard]] ChartAxisRange visible_x() const noexcept;
+    [[nodiscard]] ChartAxisRange visible_y() const noexcept;
+
+    // Undo/redo for drag-edit operations.
+    void undo() noexcept;
+    void redo() noexcept;
+    [[nodiscard]] bool can_undo() const noexcept;
+    [[nodiscard]] bool can_redo() const noexcept;
+
+    // Selection access.
+    [[nodiscard]] std::vector<std::pair<std::size_t, std::size_t>> selected_points() const;
+    void clear_selection() noexcept;
+
 protected:
     LRESULT handle_message(UINT message, WPARAM wparam, LPARAM lparam) override;
 
@@ -138,6 +205,11 @@ protected:
     // legend box + mono tick labels). Subclasses override per chart kind to
     // dispatch the appropriate renderer's draw routine.
     virtual void on_paint(HDC hdc, const RECT& bounds);
+
+    // Called at the end of on_paint to draw interaction overlays (crosshair,
+    // rubber-band, tooltip, drag highlight, selection rings). Subclasses
+    // call this from their on_paint overrides after rendering chart data.
+    void paint_interaction_overlay(HDC hdc, const RECT& bounds);
 
     // Storage and service pointers are protected so subclass renderers (C3 bar,
     // C4 line/spline) can read them directly inside their on_paint overrides.
@@ -149,6 +221,65 @@ protected:
     const ThemePalette* palette_{nullptr};
     FontCache* fonts_{nullptr};
     bool show_legend_{true};
+    ChartSettings settings_{};  // CP39: applied via apply_settings()
+
+    // Cached palette resolved from settings_.theme when palette_ is null.
+    // Refreshed by apply_settings(); renderers read it via
+    // effective_palette() so the lifetime is the chart's own.
+    ThemePalette fallback_palette_{};
+
+    // Returns the current layout for the given bounds (used by interaction).
+    [[nodiscard]] ChartLayout current_layout(const RECT& bounds) const noexcept;
+
+    // CP39: central palette resolver. Prefers the host-supplied
+    // palette_ pointer; falls back to the theme dictated by
+    // ChartSettings::theme. Renderers call this so a chart configured
+    // for dark mode still paints dark when the host forgot to rebind.
+    [[nodiscard]] const ThemePalette& effective_palette() const noexcept;
+
+    // CP39: refresh the cached fallback palette from settings_.theme.
+    // apply_settings() calls this; tests / hosts that change settings_
+    // directly can also call it before the next paint.
+    void refresh_fallback_palette() noexcept;
+
+    // Returns the axis range that should drive rendering right now. When
+    // interaction is enabled this is the zoomed/panned view range; otherwise
+    // it is the user-configured axis. Renderers (and the interaction overlay)
+    // must use these so they stay in sync.
+    [[nodiscard]] ChartAxisRange effective_axis_x() const noexcept;
+    [[nodiscard]] ChartAxisRange effective_axis_y() const noexcept;
+
+private:
+    // Interaction message handlers (implemented in ChartInteraction.cpp).
+    LRESULT handle_interaction_message(UINT message, WPARAM wparam, LPARAM lparam);
+    void on_mouse_move_interaction(POINT cursor);
+    void on_lbutton_down_interaction(POINT cursor);
+    void on_lbutton_up_interaction(POINT cursor);
+    void on_mbutton_down_interaction(POINT cursor);
+    void on_mbutton_up_interaction(POINT cursor);
+    void on_mouse_wheel_interaction(POINT cursor, short delta);
+    void on_lbutton_dblclk_interaction(POINT cursor);
+    // Returns true iff the keystroke was consumed by a known binding.
+    [[nodiscard]] bool on_keydown_interaction(WPARAM vkey);
+    void on_capture_changed_interaction();
+    void on_tooltip_timer();
+    void on_animation_timer();
+
+    // CP40: ChartGroup coordination hooks. ChartGroup calls these to
+    // subscribe to view-range and cursor changes, to push an external
+    // cursor x value, and to detach before the group is destroyed. They
+    // are private so only the friend class ChartGroup can invoke them.
+    friend class ChartGroup;
+    void set_group_observers(
+        std::function<void(ChartAxisRange, ChartAxisRange)> on_view,
+        std::function<void(std::optional<double>)> on_cursor);
+    void clear_group_observers() noexcept;
+    void set_external_cursor_x(std::optional<double> x) noexcept;
+
+    // Interaction state (heap-allocated to keep Charts.hpp include-light;
+    // nullptr when interaction is disabled).
+    struct InteractionImpl;
+    std::unique_ptr<InteractionImpl> interaction_{};
 };
 
 // C3: vertical grouped or stacked bar chart renderer. Bars grow upward from the
