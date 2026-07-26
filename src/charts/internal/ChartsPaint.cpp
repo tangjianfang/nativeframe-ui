@@ -121,6 +121,16 @@ void draw_legend_column(HDC hdc,
     if (hdc == nullptr) return;
     if (series.size() < 2 || legend_width_px <= 0) return;
 
+    // CP39: skip invisible series so the legend matches what is painted.
+    // The original index in `series` is preserved as the swatch row index
+    // so future hover-to-highlight wiring (when added) lines up with the
+    // chart's own series indices.
+    std::size_t visible_count = 0;
+    for (const auto& s : series) {
+        if (s.visible) ++visible_count;
+    }
+    if (visible_count < 2) return;
+
     // Resolve palette + font with graceful fallback so this helper mirrors
     // the in-view fallback behaviour the four subclasses used to do inline.
     const ThemePalette& pal =
@@ -134,7 +144,7 @@ void draw_legend_column(HDC hdc,
     const int col_w = legend_width_px;
     const int col_left = plot_bounds.right + kLegendGapPx;
     const int col_right = col_left + col_w - kLegendPadX;
-    const int col_h = static_cast<int>(series.size()) * kLegendRowH + 2 * kLegendPadY;
+    const int col_h = static_cast<int>(visible_count) * kLegendRowH + 2 * kLegendPadY;
     const int col_top = plot_bounds.top +
                         ((plot_bounds.bottom - plot_bounds.top) - col_h) / 2;
     const int col_bottom = col_top + col_h;
@@ -151,8 +161,10 @@ void draw_legend_column(HDC hdc,
     draw_line(hdc, POINT{col.left, col.top}, POINT{col.left, col.bottom}, frame_color, 1);
     draw_line(hdc, POINT{col.right, col.top}, POINT{col.right, col.bottom}, frame_color, 1);
 
+    int row_index = 0;
     for (std::size_t i = 0; i < series.size(); ++i) {
-        const int row_y = col.top + kLegendPadY + static_cast<int>(i) * kLegendRowH;
+        if (!series[i].visible) continue;
+        const int row_y = col.top + kLegendPadY + row_index * kLegendRowH;
         RECT swatch{col.left + kLegendPadX, row_y + 2,
                     col.left + kLegendPadX + kLegendSwatch,
                     row_y + 2 + kLegendSwatch};
@@ -161,6 +173,7 @@ void draw_legend_column(HDC hdc,
         RECT text_rc{swatch.right + kLegendPadX, row_y, col.right - kLegendPadX, row_y + kLegendRowH};
         draw_text(hdc, text_rc, series[i].name, font, pal.text,
                   DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS | DT_NOPREFIX);
+        ++row_index;
     }
 }
 

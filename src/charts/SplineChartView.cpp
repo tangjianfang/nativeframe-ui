@@ -97,8 +97,7 @@ void SplineChartView::set_tension(double t) noexcept {
 }
 
 void SplineChartView::on_paint(HDC hdc, const RECT& bounds) {
-    const ThemePalette& pal =
-        palette_ != nullptr ? *palette_ : theme_palette(ThemeMode::light);
+    const ThemePalette& pal = effective_palette();
 
     fill_rect(hdc, bounds, pal.background);
 
@@ -133,9 +132,10 @@ void SplineChartView::on_paint(HDC hdc, const RECT& bounds) {
     }
 
     for (const ChartSeries& series : series_) {
+        if (!series.visible) continue;  // CP39: hidden via set_series_visible()
         if (series.points.size() < 2) continue;  // need at least two anchors
         const std::vector<POINT> pts =
-            normalize_points(series.points, layout, axis_x_, axis_y_);
+            normalize_points(series.points, layout, effective_axis_x(), effective_axis_y());
         if (pts.size() < 2) continue;
         const std::vector<POINT> bez = catmull_rom_to_bezier(pts, tension_);
         if (bez.empty()) continue;
@@ -170,13 +170,14 @@ void SplineChartView::on_paint(HDC hdc, const RECT& bounds) {
     const int dpi = (hwnd() != nullptr) ? dpi_of(hwnd()) : 96;
     HFONT tick_font = (fonts_ != nullptr) ? fonts_->mono(dpi, font_pt::chart_tick) : nullptr;
 
-    draw_value_axis_ticks_v(hdc, layout, axis_y_, tick_font, pal);
+    draw_value_axis_ticks_v(hdc, layout, effective_axis_y(), tick_font, pal);
     draw_index_axis_ticks_v(hdc, layout, point_count, tick_font, pal);
     if (show_legend_) {
         charts_internal::draw_legend_column(hdc, layout.plot_bounds,
                                             layout.legend_width_px, series_,
                                             palette_, fonts_, dpi);
     }
+    paint_interaction_overlay(hdc, bounds);
 }
 
 } // namespace nfui

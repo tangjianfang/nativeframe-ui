@@ -155,8 +155,7 @@ void HBarChartView::set_stacked(bool stacked) noexcept {
 }
 
 void HBarChartView::on_paint(HDC hdc, const RECT& bounds) {
-    const ThemePalette& pal =
-        palette_ != nullptr ? *palette_ : theme_palette(ThemeMode::light);
+    const ThemePalette& pal = effective_palette();
 
     fill_rect(hdc, bounds, pal.background);
 
@@ -212,16 +211,25 @@ void HBarChartView::on_paint(HDC hdc, const RECT& bounds) {
     // rects are only used to validate the helper survives a swapped layout.
     (void)bands;
 
+    // CP39: visible series count drives the sub-row height so hiding a series
+    // redistributes the remaining sub-rows within the cluster.
+    std::size_t visible_series_count = 0;
+    for (const auto& s : series_) {
+        if (s.visible) ++visible_series_count;
+    }
+    if (visible_series_count == 0) visible_series_count = 1;
+
     const int plot_w = layout.plot_bounds.right - layout.plot_bounds.left;
     const int plot_h = layout.plot_bounds.bottom - layout.plot_bounds.top;
     const int row_h = std::max(1, plot_h / static_cast<int>(bar_count));
-    const int sub_h = std::max(1, row_h / static_cast<int>(std::max<std::size_t>(1, series_count)));
+    const int sub_h = std::max(1, row_h / static_cast<int>(visible_series_count));
     // Vertical gap of 1px between rows so adjacent categories do not fuse.
     const int row_gap = std::min(2, std::max(0, row_h / 4));
 
     std::vector<ValueLabel> value_labels;
     std::size_t value_label_count = 0;
     for (const ChartSeries& series : series_) {
+        if (!series.visible) continue;  // CP39: hidden series
         value_label_count += std::min(series.points.size(), bar_count);
     }
     value_labels.reserve(value_label_count);
@@ -229,10 +237,13 @@ void HBarChartView::on_paint(HDC hdc, const RECT& bounds) {
     // In stacked mode the per-row sum governs the row's visual extent, so we
     // pre-compute row sums + the global max once and reuse them for the value
     // axis range (passed to the tick renderer) and the per-segment widths.
+    // CP39: invisible series excluded so the stack collapses to the visible
+    // total without leaving phantom gaps.
     std::vector<double> row_sums(bar_count, 0.0);
     double max_row_sum = 0.0;
     if (stacked_) {
         for (const auto& s : series_) {
+            if (!s.visible) continue;
             for (std::size_t i = 0; i < s.points.size() && i < bar_count; ++i) {
                 // Negative contributions collapse to 0 so the row still grows
                 // rightward from the baseline (no separate "leftward" channel).
@@ -264,12 +275,13 @@ void HBarChartView::on_paint(HDC hdc, const RECT& bounds) {
 
     if (stacked_) {
         // Stack segments horizontally inside each row. The x-axis range is
-        // [axis_y_.min, eff_max] where eff_max covers the largest row sum so a
+        // [eff_min, eff_max] where eff_max covers the largest row sum so a
         // max-sized row reaches plot_right and smaller rows scale proportionally.
-        // Each segment occupies (v / (eff_max - axis_y_.min)) of plot_w to the
+        // Each segment occupies (v / (eff_max - eff_min)) of plot_w to the
         // right of the previous cursor position.
-        double eff_min = axis_y_.min;
-        double eff_max = std::max(max_row_sum, axis_y_.max);
+        const ChartAxisRange axis_y = effective_axis_y();
+        double eff_min = axis_y.min;
+        double eff_max = std::max(max_row_sum, axis_y.max);
         if (!(eff_max > eff_min)) eff_max = eff_min + 1.0;
         const double y_range = eff_max - eff_min;
 
@@ -282,6 +294,7 @@ void HBarChartView::on_paint(HDC hdc, const RECT& bounds) {
             double cursor = eff_min;
             for (std::size_t s = 0; s < series_count; ++s) {
                 const ChartSeries& series = series_[s];
+                if (!series.visible) continue;  // CP39: hidden series
                 if (i >= series.points.size()) continue;
                 const double v = std::max(0.0, series.points[i].y);
                 if (v <= 0.0) continue;
@@ -299,7 +312,7 @@ void HBarChartView::on_paint(HDC hdc, const RECT& bounds) {
                     if (!suppress_segment_labels) {
                         value_labels.push_back(ValueLabel{
                             bar,
-                            format_axis_tick(v, axis_y_.label_format),
+                            format_axis_tick(v, axis_y.label_format),
                             series.color,
                         });
                     }
@@ -311,8 +324,10 @@ void HBarChartView::on_paint(HDC hdc, const RECT& bounds) {
     } else {
         // Grouped: sub-bars subdivide each row vertically (preserves the prior
         // C3 behavior; each series gets its own sub-row within the cluster).
+        const ChartAxisRange axis_y = effective_axis_y();
         for (std::size_t s = 0; s < series_count; ++s) {
             const ChartSeries& series = series_[s];
+            if (!series.visible) continue;  // CP39: hidden series
             for (std::size_t i = 0; i < series.points.size() && i < bar_count; ++i) {
                 const ChartPoint& p = series.points[i];
                 const int row_top = layout.plot_bounds.top +
@@ -322,10 +337,10 @@ void HBarChartView::on_paint(HDC hdc, const RECT& bounds) {
                 if (sub_bottom <= sub_top) continue;
 
                 // The value axis is x; bars grow rightward from the plot left baseline.
-                const double v = std::clamp(p.y, axis_y_.min, axis_y_.max);
+                const double v = std::clamp(p.y, axis_y.min, axis_y.max);
                 int bar_len = 0;
-                if (axis_y_.max > axis_y_.min) {
-                    const double t = (v - axis_y_.min) / (axis_y_.max - axis_y_.min);
+                if (axis_y.max > axis_y.min) {
+                    const double t = (v - axis_y.min) / (axis_y.max - axis_y.min);
                     bar_len = static_cast<int>(t * static_cast<double>(plot_w) + 0.5);
                 }
                 const int bar_left = layout.plot_bounds.left;
@@ -337,7 +352,7 @@ void HBarChartView::on_paint(HDC hdc, const RECT& bounds) {
                                   series.color, series.color);
                 value_labels.push_back(ValueLabel{
                     bar,
-                    format_axis_tick(p.y, axis_y_.label_format),
+                    format_axis_tick(p.y, axis_y.label_format),
                     series.color,
                 });
             }
@@ -356,6 +371,7 @@ void HBarChartView::on_paint(HDC hdc, const RECT& bounds) {
     // per-segment labels suppressed above; the row totals give readers
     // a single number per category without crowding.
     if (stacked_) {
+        const ChartAxisRange axis_y = effective_axis_y();
         for (std::size_t i = 0; i < bar_count; ++i) {
             if (row_sums[i] <= 0.0) continue;
             const int row_top = layout.plot_bounds.top +
@@ -368,17 +384,23 @@ void HBarChartView::on_paint(HDC hdc, const RECT& bounds) {
             nfui::Color top_color = pal.text;
             for (std::size_t s = 0; s < series_count; ++s) {
                 const ChartSeries& series = series_[s];
+                if (!series.visible) continue;  // CP39: hidden series
                 if (i >= series.points.size()) continue;
                 const double v = std::max(0.0, series.points[i].y);
                 if (v <= 0.0) continue;
+                // CP39: cursor sums only visible prior series so the
+                // label sits at the right edge of the *visible* stack,
+                // matching the painted rightmost segment.
                 double cursor = 0.0;
                 for (std::size_t s2 = 0; s2 < s; ++s2) {
-                    if (i < series_[s2].points.size()) {
-                        cursor += std::max(0.0, series_[s2].points[i].y);
+                    const ChartSeries& prev = series_[s2];
+                    if (!prev.visible) continue;
+                    if (i < prev.points.size()) {
+                        cursor += std::max(0.0, prev.points[i].y);
                     }
                 }
-                double eff_min = axis_y_.min;
-                double eff_max = std::max(max_row_sum, axis_y_.max);
+                double eff_min = axis_y.min;
+                double eff_max = std::max(max_row_sum, axis_y.max);
                 if (!(eff_max > eff_min)) eff_max = eff_min + 1.0;
                 const double y_range = eff_max - eff_min;
                 const int seg_right = layout.plot_bounds.left +
@@ -393,7 +415,7 @@ void HBarChartView::on_paint(HDC hdc, const RECT& bounds) {
             const int label_h = dpi_scale.logical_to_pixels(16);
             const int gap_px = dpi_scale.logical_to_pixels(kValueLabelGapLogical);
             const std::wstring total_text =
-                format_axis_tick(row_sums[i], axis_y_.label_format);
+                format_axis_tick(row_sums[i], axis_y.label_format);
             RECT label{
                 bar_right + gap_px,
                 row_top + (row_bottom - row_top) / 2 - label_h / 2,
@@ -408,8 +430,8 @@ void HBarChartView::on_paint(HDC hdc, const RECT& bounds) {
     HFONT tick_font = (fonts_ != nullptr) ? fonts_->mono(dpi, font_pt::chart_tick) : nullptr;
 
     // In stacked mode the tick labels should reflect the row-sum range, not
-    // the per-series axis range, so the x-axis reads [axis_y_.min, max_row_sum].
-    ChartAxisRange tick_axis = axis_y_;
+    // the per-series axis range, so the x-axis reads [axis_y.min, max_row_sum].
+    ChartAxisRange tick_axis = effective_axis_y();
     if (stacked_ && max_row_sum > tick_axis.max) {
         tick_axis.max = max_row_sum;
     }
@@ -421,6 +443,7 @@ void HBarChartView::on_paint(HDC hdc, const RECT& bounds) {
                                             layout.legend_width_px, series_,
                                             palette_, fonts_, dpi);
     }
+    paint_interaction_overlay(hdc, bounds);
 }
 
 } // namespace nfui

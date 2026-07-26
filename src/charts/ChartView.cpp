@@ -110,7 +110,29 @@ void ChartView::set_font_cache(FontCache* fonts) noexcept {
     fonts_ = fonts;
 }
 
+void ChartView::set_series_visible(std::size_t idx, bool visible) noexcept {
+    if (idx >= series_.size()) return;
+    if (series_[idx].visible == visible) return;
+    series_[idx].visible = visible;
+    if (hwnd() != nullptr) {
+        InvalidateRect(hwnd(), nullptr, FALSE);
+    }
+}
+
+bool ChartView::is_series_visible(std::size_t idx) const noexcept {
+    if (idx >= series_.size()) return false;
+    return series_[idx].visible;
+}
+
 LRESULT ChartView::handle_message(UINT message, WPARAM wparam, LPARAM lparam) {
+    // Route interaction messages first when the controller is active.
+    if (interaction_enabled()) {
+        const LRESULT handled = handle_interaction_message(message, wparam, lparam);
+        if (handled != -1) {
+            return handled;
+        }
+    }
+
     switch (message) {
     case WM_ERASEBKGND:
         // We self-paint the background; suppress the default COLOR_WINDOW erase
@@ -154,9 +176,28 @@ LRESULT ChartView::handle_message(UINT message, WPARAM wparam, LPARAM lparam) {
 }
 
 void ChartView::on_paint(HDC hdc, const RECT& bounds) {
-    const ThemePalette& pal =
-        palette_ != nullptr ? *palette_ : theme_palette(ThemeMode::light);
+    const ThemePalette& pal = effective_palette();
     draw_default_placeholder(hwnd(), hdc, bounds, pal, fonts_);
+    paint_interaction_overlay(hdc, bounds);
+}
+
+// CP39: central palette resolver. Renderers (and ChartView::on_paint)
+// call this instead of duplicating the host-pointer fallback so a chart
+// configured with ChartSettings::theme = dark still paints dark when
+// the host forgot to rebind palette_ after apply_settings().
+const ThemePalette& ChartView::effective_palette() const noexcept {
+    if (palette_ != nullptr) return *palette_;
+    return fallback_palette_;
+}
+
+// CP39: refresh `fallback_palette_` from the current settings_.theme.
+// theme_palette() returns by value so we copy into our own storage so
+// renderers can take a reference that outlives the helper's temporary.
+void ChartView::refresh_fallback_palette() noexcept {
+    const ThemeMode mode = settings_.theme == ChartSettings::ThemeMode::dark
+                              ? ThemeMode::dark
+                              : ThemeMode::light;
+    fallback_palette_ = theme_palette(mode);
 }
 
 } // namespace nfui
