@@ -68,6 +68,7 @@ function Get-ModuleName {
         'Menu.hpp'            { return 'menu' }
         'Persistence.hpp'     { return 'persistence' }
         'Charts.hpp'          { return 'charts' }
+        'ChartInteraction.hpp' { return 'charts' }
         'NativeFrameUI.hpp'   { return 'umbrella' }
         default               { return 'unknown' }
     }

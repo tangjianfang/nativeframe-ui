@@ -160,6 +160,18 @@ target_link_libraries(NativeFrameUICharts
 nfui_apply_compiler_options(NativeFrameUICharts)
 nfui_add_resources(NativeFrameUICharts)
 
+add_executable(NativeFrameUIChartsInteractive WIN32
+    samples/NativeFrameUIChartsInteractive/NativeFrameUIChartsInteractive.cpp
+)
+target_link_libraries(NativeFrameUIChartsInteractive
+    PRIVATE
+        NativeFrameUI::NativeFrameUI
+        NativeFrameUI::nfui_charts
+        NativeFrameUI::nfui_charts_aa
+)
+nfui_apply_compiler_options(NativeFrameUIChartsInteractive)
+nfui_add_resources(NativeFrameUIChartsInteractive)
+
 add_executable(NativeFrameUIMinimal WIN32
     samples/NativeFrameUIMinimal/NativeFrameUIMinimal.cpp
 )
@@ -236,4 +248,25 @@ if(BUILD_TESTING)
                 ${CMAKE_CURRENT_SOURCE_DIR}/tools/verify_architecture.ps1
                 -Root ${CMAKE_CURRENT_SOURCE_DIR}
     )
+
+    # Pure-logic unit tests (no HWND, no message loop).
+    add_executable(NativeFrameUILayoutTest tests/test_layout.cpp)
+    target_link_libraries(NativeFrameUILayoutTest PRIVATE NativeFrameUI::nfui_layout)
+    nfui_apply_compiler_options(NativeFrameUILayoutTest)
+    add_test(NAME NativeFrameUILayoutTest COMMAND NativeFrameUILayoutTest)
+
+    add_executable(NativeFrameUIThemeTest tests/test_theme.cpp)
+    target_link_libraries(NativeFrameUIThemeTest PRIVATE NativeFrameUI::nfui_theme)
+    nfui_apply_compiler_options(NativeFrameUIThemeTest)
+    add_test(NAME NativeFrameUIThemeTest COMMAND NativeFrameUIThemeTest)
+
+    add_executable(NativeFrameUIPersistenceTest tests/test_persistence.cpp)
+    target_link_libraries(NativeFrameUIPersistenceTest PRIVATE NativeFrameUI::nfui_core)
+    nfui_apply_compiler_options(NativeFrameUIPersistenceTest)
+    add_test(NAME NativeFrameUIPersistenceTest COMMAND NativeFrameUIPersistenceTest)
+
+    add_executable(NativeFrameUIChartInteractionTest tests/test_chart_interaction.cpp)
+    target_link_libraries(NativeFrameUIChartInteractionTest PRIVATE NativeFrameUI::nfui_charts)
+    nfui_apply_compiler_options(NativeFrameUIChartInteractionTest)
+    add_test(NAME NativeFrameUIChartInteractionTest COMMAND NativeFrameUIChartInteractionTest)
 endif()

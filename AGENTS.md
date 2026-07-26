@@ -1,3 +1,132 @@
+# AGENTS.md
+
+This file provides guidance to Lingma (lingma.aliyun.com) when working with code in this repository.
+
+## What This Is
+
+NativeFrame UI (`nfui` namespace) is a pure Win32 C++20 static UI library — no MFC, ATL/WTL, or BCGControlBar Pro. Consumers link `NativeFrameUI::NativeFrameUI` (umbrella) or individual `NativeFrameUI::nfui_<module>` targets. CMake 3.25+ with Presets is the **only** build entry point — never hand-edit generated `.sln`/`.vcxproj`.
+
+## Build, Test, Run
+
+```powershell
+# Configure + build + test (Debug)
+cmake --preset x64-debug
+cmake --build --preset x64-debug
+ctest --preset x64-debug
+
+# Release
+cmake --preset x64-release
+cmake --build --preset x64-release
+ctest --preset x64-release
+
+# Run a single test
+ctest --preset x64-debug -R NativeFrameUISmokeTest --output-on-failure
+# Or invoke the binary directly:
+./out/build/x64-debug/Debug/NativeFrameUISmokeTest.exe
+
+# Architecture/boundary checks only
+ctest --preset x64-debug -R NativeFrameUIBoundaryCheck
+ctest --preset x64-debug -R NativeFrameUIArchitectureCheck
+```
+
+There is no separate lint target. MSVC `/W4 /permissive- /EHsc /utf-8 /FS /MP` is applied via `nfui_apply_compiler_options()` to every target. The boundary check (`tools/verify_boundaries.ps1`) enforces no BCG/MFC/ATL/WTL includes, no TODO/FIXME/XXX comments, no deprecated APIs, noexcept on Win32 callbacks, and the module dependency allow-list. The architecture check (`tools/verify_architecture.ps1`) validates header-level `#include <nfui/...>` edges against the documented dependency direction.
+
+Visual samples are `WIN32` executables (no console) emitted to `out/build/<preset>/(Debug|Release)/`.
+
+## CTest Tests
+
+| Test name | What it does |
+|---|---|
+| `NativeFrameUISmokeTest` | Console exe: validates DPI/Common Controls init, resource loading, handle wrappers, `GWLP_USERDATA` binding + `WM_NCDESTROY` cleanup, command routing, control wrappers, resource-count stability. Set `NONFUI_SKIP_DIALOG=1` (default in ctest) to skip modal dialog round-trip. |
+| `NativeFrameUIBoundaryCheck` | Runs `tools/verify_boundaries.ps1` — forbidden markers, deprecated APIs, module dependency policy. |
+| `NativeFrameUIArchitectureCheck` | Runs `tools/verify_architecture.ps1` — header include-edge direction validation. |
+| `NativeFrameUIBoundaryCheckRegression` | Regression self-test for the boundary script. |
+
+## Architecture
+
+Layered, one-way dependencies. Each module is a separate `STATIC` library defined in `cmake/nfui_<name>.cmake`.
+
+```text
+nfui_core (Application, Window, Dialog, Handle, Diagnostics, HoverState,
+           Dpi, Font, Icon, Paint, VectorIcon, Persistence, ResourceContext)
+  ↑
+nfui_command, nfui_layout, nfui_theme, nfui_window, nfui_dialog, nfui_menu
+  ↑
+nfui_control_base (Control base: subclass_proc, create_native, owner-draw dispatch)
+  ↑
+nfui_button, nfui_checkbox, nfui_radio, nfui_text, nfui_listbox,
+nfui_listview, nfui_treeview, nfui_iconview, nfui_frame, nfui_slider
+  ↑
+nfui_charts → nfui_charts_aa (GDI+ anti-aliased renderers)
+```
+
+**Forbidden edges** (enforced mechanically):
+- `core` → controls, command, layout, theme, charts
+- `command` → Menu/Toolbar/TreeView/controls
+- `layout` → concrete control implementations
+- `menu` → controls, command, layout, persistence
+- `persistence` → HWND, Window, Dialog, controls
+- `theme` / `resource` → business modules
+
+Public headers: `include/nfui/` (umbrella: `NativeFrameUI.hpp`). Implementation: `src/<module>/`. The module-to-header mapping is maintained in `tools/verify_architecture.ps1`.
+
+## Adding a New Executable Target
+
+```cmake
+add_executable(MyApp WIN32 samples/MyApp/MyApp.cpp)
+target_link_libraries(MyApp PRIVATE NativeFrameUI::NativeFrameUI)
+nfui_apply_compiler_options(MyApp)
+nfui_add_resources(MyApp)   # REQUIRED — compiles resources/NativeFrameUI.rc into the binary
+```
+
+`nfui_add_resources()` is mandatory. Static libraries do NOT carry resources into the final exe — explicit `.rc` inclusion is the deliberate strategy.
+
+## Adding a New Module
+
+1. Create `cmake/nfui_<name>.cmake` with `add_library(nfui_<name> STATIC ...)` + alias `NativeFrameUI::nfui_<name>`.
+2. Add the module to the `$allowedModuleDependencies` map in `tools/verify_boundaries.ps1`.
+3. Add the header mapping in `tools/verify_architecture.ps1` (`Get-ModuleName` + `$allowed` + `$forbiddenHeaders`).
+4. Include the cmake file from root `CMakeLists.txt` and add to the umbrella `target_link_libraries`.
+5. Add the header to `include/nfui/NativeFrameUI.hpp` if it's part of the public surface.
+
+## Key Invariants
+
+- Every `HWND`-bound wrapper exposes `HWND hwnd() const noexcept` and keeps a **stable object address until `WM_NCDESTROY` finishes**.
+- Handle ownership is explicit: `OwnedHwnd` (RAII, calls `DestroyWindow`), `BorrowedHwnd`, or shared. No ambiguous ownership in public APIs.
+- **Never** let C++ exceptions cross `WindowProc`, `DialogProc`, dispatcher, logging, or system callback boundaries. All Win32 callbacks must be `noexcept`.
+- Only the UI thread creates/destroys/moves/repaints/themes windows. Background work uses `dispatcher.post(...)`.
+- Keep **logical units** and **device pixels** distinct; persist logical units/ratios, never physical pixels.
+- Use `LONG_PTR`/`SetWindowLongPtr`/`GetWindowLongPtr` for pointer-sized window data (never `LONG`/`SetWindowLong`).
+- Avoid global singletons; services are owned by `ApplicationContext`.
+- Prefer composition over inheritance; inheritance only for stable extension points (Window, Dialog, command handler, layout node).
+- No TODO/FIXME/XXX comments may remain in merged code (enforced by boundary check).
+
+## Paint Contract
+
+All owner-draw / custom-draw code follows the MemoryDC scope-before-`EndPaint` invariant: create the buffer at the start of `WM_PAINT`, paint into it, flush via `BitBlt`, and let the destructor close the DC before `EndPaint` returns. Demos with native child controls must re-apply `WM_SETFONT` from the DPI handler.
+
+## Development Pitfalls
+
+- Do not wrap or redistribute BCGControlBar Pro. This is a clean-room pure Win32 implementation.
+- Do not use `GetModuleHandle(nullptr)` as universal resource lookup. Use explicit resource module handles.
+- Do not add Ribbon, full docking, complete Property Grid, complete Data Grid, plugin system, or ARM64 to V1 without a separate design review.
+- Samples are evaluation surfaces; stable framework guarantees are the documented `nfui` APIs, not sample visuals.
+
+## Technical Baseline
+
+- Minimum OS: Windows 10 1809. Toolchain: VS 2022, MSVC v143, Windows SDK 10.0.22621+.
+- C++20, Unicode, x64, `/MD` (Release) / `/MDd` (Debug), Per-Monitor DPI Awareness V2.
+- Rendering: Common Controls, Win32, GDI, UxTheme, DWM, Buffered Paint. GDI+ only for charts AA module.
+- Also supports `clangcl-debug`/`clangcl-release` and `arm64-debug` presets.
+
+## Source Documents
+
+- [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md): dependency rules, design-review questions.
+- [docs/PROJECT_PLAN.md](docs/PROJECT_PLAN.md): phase plan (0–8).
+- [docs/RESOURCE_GUIDE.md](docs/RESOURCE_GUIDE.md): resource ID rules and explicit `.rc` strategy.
+- [docs/THEME_GUIDE.md](docs/THEME_GUIDE.md): theme token guidance.
+- [docs/KNOWN_LIMITATIONS.md](docs/KNOWN_LIMITATIONS.md): deferred features.
+- [docs/INTEGRATION.md](docs/INTEGRATION.md): CMake integration and native handle guidance.
 # NativeFrameUI Agent Guide
 
 This repository is currently in a planning and architecture-baseline state. There is no source tree, CMake project, test project, or CI configuration yet. Treat the Markdown documentation as the project source of truth until implementation artifacts are created.
