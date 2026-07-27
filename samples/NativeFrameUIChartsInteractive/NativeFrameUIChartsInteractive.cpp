@@ -171,11 +171,11 @@ public:
         if (hwnd()) InvalidateRect(hwnd(), nullptr, FALSE);
     }
 
-    [[nodiscard]] bool owns_hwnd(HWND candidate) const noexcept {
-        for (HWND h : checkbox_hwnds_) {
-            if (h == candidate) return true;
-        }
-        return false;
+    [[nodiscard]] bool owns_hwnd(HWND) const noexcept { return false; }
+
+    [[nodiscard]] std::size_t series_count() const noexcept { return series_.size(); }
+    [[nodiscard]] bool is_checked(std::size_t idx) const noexcept {
+        return idx < checked_.size() && checked_[idx];
     }
 
 protected:
@@ -192,27 +192,42 @@ protected:
         }
         case WM_ERASEBKGND:
             return 1;
-        case WM_COMMAND: {
-            const int id = LOWORD(wparam);
-            const int code = HIWORD(wparam);
-            HWND checkbox = reinterpret_cast<HWND>(lparam);
-            if (code == BN_CLICKED && checkbox != nullptr) {
-                const std::size_t index =
-                    static_cast<std::size_t>(id - kSeriesCheckboxBase);
-                if (index < checked_.size()) {
-                    checked_[index] =
-                        (SendMessageW(checkbox, BM_GETCHECK, 0, 0) ==
-                         BST_CHECKED);
-                    if (HWND parent = GetParent(hwnd()); parent != nullptr) {
-                        SendMessageW(parent, WM_COMMAND, wparam, lparam);
-                    }
+        case WM_LBUTTONDOWN: {
+            const POINT pt{LOWORD(lparam), HIWORD(lparam)};
+            const std::optional<std::size_t> hit = hit_test_checkbox(pt);
+            if (hit.has_value() && *hit < checked_.size()) {
+                checked_[*hit] = !checked_[*hit];
+                if (HWND parent = GetParent(hwnd()); parent != nullptr) {
+                    const int id = kSeriesCheckboxBase + static_cast<int>(*hit);
+                    SendMessageW(parent, WM_COMMAND,
+                                 MAKEWPARAM(id, BN_CLICKED),
+                                 reinterpret_cast<LPARAM>(hwnd()));
                 }
-                return 0;
+                if (hwnd()) InvalidateRect(hwnd(), nullptr, FALSE);
             }
             return 0;
         }
+        case WM_MOUSEMOVE: {
+            // Track cursor so we can show a subtle hover ring on the
+            // checkbox hit-target. Cheap: just invalidate the hit row.
+            const POINT pt{LOWORD(lparam), HIWORD(lparam)};
+            const std::optional<std::size_t> hit = hit_test_checkbox(pt);
+            if (hit != hover_index_) {
+                hover_index_ = hit;
+                if (hwnd()) InvalidateRect(hwnd(), nullptr, FALSE);
+            }
+            return 0;
+        }
+        case WM_MOUSELEAVE:
+            if (hover_index_.has_value()) {
+                hover_index_.reset();
+                if (hwnd()) InvalidateRect(hwnd(), nullptr, FALSE);
+            }
+            return 0;
         case WM_SIZE:
-            layout_series_controls();
+            // No native child controls to reposition — the layout is
+            // recomputed inside on_paint from the client rect.
+            if (hwnd()) InvalidateRect(hwnd(), nullptr, FALSE);
             return 0;
         default:
             break;
@@ -222,56 +237,41 @@ protected:
 
 private:
     static constexpr int kSeriesCheckboxBase = 8000;
+    static constexpr int kCheckboxBox = 14;
+    static constexpr int kCheckboxHitSlop = 6;  // bigger than box for easier targeting
+
+    [[nodiscard]] std::optional<std::size_t> hit_test_checkbox(POINT pt) const noexcept {
+        // The checkbox row sits where on_paint draws it: chk_x = kOuterPadding,
+        // chk_y computed from the SERIES section header + per-row offsets.
+        const int chk_x = kOuterPadding;
+        int y = kPanelHeaderHeight + 14 + 14 + 6;
+        for (std::size_t i = 0; i < series_.size(); ++i) {
+            const RECT hit{chk_x - kCheckboxHitSlop, y,
+                           chk_x + kCheckboxBox + kCheckboxHitSlop, y + 18};
+            if (PtInRect(&hit, pt)) return i;
+            y += 18 + 14 + 10;  // name + stats + gap (matches on_paint)
+        }
+        return std::nullopt;
+    }
 
     void ensure_series_controls() noexcept {
-        if (hwnd() == nullptr) return;
-        while (checkbox_hwnds_.size() < series_.size()) {
-            const std::size_t i = checkbox_hwnds_.size();
-            const int id = kSeriesCheckboxBase + static_cast<int>(i);
-            HWND checkbox = CreateWindowExW(
-                0, L"BUTTON", L"",
-                BS_AUTOCHECKBOX | WS_CHILD | WS_VISIBLE | WS_TABSTOP,
-                0, 0, 14, 14,
-                hwnd(),
-                reinterpret_cast<HMENU>(static_cast<INT_PTR>(id)),
-                GetModuleHandleW(nullptr), nullptr);
-            if (checkbox == nullptr) break;
-            SendMessageW(checkbox, BM_SETCHECK,
-                         checked_[i] ? BST_CHECKED : BST_UNCHECKED, 0);
-            checkbox_hwnds_.push_back(checkbox);
-        }
-        while (checkbox_hwnds_.size() > series_.size()) {
-            HWND stale = checkbox_hwnds_.back();
-            checkbox_hwnds_.pop_back();
-            if (stale != nullptr) DestroyWindow(stale);
-        }
+        // Self-painted checkbox — no native HWNDs to manage. Just keep
+        // `checked_` aligned with `series_` so indices stay valid.
         if (checked_.size() > series_.size()) {
             checked_.resize(series_.size(), true);
+        }
+        if (checked_.size() < series_.size()) {
+            checked_.resize(series_.size(), true);
+        }
+        if (hover_index_.has_value() && *hover_index_ >= series_.size()) {
+            hover_index_.reset();
         }
     }
 
     void layout_series_controls() noexcept {
-        if (hwnd() == nullptr) return;
-        RECT bounds{};
-        GetClientRect(hwnd(), &bounds);
-        int y = kPanelHeaderHeight + 14;
-        y += 14 + 6;  // skip SECTION label band
-        for (std::size_t i = 0; i < checkbox_hwnds_.size(); ++i) {
-            const int chk_x = kOuterPadding;
-            const int chk_y = y + 2;
-            HWND checkbox = checkbox_hwnds_[i];
-            if (checkbox == nullptr) continue;
-            SendMessageW(checkbox, BM_SETCHECK,
-                         (i < checked_.size() && checked_[i])
-                             ? BST_CHECKED
-                             : BST_UNCHECKED,
-                         0);
-            SetWindowPos(checkbox, nullptr, chk_x, chk_y, 14, 14,
-                         SWP_NOZORDER | SWP_NOACTIVATE);
-            y += 16;  // name row
-            y += 13;  // stats row
-            y += 8;   // gap
-        }
+        // Self-painted layout: nothing to reposition, but keep the
+        // method so the legacy call sites stay valid. Invalidation is
+        // handled by the caller / WM_SIZE.
     }
 
     void on_paint(HDC hdc, RECT bounds) noexcept {
@@ -309,8 +309,56 @@ private:
         for (std::size_t i = 0; i < series_.size(); ++i) {
             const SeriesOverview& s = series_[i];
             const int chk_x = kOuterPadding;
+            const int chk_y = y + 1;
+            const bool is_checked = (i < checked_.size() && checked_[i]);
+            const bool is_hover = (hover_index_.has_value() && *hover_index_ == i);
+
+            // Self-painted checkbox: filled square in `accent` when
+            // checked, hollow square in `text_secondary` when not, with
+            // a 1-px border in the regular border colour either way.
+            const nfui::Color fill = is_checked
+                ? nfui::Color{palette_.accent.rgb}
+                : nfui::Color{palette_.surface.rgb};
+            const RECT chk_rc{chk_x, chk_y,
+                              chk_x + kCheckboxBox,
+                              chk_y + kCheckboxBox};
+            fill_rounded_rect(hdc, chk_rc, 3, fill, palette_.border);
+            if (is_checked) {
+                // Inset checkmark so the glyph reads as a tick, not a
+                // filled square. Two short line segments form the V.
+                // Use palette_.text (white on dark, black on light) so
+                // the check is high-contrast against the accent fill.
+                HPEN tick_pen = CreatePen(PS_SOLID, 2,
+                                          palette_.text.rgb);
+                HPEN old_tick_pen = static_cast<HPEN>(SelectObject(hdc, tick_pen));
+                const int tip_x = chk_rc.left + 3;
+                const int tip_y = chk_rc.top + kCheckboxBox / 2;
+                MoveToEx(hdc, tip_x, tip_y, nullptr);
+                LineTo(hdc, tip_x + 3, tip_y + 3);
+                LineTo(hdc, tip_x + 7, tip_y - 3);
+                SelectObject(hdc, old_tick_pen);
+                DeleteObject(tick_pen);
+            }
+            if (is_hover) {
+                // CP40 polish: a 1-px hover ring just outside the box
+                // so the cursor target is obvious even when the box
+                // itself is already filled in the accent colour.
+                HPEN ring_pen = CreatePen(PS_SOLID, 1,
+                                          palette_.accent.rgb);
+                HPEN old_ring = static_cast<HPEN>(SelectObject(hdc, ring_pen));
+                HBRUSH old_brush = static_cast<HBRUSH>(SelectObject(hdc, GetStockObject(NULL_BRUSH)));
+                RoundRect(hdc, chk_rc.left - 2, chk_rc.top - 2,
+                          chk_rc.right + 2, chk_rc.bottom + 2,
+                          5, 5);
+                SelectObject(hdc, old_brush);
+                SelectObject(hdc, old_ring);
+                DeleteObject(ring_pen);
+            }
+
+            // Colour swatch sits to the right of the checkbox, sharing
+            // its vertical centre.
             const int dot_r = 4;
-            const int dot_cx = chk_x + 20 + dot_r;
+            const int dot_cx = chk_x + kCheckboxBox + 12 + dot_r;
             const int dot_cy = y + 9;
             HBRUSH dot_brush = CreateSolidBrush(s.color.rgb);
             HBRUSH old_brush = static_cast<HBRUSH>(SelectObject(hdc, dot_brush));
@@ -437,8 +485,8 @@ private:
     std::optional<nfui::ChartRangeSelection> selection_{};
     nfui::ThemePalette palette_{};
     nfui::FontCache fonts_{};
-    std::vector<HWND> checkbox_hwnds_{};
     std::vector<bool> checked_{};
+    std::optional<std::size_t> hover_index_{};
 };
 
 // --- SettingsDialog ----------------------------------------------------------
@@ -697,17 +745,14 @@ protected:
         case WM_COMMAND: {
             const int id = LOWORD(wparam);
             const int code = HIWORD(wparam);
-            HWND source = reinterpret_cast<HWND>(lparam);
-            if (code == BN_CLICKED && source != nullptr &&
-                info_.owns_hwnd(source) &&
+            if (code == BN_CLICKED &&
                 id >= kSeriesCheckboxBase &&
-                id < kSeriesCheckboxBase +
-                     static_cast<int>(primary_chart_.series_count())) {
+                static_cast<std::size_t>(id - kSeriesCheckboxBase) <
+                    info_.series_count()) {
                 const std::size_t series_idx =
                     static_cast<std::size_t>(id - kSeriesCheckboxBase);
-                const bool visible = (SendMessageW(source, BM_GETCHECK, 0, 0) ==
-                                       BST_CHECKED);
-                primary_chart_.set_series_visible(series_idx, visible);
+                primary_chart_.set_series_visible(series_idx,
+                                                  info_.is_checked(series_idx));
                 return 0;
             }
             return 0;
