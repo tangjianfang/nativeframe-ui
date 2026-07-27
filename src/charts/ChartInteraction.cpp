@@ -16,6 +16,7 @@
 #include <algorithm>
 #include <cmath>
 #include <cstdio>
+#include <functional>
 #include <limits>
 #include <set>
 #include <string>
@@ -39,6 +40,19 @@ struct ChartView::InteractionImpl {
     ChartInteractionOptions opts{};
     ChartCallbacks callbacks{};
     charts_internal::InteractionState state{};
+
+    // CP40: ChartGroup observer hooks. Both are set/cleared by the
+    // private friend hooks in Charts.hpp; when non-empty they get
+    // notified in addition to the host's on_view_changed / on_cursor_x_changed
+    // callbacks (ChartGroup uses these to synchronize linked charts).
+    std::function<void(ChartAxisRange, ChartAxisRange)> group_view_observer{};
+    std::function<void(std::optional<double>)>        group_cursor_observer{};
+
+    // CP40: external cursor x value. set_external_cursor_x stores a value
+    // (or clears) and invalidates; on_paint draws a vertical crosshair
+    // using the chart's own y scale without forwarding the value back to
+    // the group (avoids feedback loops).
+    std::optional<double> external_cursor_x{};
 
     // View range (current visible + home for reset).
     ChartAxisRange view_x{};
@@ -106,6 +120,35 @@ void ChartView::set_callbacks(ChartCallbacks callbacks) {
         interaction_ = std::make_unique<InteractionImpl>();
     }
     interaction_->callbacks = std::move(callbacks);
+}
+
+// --- CP40: ChartGroup observer hooks + cursor broadcast ----------------------
+
+void ChartView::set_group_observers(
+    std::function<void(ChartAxisRange, ChartAxisRange)> on_view,
+    std::function<void(std::optional<double>)> on_cursor) noexcept {
+    if (!interaction_) {
+        interaction_ = std::make_unique<InteractionImpl>();
+    }
+    interaction_->group_view_observer = std::move(on_view);
+    interaction_->group_cursor_observer = std::move(on_cursor);
+}
+
+void ChartView::clear_group_observers() noexcept {
+    if (!interaction_) return;
+    interaction_->group_view_observer = {};
+    interaction_->group_cursor_observer = {};
+    interaction_->external_cursor_x = std::nullopt;
+    if (hwnd() != nullptr) InvalidateRect(hwnd(), nullptr, FALSE);
+}
+
+void ChartView::set_external_cursor_x(std::optional<double> x) noexcept {
+    if (!interaction_) {
+        interaction_ = std::make_unique<InteractionImpl>();
+    }
+    if (interaction_->external_cursor_x == x) return;
+    interaction_->external_cursor_x = x;
+    if (hwnd() != nullptr) InvalidateRect(hwnd(), nullptr, FALSE);
 }
 
 void ChartView::apply_settings(ChartSettings s) {
@@ -201,6 +244,12 @@ void ChartView::reset_view() noexcept {
         impl.view_x = impl.home_x;
         impl.view_y = impl.home_y;
         InvalidateRect(hwnd(), nullptr, FALSE);
+        if (impl.callbacks.on_view_changed) {
+            impl.callbacks.on_view_changed(impl.view_x, impl.view_y);
+        }
+        if (impl.group_view_observer) {
+            impl.group_view_observer(impl.view_x, impl.view_y);
+        }
         if (impl.callbacks.on_view_reset) {
             impl.callbacks.on_view_reset();
         }
@@ -303,7 +352,27 @@ LRESULT ChartView::handle_interaction_message(UINT message, WPARAM wparam, LPARA
     switch (message) {
     case WM_MOUSEMOVE: {
         POINT pt{GET_X_LPARAM(lparam), GET_Y_LPARAM(lparam)};
+        // CP40: subscribe to WM_MOUSELEAVE so we can notify the host
+        // and any linked group charts when the cursor exits the plot.
+        TRACKMOUSEEVENT tme{};
+        tme.cbSize = sizeof(tme);
+        tme.dwFlags = TME_LEAVE;
+        tme.hwndTrack = hwnd();
+        TrackMouseEvent(&tme);
         on_mouse_move_interaction(pt);
+        return 0;
+    }
+    case WM_MOUSELEAVE: {
+        // CP40: cursor left the chart; fire nullopt to the host and
+        // group so any crosshair on a linked chart is cleared.
+        if (interaction_) {
+            if (interaction_->callbacks.on_cursor_x_changed) {
+                interaction_->callbacks.on_cursor_x_changed(std::nullopt);
+            }
+            if (interaction_->group_cursor_observer) {
+                interaction_->group_cursor_observer(std::nullopt);
+            }
+        }
         return 0;
     }
     case WM_LBUTTONDOWN: {
@@ -456,6 +525,21 @@ void ChartView::on_mouse_move_interaction(POINT cursor) {
         }
         break;
     }
+    }
+
+    // CP40: notify host + group of the cursor's data-space x. Fired
+    // on every move (inside the plot) so a linked group can paint a
+    // vertical crosshair at this x against its own y scale. Outside the
+    // plot we fire nullopt via WM_MOUSELEAVE.
+    if (st.cursor_in_plot) {
+        const ChartPoint data_px = charts_internal::pixel_to_data(
+            cursor, layout, impl.view_x, impl.view_y);
+        if (impl.callbacks.on_cursor_x_changed) {
+            impl.callbacks.on_cursor_x_changed(data_px.x);
+        }
+        if (impl.group_cursor_observer) {
+            impl.group_cursor_observer(data_px.x);
+        }
     }
 }
 
@@ -693,6 +777,9 @@ void ChartView::on_mbutton_up_interaction(POINT) {
         if (impl.callbacks.on_view_changed) {
             impl.callbacks.on_view_changed(impl.view_x, impl.view_y);
         }
+        if (impl.group_view_observer) {
+            impl.group_view_observer(impl.view_x, impl.view_y);
+        }
     }
 }
 
@@ -734,6 +821,9 @@ void ChartView::on_mouse_wheel_interaction(POINT cursor, short delta) {
 
     if (impl.callbacks.on_view_changed) {
         impl.callbacks.on_view_changed(new_x, new_y);
+    }
+    if (impl.group_view_observer) {
+        impl.group_view_observer(new_x, new_y);
     }
 }
 

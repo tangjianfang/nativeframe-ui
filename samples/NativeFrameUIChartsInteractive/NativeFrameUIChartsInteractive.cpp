@@ -1,33 +1,42 @@
-// NativeFrameUIChartsInteractive: demonstrates the chart interaction system.
-// Features: drag-to-edit data points, range selection, wheel zoom, pan,
-// crosshair, tooltip, point selection, undo/redo, and animated transitions.
+// NativeFrameUIChartsInteractive: CP40 dashboard demo.
 //
-// Controls:
-//   - Drag data points vertically to edit values
-//   - Mouse wheel to zoom in/out (centered on cursor)
-//   - Middle-button drag or Space+Left-drag to pan
-//   - Double-click to reset view
-//   - Click a point to select; Ctrl+Click for multi-select
-//   - Ctrl+Z / Ctrl+Y for undo/redo
-//   - Ctrl+A to select all; Escape to clear selection
-//   - Hover for crosshair + tooltip
+// Layout (1180 x 900):
+//   ┌─ title strip (32px) ─────────────────────────────────────────────┐
+//   │  Interactive Charts — NativeFrame UI             [Export][Reset][⚙]│
+//   ├─ KPI row (132px) ─────────────────────────────────────┬─ InfoPanel ┤
+//   │ ┌──────────┐ ┌──────────┐ ┌──────────┐                │  (320px)  │
+//   │ │  Temp    │ │  Humid   │ │  Light   │                │ series    │
+//   │ └──────────┘ └──────────┘ └──────────┘                │ overview  │
+//   ├─ Primary chart (≈55% remaining chart height) ──────── ┤ + live    │
+//   ├─ Comparison chart (remaining) ─────────────────────── ┤ selection │
+//   ├─ status strip (28px) ─────────────────────────────────┴───────────┤
 //
-// Demo layout (1100 x 740):
-//   ┌─ title strip (32px) ──────────────────────────────────┐
-//   │  Chart │ Info Panel (320px)                           │
-//   │  (residual) │  series overview + live selection       │
-//   ├─ status hints (28px) ─────────────────────────────────┤
+// Behaviour:
+//   - Three KPI tiles, each with its own sparkline + delta (% vs. previous).
+//   - Primary line chart hosts three series, controlled by the right-rail
+//     InfoPanel checkboxes (drag-to-edit / wheel zoom / pan / dbl-click reset).
+//   - Comparison line chart shows the temperature series on an independent
+//     35..85 y-range.
+//   - The two charts are linked via a ChartGroup: x-axis range and cursor
+//     synchronise; y-axis ranges remain independent.
+//   - Toolbar: Export PNG (GetSaveFileNameW -> primary chart export),
+//     Reset (resets both linked views), Settings (opens the dialog).
+//   - Status strip shows the latest hover/selection/edit feedback.
 
 #include <nfui/Application.hpp>
+#include <nfui/ChartGroup.hpp>
 #include <nfui/Charts.hpp>
 #include <nfui/Dpi.hpp>
 #include <nfui/Font.hpp>
+#include <nfui/KpiTile.hpp>
 #include <nfui/Layout.hpp>
 #include <nfui/NativeFrameUI.hpp>
 #include <nfui/Paint.hpp>
 #include <nfui/Theme.hpp>
 
 #include "NativeFrameUIResource.h"
+
+#include <commdlg.h>
 
 #include <cmath>
 #include <cstdio>
@@ -40,8 +49,8 @@ namespace {
 
 using namespace nfui;
 
-constexpr int kWindowWidth = 1100;
-constexpr int kWindowHeight = 740;
+constexpr int kWindowWidth = 1180;
+constexpr int kWindowHeight = 900;
 constexpr int kTitleStripHeight = 32;
 constexpr int kStatusStripHeight = 28;
 constexpr int kInfoPanelWidth = 320;
@@ -52,8 +61,7 @@ constexpr int kPanelHeaderHeight = 28;
 //
 // Three distinct curves that exercise the multi-series path: a noisy sine
 // (Temperature), a smooth cosine (Humidity), and a narrow sawtooth (Light).
-// All three share a common y range [0, 100] so the chart can plot them on a
-// single axis without per-series y scaling.
+// The dataset has 30 samples so the demo can show x ticks 0..29.
 
 std::vector<nfui::ChartPoint> build_temperature() {
     std::vector<nfui::ChartPoint> pts;
@@ -72,7 +80,6 @@ std::vector<nfui::ChartPoint> build_humidity() {
     pts.reserve(30);
     for (int i = 0; i < 30; ++i) {
         const double x = static_cast<double>(i);
-        // 40-80% range, smoother than temperature
         const double y = 60.0 + 20.0 * std::cos(2.0 * 3.14159265 * i / 12.0);
         pts.push_back({x, y});
     }
@@ -84,7 +91,6 @@ std::vector<nfui::ChartPoint> build_light() {
     pts.reserve(30);
     for (int i = 0; i < 30; ++i) {
         const double x = static_cast<double>(i);
-        // Sawtooth with one obvious outlier so the crosshair hits it often
         const double phase = std::fmod(x, 6.0) / 6.0;
         const double y = phase * 100.0 + ((i == 14) ? 25.0 : 0.0);
         pts.push_back({x, std::min(y, 100.0)});
@@ -121,13 +127,10 @@ std::vector<SeriesOverview> build_overview(const std::vector<nfui::ChartSeries>&
     return out;
 }
 
-// --- InfoPanel: structured right-side display --------------------------------
+// --- InfoPanel ---------------------------------------------------------------
 //
-// Always-visible child window. Renders:
-//   1. Header band ("Chart Info")
-//   2. SERIES overview — name + colored dot + total count + y range
-//   3. SELECTION block — live stats from the latest rubber-band release
-//      (falls back to a hint when no selection is active)
+// Same role as before: per-series visibility checkboxes, live selection
+// stats, and an overview block. Now sized to the dashboard's right rail.
 
 class InfoPanel : public nfui::Window {
 public:
@@ -149,11 +152,6 @@ public:
 
     void set_series_overview(std::vector<SeriesOverview> series) {
         series_ = std::move(series);
-        // CP40: rebuild / prune checkbox HWNDs to match the new series
-        // count, preserving existing per-row state across the change.
-        // Old rows that disappear lose their HWNDs here so we never
-        // paint stale controls. Checked state survives via checked_
-        // because we resize that vector first.
         const std::size_t new_count = series_.size();
         if (new_count > checked_.size()) {
             checked_.resize(new_count, true);
@@ -173,8 +171,6 @@ public:
         if (hwnd()) InvalidateRect(hwnd(), nullptr, FALSE);
     }
 
-    // Expose so MainWindow's WM_COMMAND can validate that an incoming
-    // lparam is a child checkbox belonging to this panel.
     [[nodiscard]] bool owns_hwnd(HWND candidate) const noexcept {
         for (HWND h : checkbox_hwnds_) {
             if (h == candidate) return true;
@@ -195,14 +191,8 @@ protected:
             return 0;
         }
         case WM_ERASEBKGND:
-            return 1;  // we self-paint; suppress default
+            return 1;
         case WM_COMMAND: {
-            // CP40: forward checkbox notifications to the parent (the
-            // MainWindow). Win32 routes BUTTON notifications to the
-            // immediate parent — without this forward MainWindow never
-            // sees the BN_CLICKED and the series stays visible regardless
-            // of the checkbox state. We update our own state first so
-            // the next paint reflects the new checked value.
             const int id = LOWORD(wparam);
             const int code = HIWORD(wparam);
             HWND checkbox = reinterpret_cast<HWND>(lparam);
@@ -222,9 +212,6 @@ protected:
             return 0;
         }
         case WM_SIZE:
-            // CP40: reposition existing checkbox HWNDs in addition to the
-            // row decorations, so resizing keeps the controls aligned with
-            // their painted rows.
             layout_series_controls();
             return 0;
         default:
@@ -234,14 +221,8 @@ protected:
     }
 
 private:
-    // CP40: checkbox IDs start here so MainWindow can recognise them in
-    // its WM_COMMAND handler. Keep in sync with MainWindow::kSeriesCheckboxBase.
     static constexpr int kSeriesCheckboxBase = 8000;
 
-    // CP40: create only the checkbox HWNDs that don't exist yet, then
-    // sync their BM_SETCHECK state. The old code created one every paint
-    // (forcing BST_CHECKED) which both wasted HWNDs and immediately
-    // undid any user click before MainWindow saw the notification.
     void ensure_series_controls() noexcept {
         if (hwnd() == nullptr) return;
         while (checkbox_hwnds_.size() < series_.size()) {
@@ -259,36 +240,27 @@ private:
                          checked_[i] ? BST_CHECKED : BST_UNCHECKED, 0);
             checkbox_hwnds_.push_back(checkbox);
         }
-        // Prune any surplus HWNDs if series_ shrank.
         while (checkbox_hwnds_.size() > series_.size()) {
             HWND stale = checkbox_hwnds_.back();
             checkbox_hwnds_.pop_back();
             if (stale != nullptr) DestroyWindow(stale);
         }
-        // Keep checked_ in sync with series_.
         if (checked_.size() > series_.size()) {
             checked_.resize(series_.size(), true);
         }
     }
 
-    // CP40: reposition cached checkbox HWNDs to match the painted row
-    // geometry in on_paint. y_rows_[i] stores the y-coordinate of row i;
-    // row height is identical to what on_paint uses so the control and
-    // the decoration stay aligned.
     void layout_series_controls() noexcept {
         if (hwnd() == nullptr) return;
         RECT bounds{};
         GetClientRect(hwnd(), &bounds);
         int y = kPanelHeaderHeight + 14;
-        RECT dummy_label{kOuterPadding, y,
-                         bounds.right - kOuterPadding, y + 14};
-        y = dummy_label.bottom + 6;  // skip the SECTION label band
+        y += 14 + 6;  // skip SECTION label band
         for (std::size_t i = 0; i < checkbox_hwnds_.size(); ++i) {
             const int chk_x = kOuterPadding;
             const int chk_y = y + 2;
             HWND checkbox = checkbox_hwnds_[i];
             if (checkbox == nullptr) continue;
-            // Sync checked state in case something else changed it.
             SendMessageW(checkbox, BM_SETCHECK,
                          (i < checked_.size() && checked_[i])
                              ? BST_CHECKED
@@ -296,8 +268,6 @@ private:
                          0);
             SetWindowPos(checkbox, nullptr, chk_x, chk_y, 14, 14,
                          SWP_NOZORDER | SWP_NOACTIVATE);
-            // Advance y exactly like on_paint so the control stays in
-            // sync with the row layout.
             y += 16;  // name row
             y += 13;  // stats row
             y += 8;   // gap
@@ -305,10 +275,8 @@ private:
     }
 
     void on_paint(HDC hdc, RECT bounds) noexcept {
-        // Background.
         fill_rect(hdc, bounds, palette_.background);
 
-        // Header band — slightly elevated tone, monospaced label.
         RECT header{0, 0, bounds.right, kPanelHeaderHeight};
         fill_rect(hdc, header, palette_.surface);
         HPEN pen = CreatePen(PS_SOLID, 1, palette_.border.rgb);
@@ -324,15 +292,11 @@ private:
         draw_text(hdc, title_rc, L"CHART INFO", title_font, palette_.text_secondary,
                   DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX);
 
-        // Vertical accent stripe at the left edge of the body — mirrors the
-        // floating card's accent stripe so the two feel like the same family.
         RECT stripe{0, kPanelHeaderHeight, 3, bounds.bottom};
         fill_rect(hdc, stripe, palette_.accent);
 
-        // Layout sections vertically: SERIES then SELECTION then (footer).
         int y = kPanelHeaderHeight + 14;
 
-        // SERIES section.
         HFONT section_font = fonts_.mono(dpi, font_pt::xs);
         HFONT name_font = fonts_.regular(dpi, font_pt::base);
         HFONT stat_font = fonts_.mono(dpi, font_pt::xs);
@@ -344,30 +308,24 @@ private:
 
         for (std::size_t i = 0; i < series_.size(); ++i) {
             const SeriesOverview& s = series_[i];
-            // CP40: the checkbox itself is a real HWND child created by
-            // ensure_series_controls() and positioned by layout_series_controls().
-            // on_paint just decorates the row to the right of it.
             const int chk_x = kOuterPadding;
-            // 6-px colored dot.
             const int dot_r = 4;
             const int dot_cx = chk_x + 20 + dot_r;
             const int dot_cy = y + 9;
             HBRUSH dot_brush = CreateSolidBrush(s.color.rgb);
             HBRUSH old_brush = static_cast<HBRUSH>(SelectObject(hdc, dot_brush));
-            HPEN old_pen = static_cast<HPEN>(SelectObject(hdc, GetStockObject(NULL_PEN)));
+            HPEN old_pen_local = static_cast<HPEN>(SelectObject(hdc, GetStockObject(NULL_PEN)));
             Ellipse(hdc, dot_cx - dot_r, dot_cy - dot_r,
                        dot_cx + dot_r, dot_cy + dot_r);
-            SelectObject(hdc, old_pen);
+            SelectObject(hdc, old_pen_local);
             SelectObject(hdc, old_brush);
             DeleteObject(dot_brush);
 
-            // Name (left-aligned next to the dot).
             RECT name_rc{dot_cx + dot_r + 4, y,
                          bounds.right - kOuterPadding, y + 16};
             draw_text(hdc, name_rc, s.name, name_font, palette_.text,
                       DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX);
 
-            // Count + y range (dimmed, below the name).
             wchar_t stats[96]{};
             std::swprintf(stats, std::size(stats),
                           L"n=%zu   y %.1f \x2192 %.1f",
@@ -380,7 +338,6 @@ private:
             y = stats_rc.bottom + 8;
         }
 
-        // Separator.
         y += 4;
         HPEN sep_pen = CreatePen(PS_SOLID, 1, palette_.border.rgb);
         HPEN old_sep = static_cast<HPEN>(SelectObject(hdc, sep_pen));
@@ -390,7 +347,6 @@ private:
         DeleteObject(sep_pen);
         y += 12;
 
-        // SELECTION section.
         RECT sel_label{kOuterPadding, y, bounds.right - kOuterPadding, y + 14};
         draw_text(hdc, sel_label, L"SELECTION", section_font, palette_.text_secondary,
                   DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX);
@@ -411,9 +367,7 @@ private:
             return;
         }
 
-        // Per-series stats.
         for (const auto& s : selection_->series_stats) {
-            // Look up the series in our overview by index for color + name.
             nfui::Color dot_color = palette_.accent;
             std::wstring name_text;
             if (s.series_index < series_.size()) {
@@ -426,19 +380,19 @@ private:
             const int dot_cy = y + 7;
             HBRUSH dot_brush = CreateSolidBrush(dot_color.rgb);
             HBRUSH old_brush = static_cast<HBRUSH>(SelectObject(hdc, dot_brush));
-            HPEN old_pen = static_cast<HPEN>(SelectObject(hdc, GetStockObject(NULL_PEN)));
+            HPEN old_pen_local = static_cast<HPEN>(SelectObject(hdc, GetStockObject(NULL_PEN)));
             Ellipse(hdc, dot_cx - dot_r, dot_cy - dot_r,
                        dot_cx + dot_r, dot_cy + dot_r);
-            SelectObject(hdc, old_pen);
+            SelectObject(hdc, old_pen_local);
             SelectObject(hdc, old_brush);
             DeleteObject(dot_brush);
 
             RECT name_rc{kOuterPadding + dot_r * 2 + 6, y,
                          bounds.right - kOuterPadding, y + 14};
-            wchar_t header[96]{};
-            std::swprintf(header, std::size(header), L"%.*s   n=%zu",
+            wchar_t row_header[96]{};
+            std::swprintf(row_header, std::size(row_header), L"%.*s   n=%zu",
                           static_cast<int>(name_text.size()), name_text.data(), s.count);
-            draw_text(hdc, name_rc, header, name_font, palette_.text,
+            draw_text(hdc, name_rc, row_header, name_font, palette_.text,
                       DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX);
 
             wchar_t stats[128]{};
@@ -453,8 +407,6 @@ private:
             y = stats_rc.bottom + 6;
         }
 
-        // Footer: overall totals + overall y range (the per-chart floating
-        // card already shows the precise pixel/data-space x extent).
         y += 4;
         HPEN sep_pen2 = CreatePen(PS_SOLID, 1, palette_.border.rgb);
         HPEN old_sep2 = static_cast<HPEN>(SelectObject(hdc, sep_pen2));
@@ -485,26 +437,16 @@ private:
     std::optional<nfui::ChartRangeSelection> selection_{};
     nfui::ThemePalette palette_{};
     nfui::FontCache fonts_{};
-    // CP40: cached checkbox HWNDs (parallel to series_) and the last known
-    // checked state, used to recreate HWNDs only when needed and to
-    // distinguish user clicks from re-paints.
     std::vector<HWND> checkbox_hwnds_{};
     std::vector<bool> checked_{};
 };
 
 // --- SettingsDialog ----------------------------------------------------------
 //
-// CP39: modal child window invoked from the toolbar gear button. Hosts the
-// the user-facing knobs the user wants exposed:
-//   - Theme (light / dark) — ComboBox
-//   - Chart kind (line / spline / area / bar_v / bar_h) — ComboBox
-//   - Show crosshair / tooltip / legend — Checkboxes
-//   - Apply + Cancel buttons
-// On OK the dialog packs a ChartSettings and ships it to the MainWindow
-// via the `on_apply` callback. The dialog is owner-drawn so its chrome
-// matches the rest of the app without pulling in comctl32 v6 theming.
+// Same model as CP39: owner-drawn modal child window. We re-create it on
+// each open so the host can dispose of it cleanly via DestroyWindow on OK.
 
-class MainWindow;  // forward decl (declared below)
+class MainWindow;  // forward decl
 
 class SettingsDialog : public nfui::Window {
 public:
@@ -572,20 +514,10 @@ private:
     static constexpr int kApplyId    = 9201;
     static constexpr int kCancelId   = 9202;
 
-    static RECT rect_for(HWND parent, int x, int y, int w, int h) noexcept {
-        // Use MapWindowPoints so the rect is in the dialog's coordinates.
-        POINT p{x, y};
-        MapWindowPoints(parent, HWND_DESKTOP, &p, 1);
-        RECT r{p.x, p.y, p.x + w, p.y + h};
-        return r;
-    }
-
     void populate_controls(nfui::ChartSettings s) noexcept {
-        // Layout (in dialog-local coords). Width 360, height 280.
         RECT rc{};
         GetClientRect(hwnd(), &rc);
 
-        // Theme label + combo.
         CreateWindowExW(0, L"STATIC", L"Theme:",
                         WS_CHILD | WS_VISIBLE,
                         16, 20, 80, 18,
@@ -593,7 +525,7 @@ private:
         theme_combo_ = CreateWindowExW(0, L"COMBOBOX", nullptr,
             CBS_DROPDOWNLIST | WS_CHILD | WS_VISIBLE | WS_TABSTOP,
             110, 18, 230, 80,
-            hwnd(), reinterpret_cast<HMENU>(kThemeId),
+            hwnd(), reinterpret_cast<HMENU>(static_cast<INT_PTR>(kThemeId)),
             instance_, nullptr);
         SendMessageW(theme_combo_, CB_ADDSTRING, 0,
                       reinterpret_cast<LPARAM>(L"Light"));
@@ -602,7 +534,6 @@ private:
         SendMessageW(theme_combo_, CB_SETCURSEL,
                      s.theme == nfui::ChartSettings::ThemeMode::dark ? 1 : 0, 0);
 
-        // Kind label + combo.
         CreateWindowExW(0, L"STATIC", L"Chart kind:",
                         WS_CHILD | WS_VISIBLE,
                         16, 56, 80, 18,
@@ -610,7 +541,7 @@ private:
         kind_combo_ = CreateWindowExW(0, L"COMBOBOX", nullptr,
             CBS_DROPDOWNLIST | WS_CHILD | WS_VISIBLE | WS_TABSTOP,
             110, 54, 230, 120,
-            hwnd(), reinterpret_cast<HMENU>(kKindId),
+            hwnd(), reinterpret_cast<HMENU>(static_cast<INT_PTR>(kKindId)),
             instance_, nullptr);
         SendMessageW(kind_combo_, CB_ADDSTRING, 0,
                       reinterpret_cast<LPARAM>(L"Line"));
@@ -624,11 +555,10 @@ private:
                       reinterpret_cast<LPARAM>(L"Bar (horizontal)"));
         SendMessageW(kind_combo_, CB_SETCURSEL, s.kind_id, 0);
 
-        // Checkboxes.
         cross_chk_ = CreateWindowExW(0, L"BUTTON", L"Show crosshair",
             BS_AUTOCHECKBOX | WS_CHILD | WS_VISIBLE | WS_TABSTOP,
             16, 100, 320, 20,
-            hwnd(), reinterpret_cast<HMENU>(kCrossId),
+            hwnd(), reinterpret_cast<HMENU>(static_cast<INT_PTR>(kCrossId)),
             instance_, nullptr);
         SendMessageW(cross_chk_, BM_SETCHECK,
                      s.show_crosshair ? BST_CHECKED : BST_UNCHECKED, 0);
@@ -636,7 +566,7 @@ private:
         tip_chk_ = CreateWindowExW(0, L"BUTTON", L"Show tooltip",
             BS_AUTOCHECKBOX | WS_CHILD | WS_VISIBLE | WS_TABSTOP,
             16, 128, 320, 20,
-            hwnd(), reinterpret_cast<HMENU>(kTooltipId),
+            hwnd(), reinterpret_cast<HMENU>(static_cast<INT_PTR>(kTooltipId)),
             instance_, nullptr);
         SendMessageW(tip_chk_, BM_SETCHECK,
                      s.show_tooltip ? BST_CHECKED : BST_UNCHECKED, 0);
@@ -644,21 +574,20 @@ private:
         legend_chk_ = CreateWindowExW(0, L"BUTTON", L"Show legend",
             BS_AUTOCHECKBOX | WS_CHILD | WS_VISIBLE | WS_TABSTOP,
             16, 156, 320, 20,
-            hwnd(), reinterpret_cast<HMENU>(kLegendId),
+            hwnd(), reinterpret_cast<HMENU>(static_cast<INT_PTR>(kLegendId)),
             instance_, nullptr);
         SendMessageW(legend_chk_, BM_SETCHECK,
                      s.show_legend ? BST_CHECKED : BST_UNCHECKED, 0);
 
-        // Apply / Cancel buttons.
         CreateWindowExW(0, L"BUTTON", L"Apply",
             BS_DEFPUSHBUTTON | WS_CHILD | WS_VISIBLE | WS_TABSTOP,
             110, 220, 100, 28,
-            hwnd(), reinterpret_cast<HMENU>(kApplyId),
+            hwnd(), reinterpret_cast<HMENU>(static_cast<INT_PTR>(kApplyId)),
             instance_, nullptr);
         CreateWindowExW(0, L"BUTTON", L"Cancel",
             WS_CHILD | WS_VISIBLE | WS_TABSTOP,
             230, 220, 100, 28,
-            hwnd(), reinterpret_cast<HMENU>(kCancelId),
+            hwnd(), reinterpret_cast<HMENU>(static_cast<INT_PTR>(kCancelId)),
             instance_, nullptr);
     }
 
@@ -679,7 +608,6 @@ private:
     void paint_background(HDC hdc, const RECT& bounds) noexcept {
         const nfui::ThemePalette& pal = palette_for_dialog();
         fill_rect(hdc, bounds, pal.surface);
-        // Frame.
         HPEN pen = CreatePen(PS_SOLID, 1, pal.border.rgb);
         HPEN old = static_cast<HPEN>(SelectObject(hdc, pen));
         HBRUSH old_brush = static_cast<HBRUSH>(SelectObject(hdc, GetStockObject(NULL_BRUSH)));
@@ -719,10 +647,9 @@ public:
         if (!create(params)) return false;
 
         apply_theme();
-        create_info_panel();  // CP40: must exist before create_chart() so
-                              // set_series_overview() can create the cached
-                              // checkbox HWNDs.
-        create_chart();
+        create_kpi_tiles();
+        create_charts();
+        create_info_panel();
         ShowWindow(hwnd(), show_cmd);
         UpdateWindow(hwnd());
         return true;
@@ -748,35 +675,35 @@ protected:
         case WM_LBUTTONDOWN: {
             const POINT pt{LOWORD(lparam), HIWORD(lparam)};
             const ToolbarHit hit = hit_test_toolbar(pt);
-            if (hit == ToolbarHit::reset) {
-                chart_.reset_view();
+            switch (hit) {
+            case ToolbarHit::export_png:
+                export_primary_to_png();
                 return 0;
-            }
-            if (hit == ToolbarHit::settings) {
+            case ToolbarHit::reset:
+                reset_views();
+                return 0;
+            case ToolbarHit::settings:
                 open_settings_dialog();
                 return 0;
+            case ToolbarHit::none:
+            default:
+                return 0;
             }
-            return 0;
         }
         case WM_COMMAND: {
-            // CP40: checkboxes created by InfoPanel forward their state
-            // here via SendMessageW from InfoPanel::handle_message. We
-            // require lparam (the actual button HWND) to be non-null and
-            // to be a child of the info panel — that rejects any stray
-            // notifications (e.g. the settings dialog's own checkboxes
-            // which arrive directly, not via the InfoPanel forward).
             const int id = LOWORD(wparam);
             const int code = HIWORD(wparam);
             HWND source = reinterpret_cast<HWND>(lparam);
             if (code == BN_CLICKED && source != nullptr &&
                 info_.owns_hwnd(source) &&
                 id >= kSeriesCheckboxBase &&
-                id < kSeriesCheckboxBase + static_cast<int>(chart_.series_count())) {
+                id < kSeriesCheckboxBase +
+                     static_cast<int>(primary_chart_.series_count())) {
                 const std::size_t series_idx =
                     static_cast<std::size_t>(id - kSeriesCheckboxBase);
                 const bool visible = (SendMessageW(source, BM_GETCHECK, 0, 0) ==
                                        BST_CHECKED);
-                chart_.set_series_visible(series_idx, visible);
+                primary_chart_.set_series_visible(series_idx, visible);
                 return 0;
             }
             return 0;
@@ -791,22 +718,19 @@ protected:
     }
 
 private:
-    // CP39: toolbar in the title strip. The reset button (circular arrow)
-    // and settings button (gear) are drawn directly into the title strip
-    // (no native BUTTON chrome) and hit-tested in WM_LBUTTONDOWN.
-    enum class ToolbarHit { none, reset, settings };
+    enum class ToolbarHit { none, export_png, reset, settings };
 
-    // Checkbox IDs issued by InfoPanel for per-series visibility. Stored
-    // starting at kSeriesCheckboxBase so MainWindow's WM_COMMAND can
-    // identify them and dispatch to chart_.set_series_visible().
     static constexpr int kSeriesCheckboxBase = 8000;
 
-    // CP39: settings dialog held by MainWindow. We re-create it on each
-    // open so the owner-window stays in control of its lifecycle.
     std::unique_ptr<SettingsDialog> settings_dialog_{};
 
     void apply_theme() noexcept {
-        palette_ = nfui::theme_palette(nfui::ThemeMode::dark);
+        const nfui::ChartSettings::ThemeMode mode =
+            primary_chart_.settings().theme;
+        palette_ = nfui::theme_palette(
+            mode == nfui::ChartSettings::ThemeMode::dark
+                ? nfui::ThemeMode::dark
+                : nfui::ThemeMode::light);
     }
 
     [[nodiscard]] ToolbarHit hit_test_toolbar(POINT pt) const noexcept {
@@ -814,34 +738,83 @@ private:
         GetClientRect(hwnd(), &rc);
         const int button_size = 22;
         const int y = (kTitleStripHeight - button_size) / 2;
-        // Settings sits at the far right (rc.right - 12 - size); reset is
-        // immediately to its left. Both are inside the title strip.
-        const RECT settings_btn{rc.right - kOuterPadding - button_size,
-                                y,
-                                rc.right - kOuterPadding,
-                                y + button_size};
-        const RECT reset_btn{settings_btn.left - 8 - button_size,
-                             y,
-                             settings_btn.left - 8,
-                             y + button_size};
+        const int settings_x = rc.right - kOuterPadding - button_size;
+        const int reset_x = settings_x - 8 - button_size;
+        const int export_x = reset_x - 8 - button_size;
+        const RECT export_btn{export_x, y, export_x + button_size, y + button_size};
+        const RECT reset_btn{reset_x, y, reset_x + button_size, y + button_size};
+        const RECT settings_btn{settings_x, y, settings_x + button_size, y + button_size};
+        if (PtInRect(&export_btn, pt)) return ToolbarHit::export_png;
         if (PtInRect(&reset_btn, pt)) return ToolbarHit::reset;
         if (PtInRect(&settings_btn, pt)) return ToolbarHit::settings;
         return ToolbarHit::none;
     }
 
+    [[nodiscard]] RECT toolbar_button_rect(ToolbarHit hit) const noexcept {
+        RECT rc{};
+        GetClientRect(hwnd(), &rc);
+        const int button_size = 22;
+        const int y = (kTitleStripHeight - button_size) / 2;
+        const int settings_x = rc.right - kOuterPadding - button_size;
+        const int reset_x = settings_x - 8 - button_size;
+        const int export_x = reset_x - 8 - button_size;
+        switch (hit) {
+        case ToolbarHit::export_png:
+            return RECT{export_x, y, export_x + button_size, y + button_size};
+        case ToolbarHit::reset:
+            return RECT{reset_x, y, reset_x + button_size, y + button_size};
+        case ToolbarHit::settings:
+            return RECT{settings_x, y, settings_x + button_size, y + button_size};
+        case ToolbarHit::none:
+        default:
+            return RECT{};
+        }
+    }
+
+    void export_primary_to_png() noexcept {
+        wchar_t file_name[MAX_PATH] = L"chart.png";
+        OPENFILENAMEW ofn{};
+        ofn.lStructSize = sizeof(ofn);
+        ofn.hwndOwner = hwnd();
+        ofn.lpstrFile = file_name;
+        ofn.nMaxFile = MAX_PATH;
+        ofn.lpstrFilter = L"PNG Image (*.png)\0*.png\0All Files (*.*)\0*.*\0";
+        ofn.nFilterIndex = 1;
+        ofn.Flags = OFN_OVERWRITEPROMPT | OFN_PATHMUSTEXIST | OFN_HIDEREADONLY;
+        if (!GetSaveFileNameW(&ofn)) return;
+        const std::wstring path(file_name);
+        const bool ok = primary_chart_.export_to_png(path);
+        wchar_t buf[200]{};
+        std::swprintf(buf, std::size(buf),
+                      L"%s  \x2014  %s",
+                      ok ? L"Exported" : L"Export FAILED",
+                      path.c_str());
+        SetWindowTextW(hwnd(), buf);
+    }
+
+    void reset_views() noexcept {
+        primary_chart_.reset_view();
+        comparison_chart_.reset_view();
+        SetWindowTextW(hwnd(), L"View Reset \x2014 Interactive Charts \x2014 NativeFrame UI");
+    }
+
     void open_settings_dialog() noexcept {
         settings_dialog_ = std::make_unique<SettingsDialog>();
-        settings_dialog_->open(hwnd(), chart_.settings(),
+        settings_dialog_->open(hwnd(), primary_chart_.settings(),
             [this](nfui::ChartSettings s) {
-                chart_.apply_settings(s);
-                // Refresh palette + rewire info panel + title strip.
+                primary_chart_.apply_settings(s);
+                comparison_chart_.apply_settings(s);
                 apply_theme();
-                chart_.inject_theme(&palette_, &fonts_);
+                primary_chart_.inject_theme(&palette_, &fonts_);
+                comparison_chart_.inject_theme(&palette_, &fonts_);
                 info_.set_theme(palette_);
-                if (chart_.hwnd()) InvalidateRect(chart_.hwnd(), nullptr, FALSE);
+                temperature_kpi_.inject_theme(&palette_, &fonts_);
+                humidity_kpi_.inject_theme(&palette_, &fonts_);
+                light_kpi_.inject_theme(&palette_, &fonts_);
+                if (primary_chart_.hwnd()) InvalidateRect(primary_chart_.hwnd(), nullptr, FALSE);
+                if (comparison_chart_.hwnd()) InvalidateRect(comparison_chart_.hwnd(), nullptr, FALSE);
                 if (hwnd()) InvalidateRect(hwnd(), nullptr, FALSE);
             });
-        // Center the dialog over the client area.
         RECT rc{};
         GetClientRect(hwnd(), &rc);
         RECT drc{};
@@ -854,23 +827,70 @@ private:
                      SWP_SHOWWINDOW);
     }
 
-    void create_chart() {
-        chart_.inject_theme(&palette_, &fonts_);
+    void create_kpi_tiles() {
+        const auto tile_color = [this](int idx) {
+            return nfui::chart_series_color(
+                primary_chart_.settings().theme == nfui::ChartSettings::ThemeMode::dark
+                    ? nfui::ThemeMode::dark : nfui::ThemeMode::light, idx);
+        };
 
-        nfui::WindowCreateParams cp{
-            instance_,
-            L"",  // overridden by ChartView::create
-            L"",
+        auto make_tile = [&](nfui::KpiTile& tile, std::wstring label,
+                             std::wstring value, double delta,
+                             std::vector<nfui::ChartPoint> points,
+                             nfui::Color color) {
+            nfui::WindowCreateParams cp{
+                instance_, L"", L"",
+                WS_CHILD | WS_VISIBLE | WS_CLIPCHILDREN,
+                0, 0, 0, 10, 10,
+                hwnd(),
+            };
+            (void)tile.create(cp);
+            tile.inject_theme(&palette_, &fonts_);
+            tile.set_label(std::move(label));
+            tile.set_value(std::move(value));
+            tile.set_delta_percent(delta);
+            tile.set_sparkline(std::move(points), color);
+        };
+
+        const double temp_first = temperature_.front().y;
+        const double temp_last = temperature_.back().y;
+        const double hum_first = humidity_.front().y;
+        const double hum_last = humidity_.back().y;
+        const double light_first = light_.front().y;
+        const double light_last = light_.back().y;
+
+        make_tile(temperature_kpi_,
+                  L"Temperature",
+                  std::to_wstring(static_cast<int>(std::lround(temp_last))) + L" \xB0" + L"C",
+                  (temp_last - temp_first),
+                  temperature_,
+                  tile_color(0));
+        make_tile(humidity_kpi_,
+                  L"Humidity",
+                  std::to_wstring(static_cast<int>(std::lround(hum_last))) + L" %",
+                  (hum_last - hum_first),
+                  humidity_,
+                  tile_color(1));
+        make_tile(light_kpi_,
+                  L"Light",
+                  std::to_wstring(static_cast<int>(std::lround(light_last))) + L" lx",
+                  (light_last - light_first),
+                  light_,
+                  tile_color(2));
+    }
+
+    void create_charts() {
+        primary_chart_.inject_theme(&palette_, &fonts_);
+
+        nfui::WindowCreateParams primary_cp{
+            instance_, L"", L"",
             WS_CHILD | WS_VISIBLE | WS_CLIPCHILDREN,
-            0,
-            0, 0, 100, 100,  // placeholder; layout_children() repositions
+            0, 0, 0, 100, 100,
             hwnd(),
         };
-        if (!chart_.create(cp)) return;
+        if (!primary_chart_.create(primary_cp)) return;
+        primary_chart_.set_kind(nfui::ChartKind::line);
 
-        chart_.set_kind(nfui::ChartKind::line);
-
-        // Three distinct, color-distinguished series.
         std::vector<nfui::ChartSeries> series;
         auto make_series = [&](std::wstring_view name, int color_idx,
                                std::vector<nfui::ChartPoint> pts) {
@@ -880,15 +900,14 @@ private:
             s.points = std::move(pts);
             series.push_back(std::move(s));
         };
-        make_series(L"Temperature", 0, build_temperature());
-        make_series(L"Humidity",    1, build_humidity());
-        make_series(L"Light",       2, build_light());
+        make_series(L"Temperature", 0, temperature_);
+        make_series(L"Humidity",    1, humidity_);
+        make_series(L"Light",       2, light_);
 
-        chart_.set_series(std::move(series));
-        chart_.set_axis_x(nfui::ChartAxisRange{0.0, 29.0, L"{:.0f}"});
-        chart_.set_axis_y(nfui::ChartAxisRange{0.0, 100.0, L"{:.0f}"});
+        primary_chart_.set_series(std::move(series));
+        primary_chart_.set_axis_x(nfui::ChartAxisRange{0.0, 29.0, L"{:.0f}"});
+        primary_chart_.set_axis_y(nfui::ChartAxisRange{0.0, 100.0, L"{:.0f}"});
 
-        // Interaction: all modes enabled.
         nfui::ChartInteractionOptions opts{};
         opts.mode_flags = nfui::ChartInteractionMode::select
                         | nfui::ChartInteractionMode::drag_edit
@@ -902,23 +921,65 @@ private:
         opts.show_tooltip = true;
         opts.animate_on_edit = true;
         opts.animation_ms = 150;
-        chart_.enable_interaction(opts);
+        primary_chart_.enable_interaction(opts);
+
+        // Comparison chart: temperature series on its own y range, no
+        // interaction (this keeps it from competing with the primary for
+        // input events). The ChartGroup is what wires it to the primary.
+        comparison_chart_.inject_theme(&palette_, &fonts_);
+        nfui::WindowCreateParams comparison_cp{
+            instance_, L"", L"",
+            WS_CHILD | WS_VISIBLE | WS_CLIPCHILDREN,
+            0, 0, 0, 100, 100,
+            hwnd(),
+        };
+        if (!comparison_chart_.create(comparison_cp)) return;
+        comparison_chart_.set_kind(nfui::ChartKind::spline);
+        std::vector<nfui::ChartSeries> cmp_series;
+        nfui::ChartSeries cmp;
+        cmp.name = L"Temperature (zoomed)";
+        cmp.color = nfui::chart_series_color(nfui::ThemeMode::dark, 0);
+        cmp.points = temperature_;
+        cmp_series.push_back(std::move(cmp));
+        comparison_chart_.set_series(std::move(cmp_series));
+        comparison_chart_.set_axis_x(nfui::ChartAxisRange{0.0, 29.0, L"{:.0f}"});
+        comparison_chart_.set_axis_y(nfui::ChartAxisRange{35.0, 85.0, L"{:.1f}"});
+
+        // Axis titles + theme plumbing.
+        nfui::ChartSettings ps = primary_chart_.settings();
+        ps.x_axis_label = L"Time";
+        ps.y_axis_label = L"Value";
+        primary_chart_.apply_settings(ps);
+
+        nfui::ChartSettings cs = comparison_chart_.settings();
+        cs.x_axis_label = L"Time";
+        cs.y_axis_label = L"Percent";
+        comparison_chart_.apply_settings(cs);
+
+        // Wire the group. Primary's x range will propagate; cursor moves
+        // on the primary will paint an external crosshair on the
+        // comparison and vice versa.
+        (void)chart_group_.add_chart(&primary_chart_, nfui::ChartGroupRole::primary);
+        (void)chart_group_.add_chart(&comparison_chart_, nfui::ChartGroupRole::sub);
+        chart_group_.link_x_axis(true);
+        chart_group_.sync_cursor(true);
 
         // Push the series overview into the info panel up front.
         info_.set_series_overview(build_overview(get_chart_series()));
 
-        // Wire callbacks. Selection updates both the title bar (compact
-        // summary) and the info panel (rich stats).
+        // Wire callbacks. The same view/cursor/select callbacks are
+        // installed on both charts; the cursor callback is what the
+        // ChartGroup also fires so the group's broadcast shows up in
+        // the status strip too.
         nfui::ChartCallbacks cbs{};
         cbs.on_point_edited = [this](std::size_t si, std::size_t pi, nfui::ChartPoint val) {
             wchar_t buf[160];
             std::swprintf(buf, std::size(buf),
                           L"Edited [%zu][%zu] -> (%.1f, %.2f)  |  Undo: %s  Redo: %s",
                           si, pi, val.x, val.y,
-                          chart_.can_undo() ? L"Yes" : L"No",
-                          chart_.can_redo() ? L"Yes" : L"No");
+                          primary_chart_.can_undo() ? L"Yes" : L"No",
+                          primary_chart_.can_redo() ? L"Yes" : L"No");
             SetWindowTextW(hwnd(), buf);
-            // Refresh the series overview totals so the panel reflects edits.
             info_.set_series_overview(build_overview(get_chart_series()));
         };
         cbs.on_range_selected = [this](nfui::ChartRangeSelection sel) {
@@ -946,10 +1007,17 @@ private:
                           x.min, x.max, y.min, y.max);
             SetWindowTextW(hwnd(), buf);
         };
+        cbs.on_cursor_x_changed = [this](std::optional<double> x) {
+            if (!x.has_value()) return;  // quiet when the cursor leaves
+            wchar_t buf[160];
+            std::swprintf(buf, std::size(buf),
+                          L"Cursor x = %.2f  \x2014  Interactive Charts", *x);
+            SetWindowTextW(hwnd(), buf);
+        };
         cbs.on_view_reset = [this]() {
             SetWindowTextW(hwnd(), L"View Reset \x2014 Interactive Charts \x2014 NativeFrame UI");
         };
-        chart_.set_callbacks(std::move(cbs));
+        primary_chart_.set_callbacks(std::move(cbs));
     }
 
     void create_info_panel() {
@@ -958,14 +1026,7 @@ private:
         info_.set_theme(palette_);
     }
 
-    // The chart owns its series in a protected member; this accessor returns
-    // a copy of the names/colors so the info panel can render the overview
-    // and per-series lookup even after edits.
     std::vector<nfui::ChartSeries> get_chart_series() const {
-        // ChartView exposes series through a protected accessor; for the
-        // demo we rebuild the overview from the original data + the public
-        // API. A real app would expose a const& getter; here we return the
-        // stored data_ + color table directly.
         std::vector<nfui::ChartSeries> out;
         const std::vector<std::vector<nfui::ChartPoint>> series_data = {
             temperature_, humidity_, light_,
@@ -981,38 +1042,112 @@ private:
         return out;
     }
 
-    void layout_children() noexcept {
+    // Compute the dashboard body geometry. Returns the rectangle for the
+    // KPI tile row, the primary chart, the comparison chart, and the
+    // info panel. Caller is responsible for any offsets below the body
+    // (e.g. status strip).
+    struct DashboardGeometry {
+        RECT kpi{};
+        RECT primary{};
+        RECT comparison{};
+        RECT info{};
+        int body_height{};
+    };
+
+    DashboardGeometry compute_geometry() const noexcept {
         RECT rc{};
         GetClientRect(hwnd(), &rc);
-        const int chart_left = 0;
-        const int chart_top = kTitleStripHeight;
-        const int chart_bottom = rc.bottom - kStatusStripHeight;
-        const int chart_w = rc.right - rc.left - kInfoPanelWidth;
-        const int chart_h = chart_bottom - chart_top;
+        const int body_top = kTitleStripHeight;
+        const int body_bottom = rc.bottom - kStatusStripHeight;
+        const int body_height = body_bottom - body_top;
+        const int info_left = rc.right - kOuterPadding - kInfoPanelWidth;
+        const int body_left = kOuterPadding;
+        const int body_right = info_left - kOuterPadding;
+        const int kpi_h = 132;
+        const int gap = kOuterPadding;
+        const int remaining = body_height - kpi_h - gap * 3;
+        const int primary_h = (remaining * 55) / 100;
+        const int comparison_h = remaining - primary_h - gap;
 
-        if (chart_.hwnd() != nullptr && chart_w > 50 && chart_h > 50) {
-            MoveWindow(chart_.hwnd(),
-                       chart_left, chart_top,
-                       chart_w, chart_h,
+        DashboardGeometry g{};
+        g.body_height = body_height;
+        g.kpi = RECT{body_left,
+                     body_top + gap,
+                     body_right,
+                     body_top + gap + kpi_h};
+        const int primary_top = g.kpi.bottom + gap;
+        g.primary = RECT{body_left,
+                         primary_top,
+                         body_right,
+                         primary_top + primary_h};
+        const int comparison_top = g.primary.bottom + gap;
+        g.comparison = RECT{body_left,
+                            comparison_top,
+                            body_right,
+                            comparison_top + comparison_h};
+        g.info = RECT{info_left,
+                      body_top,
+                      rc.right - kOuterPadding,
+                      body_bottom};
+        return g;
+    }
+
+    void layout_children() noexcept {
+        const DashboardGeometry g = compute_geometry();
+
+        if (primary_chart_.hwnd() != nullptr) {
+            MoveWindow(primary_chart_.hwnd(),
+                       g.primary.left, g.primary.top,
+                       g.primary.right - g.primary.left,
+                       g.primary.bottom - g.primary.top,
+                       TRUE);
+        }
+        if (comparison_chart_.hwnd() != nullptr) {
+            MoveWindow(comparison_chart_.hwnd(),
+                       g.comparison.left, g.comparison.top,
+                       g.comparison.right - g.comparison.left,
+                       g.comparison.bottom - g.comparison.top,
                        TRUE);
         }
         if (info_.hwnd() != nullptr) {
-            const int info_left = rc.right - kInfoPanelWidth;
             MoveWindow(info_.hwnd(),
-                       info_left, chart_top,
-                       kInfoPanelWidth, chart_h,
+                       g.info.left, g.info.top,
+                       g.info.right - g.info.left,
+                       g.info.bottom - g.info.top,
                        TRUE);
-            // Force the panel to repaint at its new size.
             InvalidateRect(info_.hwnd(), nullptr, FALSE);
         }
+
+        layout_kpi_tiles(g.kpi);
         InvalidateRect(hwnd(), nullptr, FALSE);
+    }
+
+    void layout_kpi_tiles(RECT row) noexcept {
+        const int gap = 12;
+        const int total_gap = gap * 2;
+        const int tile_w = ((row.right - row.left) - total_gap) / 3;
+        if (tile_w <= 0) return;
+        const int y = row.top;
+        const int h = row.bottom - row.top;
+
+        if (temperature_kpi_.hwnd() != nullptr) {
+            MoveWindow(temperature_kpi_.hwnd(),
+                       row.left, y, tile_w, h, TRUE);
+        }
+        if (humidity_kpi_.hwnd() != nullptr) {
+            MoveWindow(humidity_kpi_.hwnd(),
+                       row.left + tile_w + gap, y, tile_w, h, TRUE);
+        }
+        if (light_kpi_.hwnd() != nullptr) {
+            MoveWindow(light_kpi_.hwnd(),
+                       row.left + (tile_w + gap) * 2, y, tile_w, h, TRUE);
+        }
     }
 
     void paint_strips(HDC hdc, RECT bounds) noexcept {
         const int w = bounds.right - bounds.left;
         const int h = bounds.bottom - bounds.top;
 
-        // Title strip (top).
         RECT title{0, 0, w, kTitleStripHeight};
         fill_rect(hdc, title, palette_.surface);
         HPEN title_pen = CreatePen(PS_SOLID, 1, palette_.border.rgb);
@@ -1025,50 +1160,14 @@ private:
         const int dpi = (hwnd() != nullptr) ? dpi_of(hwnd()) : 96;
         HFONT title_font = fonts_.mono(dpi, font_pt::md);
 
-        // Left: app title.
         RECT title_text{kOuterPadding, 0, w / 2, kTitleStripHeight};
         draw_text(hdc, title_text,
                   L"Interactive Charts \x2014 NativeFrame UI",
                   title_font, palette_.text,
                   DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX);
 
-        // Right: series legend dots.
-        HFONT legend_font = fonts_.mono(dpi, font_pt::xs);
-        HFONT old_font = static_cast<HFONT>(SelectObject(hdc, legend_font));
-        SetTextColor(hdc, palette_.text_secondary.rgb);
-        int legend_x = w - kOuterPadding;
-        const std::wstring_view names[] = {L"Light", L"Humidity", L"Temperature"};
-        for (int i = 2; i >= 0; --i) {
-            // Draw name right-aligned, then a dot to its left.
-            SIZE sz{};
-            GetTextExtentPoint32W(hdc, names[i].data(),
-                                  static_cast<int>(names[i].size()), &sz);
-            RECT label_rc{legend_x - sz.cx, 0, legend_x, kTitleStripHeight};
-            draw_text(hdc, label_rc, std::wstring(names[i]), legend_font,
-                      palette_.text_secondary,
-                      DT_RIGHT | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX);
-            const int dot_r = 4;
-            const int cx = legend_x - sz.cx - 10;
-            const int cy = kTitleStripHeight / 2;
-            HBRUSH brush = CreateSolidBrush(
-                nfui::chart_series_color(nfui::ThemeMode::dark, i).rgb);
-            HBRUSH old_b = static_cast<HBRUSH>(SelectObject(hdc, brush));
-            HPEN old_p = static_cast<HPEN>(SelectObject(hdc, GetStockObject(NULL_PEN)));
-            Ellipse(hdc, cx - dot_r, cy - dot_r, cx + dot_r, cy + dot_r);
-            SelectObject(hdc, old_p);
-            SelectObject(hdc, old_b);
-            DeleteObject(brush);
-            legend_x -= (sz.cx + 24);
-        }
-        SelectObject(hdc, old_font);
+        draw_toolbar_buttons(hdc);
 
-        // CP39: toolbar buttons (reset + settings) on the far right of the
-        // title strip. Draw with primitives so the chrome matches the rest
-        // of the demo (no native BUTTON bevel). Reset is a circular arrow
-        // glyph; settings is a simple gear-ish asterisk cross.
-        draw_toolbar_buttons(hdc, w);
-
-        // Status strip (bottom).
         RECT status{0, h - kStatusStripHeight, w, h};
         fill_rect(hdc, status, palette_.surface);
         HPEN status_pen = CreatePen(PS_SOLID, 1, palette_.border.rgb);
@@ -1082,48 +1181,67 @@ private:
         RECT hint_rc{kOuterPadding, h - kStatusStripHeight,
                      w - kOuterPadding, h};
         draw_text(hdc, hint_rc,
-                  L"Drag to range-select  \x2022  Wheel zoom  \x2022  Space+drag = pan  \x2022  Dbl-click = reset  \x2022  Ctrl+Z/Y = undo/redo  \x2022  Ctrl+A = select all  \x2022  Esc = clear",
+                  L"Drag to range-select  \x2022  Wheel zoom  \x2022  Space+drag = pan  \x2022  Dbl-click = reset  \x2022  Ctrl+Z/Y = undo/redo  \x2022  Cursor x sync across linked charts",
                   hint_font, palette_.text_secondary,
-                  DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX);
+                  DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX | DT_END_ELLIPSIS);
     }
 
-    // CP39: draw reset + settings icons into the right edge of the title
-    // strip. We avoid the native BUTTON control so the chrome matches the
-    // rest of the dark surface; hit-testing lives in MainWindow::hit_test_toolbar.
-    void draw_toolbar_buttons(HDC hdc, int w) noexcept {
+    void draw_toolbar_buttons(HDC hdc) noexcept {
         const int button_size = 22;
-        const int y = (kTitleStripHeight - button_size) / 2;
-        const int settings_x = w - kOuterPadding - button_size;
-        const int reset_x = settings_x - 8 - button_size;
+        (void)button_size;
 
-        auto draw_round_button = [&](int x, int yy) {
-            RECT btn{x, yy, x + button_size, yy + button_size};
-            const POINT pt{btn.left + 2, btn.top + 2};
-            const ToolbarHit hit = hit_test_toolbar(pt);
-            const nfui::Color bg = (hit != ToolbarHit::none)
+        auto draw_round_button = [&](RECT btn) {
+            const POINT probe{btn.left + 2, btn.top + 2};
+            const ToolbarHit probe_hit = hit_test_toolbar(probe);
+            const nfui::Color bg = (probe_hit != ToolbarHit::none)
                 ? nfui::Color{palette_.surface_hover.rgb}
                 : nfui::Color{palette_.surface.rgb};
             fill_rounded_rect(hdc, btn, 4, bg, palette_.border);
         };
-        draw_round_button(reset_x, y);
-        draw_round_button(settings_x, y);
 
-        // Reset glyph: circular arrow (open ring + arrowhead).
+        const RECT export_btn = toolbar_button_rect(ToolbarHit::export_png);
+        const RECT reset_btn = toolbar_button_rect(ToolbarHit::reset);
+        const RECT settings_btn = toolbar_button_rect(ToolbarHit::settings);
+        draw_round_button(export_btn);
+        draw_round_button(reset_btn);
+        draw_round_button(settings_btn);
+
+        // Export glyph: downward arrow into a tray.
         {
-            const int cx = reset_x + button_size / 2;
-            const int cy = y + button_size / 2;
+            const int cx = (export_btn.left + export_btn.right) / 2;
+            const int cy = (export_btn.top + export_btn.bottom) / 2;
+            HPEN pen = CreatePen(PS_SOLID, 2, palette_.text.rgb);
+            HPEN old_pen = static_cast<HPEN>(SelectObject(hdc, pen));
+            HBRUSH old_brush = static_cast<HBRUSH>(SelectObject(hdc, GetStockObject(NULL_BRUSH)));
+            // Vertical stem.
+            MoveToEx(hdc, cx, cy - 5, nullptr);
+            LineTo(hdc, cx, cy + 3);
+            // Tray.
+            MoveToEx(hdc, cx - 5, cy + 3, nullptr);
+            LineTo(hdc, cx + 5, cy + 3);
+            // Arrowhead.
+            MoveToEx(hdc, cx - 3, cy + 1, nullptr);
+            LineTo(hdc, cx,     cy + 4);
+            LineTo(hdc, cx + 3, cy + 1);
+            SelectObject(hdc, old_pen);
+            SelectObject(hdc, old_brush);
+            DeleteObject(pen);
+        }
+
+        // Reset glyph: circular arrow.
+        {
+            const int cx = (reset_btn.left + reset_btn.right) / 2;
+            const int cy = (reset_btn.top + reset_btn.bottom) / 2;
             const int r = 7;
             HPEN pen = CreatePen(PS_SOLID, 2, palette_.text.rgb);
             HPEN old_pen = static_cast<HPEN>(SelectObject(hdc, pen));
             HBRUSH old_brush = static_cast<HBRUSH>(SelectObject(hdc, GetStockObject(NULL_BRUSH)));
-            // Arc spanning ~270°, opening at the top-right.
             Arc(hdc, cx - r, cy - r, cx + r, cy + r,
                 cx + r, cy - r,
                 cx,     cy + r);
             SelectObject(hdc, old_pen);
             SelectObject(hdc, old_brush);
             DeleteObject(pen);
-            // Arrowhead (small triangle at the top-right of the arc).
             const int ax = cx + r - 1;
             const int ay = cy - r + 1;
             POINT tri[3]{{ax, ay}, {ax - 4, ay + 1}, {ax - 1, ay + 4}};
@@ -1136,16 +1254,14 @@ private:
             DeleteObject(brush);
         }
 
-        // Settings glyph: gear (six spokes around a center dot).
+        // Settings glyph: gear.
         {
-            const int cx = settings_x + button_size / 2;
-            const int cy = y + button_size / 2;
-            // Outer dot.
+            const int cx = (settings_btn.left + settings_btn.right) / 2;
+            const int cy = (settings_btn.top + settings_btn.bottom) / 2;
             HBRUSH brush = CreateSolidBrush(palette_.text.rgb);
             HBRUSH old = static_cast<HBRUSH>(SelectObject(hdc, brush));
             HPEN oldp = static_cast<HPEN>(SelectObject(hdc, GetStockObject(NULL_PEN)));
             Ellipse(hdc, cx - 2, cy - 2, cx + 2, cy + 2);
-            // Six spokes.
             HPEN pen = CreatePen(PS_SOLID, 2, palette_.text.rgb);
             HPEN old_pen = static_cast<HPEN>(SelectObject(hdc, pen));
             HBRUSH old_brush = static_cast<HBRUSH>(SelectObject(hdc, GetStockObject(NULL_BRUSH)));
@@ -1170,12 +1286,19 @@ private:
     HINSTANCE instance_{GetModuleHandleW(nullptr)};
     nfui::ThemePalette palette_{};
     nfui::FontCache fonts_{};
-    nfui::LineChartView chart_{};
+
+    // CP40: KPI tiles (row 1) -> primary chart (row 2) -> comparison
+    // chart (row 3) -> group. Reverse destruction drops the group
+    // first so its observer hooks detach from the still-living charts.
+    nfui::KpiTile temperature_kpi_{};
+    nfui::KpiTile humidity_kpi_{};
+    nfui::KpiTile light_kpi_{};
+    nfui::LineChartView primary_chart_{};
+    nfui::LineChartView comparison_chart_{};
+    nfui::ChartGroup chart_group_{};
+
     InfoPanel info_{};
 
-    // Persistent source-of-truth for the demo's three series so the info
-    // panel can rebuild its overview after edits without reaching into the
-    // chart's protected state.
     std::vector<nfui::ChartPoint> temperature_{build_temperature()};
     std::vector<nfui::ChartPoint> humidity_{build_humidity()};
     std::vector<nfui::ChartPoint> light_{build_light()};

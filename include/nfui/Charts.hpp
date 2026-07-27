@@ -272,7 +272,7 @@ private:
     friend class ChartGroup;
     void set_group_observers(
         std::function<void(ChartAxisRange, ChartAxisRange)> on_view,
-        std::function<void(std::optional<double>)> on_cursor);
+        std::function<void(std::optional<double>)> on_cursor) noexcept;
     void clear_group_observers() noexcept;
     void set_external_cursor_x(std::optional<double> x) noexcept;
 

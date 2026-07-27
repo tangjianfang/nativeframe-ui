@@ -69,6 +69,9 @@ function Get-ModuleName {
         'Persistence.hpp'     { return 'persistence' }
         'Charts.hpp'          { return 'charts' }
         'ChartInteraction.hpp' { return 'charts' }
+        'ChartGroup.hpp'      { return 'charts' }
+        'Sparkline.hpp'       { return 'charts' }
+        'KpiTile.hpp'         { return 'charts' }
         'NativeFrameUI.hpp'   { return 'umbrella' }
         default               { return 'unknown' }
     }
