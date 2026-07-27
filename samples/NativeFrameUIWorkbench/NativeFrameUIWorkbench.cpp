@@ -855,10 +855,13 @@ private:
         for (int i = 0; i < TB_COUNT; ++i) {
             const RECT btn{tb_x_[i], tb_y_, tb_x_[i] + button_size, tb_y_ + button_size};
             const bool hovered = (i == hovered_toolbar_);
-            const nfui::Color face = hovered ? palette_.surface_hover : palette_.background;
-            if (hovered) {
-                nfui::fill_rounded_rect(target, btn, radius, face, palette_.border);
-            }
+            // CP41: idle buttons get a 1px outline (no fill) so they read as
+            // buttons — the prior "icon floats over window bg" pattern
+            // made the row look like decorative content rather than
+            // actionable chrome. Hover swaps to a filled surface_hover
+            // chip so the hover state is the only chrome-weight change.
+            const nfui::Color face = hovered ? palette_.surface_hover : palette_.surface;
+            nfui::fill_rounded_rect(target, btn, radius, face, palette_.border);
             // CP28: glyph sits inside the button with a small inset so the
             // hover background has breathing room around the icon.
             const int inset = dpi_.logical_to_pixels(2);
@@ -1004,12 +1007,17 @@ private:
 
         HFONT sm_font = fonts_.regular(dpi_.dpi(), nfui::font_pt::sm);
 
-        // Header row: "Build" on the left, "40%" on the right (palette.text).
+        // CP41: header row is "Building…" on the left, "40%" on the right.
+        // Moving the status label off the bar removes the only place in
+        // the chrome where text sits on top of the coral accent (which
+        // is bright enough that no theme text color clears WCAG), keeps
+        // the bar pure visual, and matches the way VSCode and GitHub
+        // render progress: caption above, fill below.
         const int header_inset = dpi_.logical_to_pixels(12);
         RECT build_label{build_card.left + header_inset, build_card.top + header_inset,
                          build_card.right - header_inset,
                          build_card.top + header_inset + dpi_.logical_to_pixels(20)};
-        nfui::draw_text(target, build_label, L"Build", sm_font, palette_.text,
+        nfui::draw_text(target, build_label, L"Building\x2026", sm_font, palette_.text,
                         DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX);
 
         RECT build_percent{build_card.left + header_inset, build_card.top + header_inset,
@@ -1035,21 +1043,10 @@ private:
             RECT fill{bar.left, bar.top, bar.left + fill_w, bar.bottom};
             nfui::fill_rounded_rect(target, fill, bar_radius, palette_.accent, palette_.accent);
         }
-        // Overlay label: semibold text centered over the bar. CP35: drop the
-        // two-tone clip — splitting "Building…" into a filled-half and
-        // empty-half draw stacked two complete labels side-by-side at
-        // 60 % fill and read as redundant "Building… / Building…" noise.
-        // Single draw, centered in the full bar, text_secondary reads
-        // against both the coral fill and the surface_hover track. CP32
-        // had moved to two halves to avoid the "…" clipping against the
-        // fill boundary; with one centered label the boundary never
-        // touches the text because the ellipsis sits at the visual
-        // middle of the bar.
-        const std::wstring overlay = L"Building\x2026";
-        HFONT bar_font = fonts_.semibold(dpi_.dpi(), nfui::font_pt::sm);
-        nfui::draw_text(target, bar, overlay, bar_font,
-                        palette_.accent_text,
-                        DT_CENTER | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX);
+        // The overlay "Building…" caption now lives in the header row
+        // above the bar (see CP41 comment in the header section). The
+        // bar itself stays free of text so the coral fill reads as a
+        // pure visual progress meter at any slider position.
 
         // Inspector overlay (magnifier glyph + caption) is drawn by
         // inspector_subclass_proc inside the panel's WM_PAINT cycle so the
