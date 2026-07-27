@@ -12,3 +12,7 @@ docs/VISUAL_AUDIT/*.bmp
 node_modules/
 package.json
 package-lock.json
+
+# IDE-specific local caches (Qoder repowiki + future IDEs that drop
+# private knowledge bases into the repo root).
+.qoder/
