@@ -1026,6 +1026,11 @@ private:
         comparison_chart_.set_series(std::move(cmp_series));
         comparison_chart_.set_axis_x(nfui::ChartAxisRange{0.0, 29.0, L"{:.0f}"});
         comparison_chart_.set_axis_y(nfui::ChartAxisRange{35.0, 85.0, L"{:.1f}"});
+        // CP40 polish: the default tension (0.5) is so gentle that with
+        // 30 dense samples the curves collapse to what looks like a
+        // polyline. Bumping to 0.7 gives the spline visible curvature
+        // without overshooting past each data point.
+        comparison_chart_.set_tension(0.7);
 
         // Axis titles + theme plumbing.
         nfui::ChartSettings ps = primary_chart_.settings();
@@ -1229,6 +1234,15 @@ private:
     void paint_strips(HDC hdc, RECT bounds) noexcept {
         const int w = bounds.right - bounds.left;
         const int h = bounds.bottom - bounds.top;
+
+        // CP40 polish: paint the body background first so the gaps
+        // between the KPI tiles and the chart cards read as the same
+        // dark surface as the title/status strips, instead of letting
+        // the system default (white) bleed through wherever a child
+        // HWND doesn't cover. Without this the dashboard looks like
+        // cards floating on a white page — the contrast feels cheap.
+        RECT body{0, kTitleStripHeight, w, h - kStatusStripHeight};
+        fill_rect(hdc, body, palette_.background);
 
         RECT title{0, 0, w, kTitleStripHeight};
         fill_rect(hdc, title, palette_.surface);
@@ -1437,7 +1451,7 @@ private:
     nfui::KpiTile humidity_kpi_{};
     nfui::KpiTile light_kpi_{};
     nfui::LineChartView primary_chart_{};
-    nfui::LineChartView comparison_chart_{};
+    nfui::SplineChartView comparison_chart_{};
     nfui::ChartGroup chart_group_{};
 
     InfoPanel info_{};
