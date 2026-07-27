@@ -10,8 +10,16 @@ function(nfui_apply_compiler_options target)
     )
 
     if(MSVC)
-        set_property(TARGET ${target} PROPERTY
-            MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>DLL")
+        # Honor the parent project's CMAKE_MSVC_RUNTIME_LIBRARY if set so
+        # consumers that statically link the CRT (e.g. AutoTerminal) don't
+        # hit LNK2038. Default to MultiThreadedDLL for standalone use.
+        if(DEFINED CMAKE_MSVC_RUNTIME_LIBRARY)
+            set_property(TARGET ${target} PROPERTY
+                MSVC_RUNTIME_LIBRARY "${CMAKE_MSVC_RUNTIME_LIBRARY}")
+        else()
+            set_property(TARGET ${target} PROPERTY
+                MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>DLL")
+        endif()
         # /FS forces synchronous PDB writes so parallel cl.exe invocations
         # targeting the same .pdb don't collide (C1041). Required because
         # our per-component libraries compile multiple TUs into one static
