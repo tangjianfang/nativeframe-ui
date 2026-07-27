@@ -281,7 +281,7 @@ if(BUILD_TESTING)
 
     if(NFUI_BUILD_CHARTS)
         add_executable(NativeFrameUIChartInteractionTest tests/test_chart_interaction.cpp)
-        target_link_libraries(NativeFrameUIChartInteractionTest PRIVATE NativeFrameUI::nfui_charts)
+        target_link_libraries(NativeFrameUIChartInteractionTest PRIVATE NativeFrameUI::nfui_charts NativeFrameUI::nfui_charts_aa)
         nfui_apply_compiler_options(NativeFrameUIChartInteractionTest)
         add_test(NAME NativeFrameUIChartInteractionTest COMMAND NativeFrameUIChartInteractionTest)
     endif()

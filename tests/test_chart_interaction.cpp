@@ -1,6 +1,7 @@
 // Pure-logic unit tests for the chart interaction module (no HWND, no message loop).
 #include "test_helpers.hpp"
 
+#include <nfui/ChartGroup.hpp>
 #include <nfui/ChartInteraction.hpp>
 #include <nfui/Charts.hpp>
 
@@ -209,6 +210,161 @@ int main() {
         ok = nfui_test::expect(nfui::has_mode(flags, M::drag_edit), L"has drag_edit") && ok;
         ok = nfui_test::expect(nfui::has_mode(flags, M::zoom), L"has zoom") && ok;
         ok = nfui_test::expect(!nfui::has_mode(flags, M::select), L"no select") && ok;
+    }
+
+    // --- normalize_points (CP40 export-related) ---
+    // Verifies that the public normalize_points helper maps a midpoint
+    // to the centre of the plot rectangle and clamps out-of-range data.
+    {
+        nfui::ChartLayout layout = make_layout(100, 50, 500, 350);  // 400x300
+        nfui::ChartAxisRange ax{0.0, 100.0};
+        nfui::ChartAxisRange ay{0.0, 200.0};
+        std::vector<nfui::ChartPoint> pts{
+            {50.0, 100.0},   // midpoint -> plot centre (300, 200)
+            {-10.0, -20.0},  // clamps below
+            {200.0, 400.0},  // clamps above
+        };
+        auto out = nfui::normalize_points(pts, layout, ax, ay);
+        ok = nfui_test::expect(out.size() == 3, L"normalize_points size") && ok;
+        if (out.size() == 3) {
+            // Midpoint.
+            ok = nfui_test::expect(approx(static_cast<double>(out[0].x), 300.0) &&
+                                   approx(static_cast<double>(out[0].y), 200.0),
+                                   L"normalize midpoint") && ok;
+            // Below clamps to plot's left edge / bottom edge (screen
+            // y is inverted so y.min maps to plot_bounds.bottom).
+            ok = nfui_test::expect(out[1].x == 100 && out[1].y == 350,
+                                   L"normalize below clamps") && ok;
+            // Above clamps to plot's right edge / top edge (y.max maps
+            // to plot_bounds.top).
+            ok = nfui_test::expect(out[2].x == 500 && out[2].y == 50,
+                                   L"normalize above clamps") && ok;
+        }
+    }
+
+    // --- Invisible hit-test ---
+    // When a series has visible=false, hit_test_point must skip it even
+    // when its data points fall inside the tolerance radius. This is the
+    // same predicate that drives the renderer + range-select summary.
+    {
+        nfui::ChartLayout layout = make_layout(0, 0, 100, 100);
+        nfui::ChartAxisRange ax{0.0, 100.0};
+        nfui::ChartAxisRange ay{0.0, 100.0};
+        std::vector<nfui::ChartSeries> series;
+        nfui::ChartSeries s{};
+        s.name = L"only";
+        // Place a single point at (50, 50) -> pixel (50, 50).
+        s.points = {{50.0, 50.0}};
+        s.visible = true;
+        series.push_back(s);
+        // Same point in a hidden series must NOT be hit.
+        nfui::ChartSeries hidden = s;
+        hidden.visible = false;
+        series.push_back(hidden);
+
+        nfui::ChartHitResult hit = nfui::charts_internal::hit_test_point(
+            POINT{50, 50}, series, layout, ax, ay, /*tol=*/10);
+        ok = nfui_test::expect(hit.hit && hit.series_index == 0,
+                               L"hit_test_point picks visible series") && ok;
+    }
+
+    // --- apply_settings clamping + unknown kind_id ---
+    // apply_settings must clamp animation_ms / hit_tolerance_px into the
+    // documented ranges and preserve an unknown kind_id through the
+    // round-trip (the chart internally snaps it to ChartKind::line, but
+    // the raw int stays in settings() so callers can detect the typo).
+    // We construct a ChartView that never opens a HWND; every code path
+    // in apply_settings that touches the window is gated on hwnd()!=null.
+    {
+        nfui::LineChartView view{};
+        nfui::ChartSettings s{};
+        s.animation_ms = 9000u;       // out of range -> 5000
+        s.hit_tolerance_px = 0;       // out of range -> 1
+        s.kind_id = 99;               // unknown; coerced internally to line
+        s.show_legend = false;
+        view.apply_settings(s);
+
+        const nfui::ChartSettings round_trip = view.settings();
+        ok = nfui_test::expect(round_trip.animation_ms == 5000u,
+                               L"animation_ms clamped to 5000") && ok;
+        ok = nfui_test::expect(round_trip.hit_tolerance_px == 1,
+                               L"hit_tolerance_px clamped to 1") && ok;
+        ok = nfui_test::expect(round_trip.kind_id == 99,
+                               L"unknown kind_id preserved through round-trip") && ok;
+        ok = nfui_test::expect(round_trip.show_legend == false,
+                               L"show_legend propagated") && ok;
+
+        // Second clamp pass: hit_tolerance_px = 100 -> 64.
+        nfui::ChartSettings s2{};
+        s2.hit_tolerance_px = 100;
+        view.apply_settings(s2);
+        ok = nfui_test::expect(view.settings().hit_tolerance_px == 64,
+                               L"hit_tolerance_px clamped to 64") && ok;
+    }
+
+    // --- ChartGroup ---
+    // Two HWND-less LineChartViews; enable interaction so the group can
+    // mutate their visible ranges via set_visible_range. The group must
+    // propagate x ranges to every linked chart while leaving y ranges
+    // independent; null/duplicate/second-primary must be rejected.
+    {
+        nfui::LineChartView a{};
+        nfui::LineChartView b{};
+        nfui::ChartInteractionOptions opts{};
+        opts.mode_flags = nfui::ChartInteractionMode::zoom
+                        | nfui::ChartInteractionMode::pan;
+        a.enable_interaction(opts);
+        b.enable_interaction(opts);
+
+        nfui::ChartGroup g{};
+        ok = nfui_test::expect(g.add_chart(nullptr, nfui::ChartGroupRole::primary) == false,
+                               L"null chart rejected") && ok;
+        ok = nfui_test::expect(g.add_chart(&a, nfui::ChartGroupRole::primary),
+                               L"add primary") && ok;
+        ok = nfui_test::expect(g.size() == 1 && g.primary() == &a,
+                               L"primary pointer + size after add") && ok;
+        // Duplicate add rejected.
+        ok = nfui_test::expect(!g.add_chart(&a, nfui::ChartGroupRole::sub),
+                               L"duplicate chart rejected") && ok;
+        // Second primary rejected.
+        ok = nfui_test::expect(!g.add_chart(&b, nfui::ChartGroupRole::primary),
+                               L"second primary rejected") && ok;
+        ok = nfui_test::expect(g.add_chart(&b, nfui::ChartGroupRole::sub),
+                               L"add sub chart") && ok;
+
+        // Push a new x range into the primary; sub must follow, y ranges
+        // stay independent (set_visible_range preserves the chart's
+        // own y when we don't propagate it).
+        g.set_primary_x_axis(nfui::ChartAxisRange{2.0, 8.0});
+        ok = nfui_test::expect(approx(a.visible_x().min, 2.0) &&
+                               approx(a.visible_x().max, 8.0) &&
+                               approx(b.visible_x().min, 2.0) &&
+                               approx(b.visible_x().max, 8.0),
+                               L"linked x propagation") && ok;
+        // Y ranges unchanged from initial interaction-enable defaults.
+        ok = nfui_test::expect(a.visible_y().min == 0.0 && a.visible_y().max == 1.0 &&
+                               b.visible_y().min == 0.0 && b.visible_y().max == 1.0,
+                               L"y ranges stay independent") && ok;
+
+        // Disable linking then change the primary again; sub must NOT
+        // follow. We exercise the public link_x_axis setter.
+        g.link_x_axis(false);
+        ok = nfui_test::expect(!g.x_axis_linked(), L"link_x_axis(false) reported") && ok;
+        g.set_primary_x_axis(nfui::ChartAxisRange{5.0, 6.0});
+        ok = nfui_test::expect(approx(a.visible_x().min, 5.0),
+                               L"primary x updated when unlinked") && ok;
+        ok = nfui_test::expect(approx(b.visible_x().min, 2.0),
+                               L"sub x preserved when unlinked") && ok;
+
+        // remove_chart reduces size() and clears the role on the
+        // remaining chart so primary_ no longer points to the
+        // removed chart.
+        g.remove_chart(&a);
+        ok = nfui_test::expect(g.size() == 1 && g.primary() == &b,
+                               L"primary promotes after remove") && ok;
+        g.remove_chart(&b);
+        ok = nfui_test::expect(g.size() == 0 && g.primary() == nullptr,
+                               L"empty group after remove") && ok;
     }
 
     if (ok) {

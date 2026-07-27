@@ -706,6 +706,20 @@ int wmain() {
             ok = expect(area.hwnd() != nullptr, L"AreaChartView alpha-blend fill paints without crash") && ok;
         }
 
+        // CP40: an uncreated ChartView must reject export_to_png and
+        // export_to_bmp without crashing or writing files. We do not
+        // call create() above — these instances are stack-allocated and
+        // never opened, so hwnd() returns nullptr and both exporters
+        // must short-circuit to false.
+        {
+            using namespace nfui;
+            LineChartView uncreated;
+            const bool png_ok = uncreated.export_to_png(L"C:\\should_not_exist.png");
+            const bool bmp_ok = uncreated.export_to_bmp(L"C:\\should_not_exist.bmp");
+            ok = expect(!png_ok, L"export_to_png on uncreated chart returns false") && ok;
+            ok = expect(!bmp_ok, L"export_to_bmp on uncreated chart returns false") && ok;
+        }
+
         controls_parent.destroy();
         ok = expect(!button.valid() && button.hwnd() == nullptr,
                     L"Button wrapper invalidates HWND after parent destruction") && ok;
