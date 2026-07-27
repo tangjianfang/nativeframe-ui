@@ -646,9 +646,13 @@ public:
         };
         if (!create(params)) return false;
 
+        // Resolve the palette up front so every child binds to the final
+        // value. ChartView::create() resets its internal palette_ pointer
+        // to nullptr, so inject_theme MUST run after create() (and the
+        // same applies to InfoPanel's ThemePalette by-value member).
         apply_theme();
+        create_charts();      // creates primary_chart_ first so apply_theme() can read its theme
         create_kpi_tiles();
-        create_charts();
         create_info_panel();
         ShowWindow(hwnd(), show_cmd);
         UpdateWindow(hwnd());
@@ -722,15 +726,26 @@ private:
 
     static constexpr int kSeriesCheckboxBase = 8000;
 
+    // CP40: the host's chosen theme. Persists across create_main calls and
+    // is the source of truth for apply_theme() — do NOT derive it from
+    // primary_chart_.settings(), which only exists after create_charts().
+    nfui::ChartSettings::ThemeMode theme_mode_{
+        nfui::ChartSettings::ThemeMode::dark};
+
     std::unique_ptr<SettingsDialog> settings_dialog_{};
 
     void apply_theme() noexcept {
-        const nfui::ChartSettings::ThemeMode mode =
-            primary_chart_.settings().theme;
-        palette_ = nfui::theme_palette(
-            mode == nfui::ChartSettings::ThemeMode::dark
-                ? nfui::ThemeMode::dark
-                : nfui::ThemeMode::light);
+        // CP40: read the host's chosen theme from our own member, NOT from
+        // primary_chart_.settings(). apply_theme() runs before the chart
+        // exists on first launch, so reading the chart would always yield
+        // the default ChartSettings{} (theme=light) and the dashboard
+        // would boot into a white surface. The Settings dialog writes
+        // theme_mode_ directly when the user toggles dark/light.
+        const nfui::ThemeMode mode = (theme_mode_ ==
+                                      nfui::ChartSettings::ThemeMode::dark)
+                                      ? nfui::ThemeMode::dark
+                                      : nfui::ThemeMode::light;
+        palette_ = nfui::theme_palette(mode);
     }
 
     [[nodiscard]] ToolbarHit hit_test_toolbar(POINT pt) const noexcept {
@@ -802,6 +817,7 @@ private:
         settings_dialog_ = std::make_unique<SettingsDialog>();
         settings_dialog_->open(hwnd(), primary_chart_.settings(),
             [this](nfui::ChartSettings s) {
+                theme_mode_ = s.theme;
                 primary_chart_.apply_settings(s);
                 comparison_chart_.apply_settings(s);
                 apply_theme();
@@ -880,8 +896,6 @@ private:
     }
 
     void create_charts() {
-        primary_chart_.inject_theme(&palette_, &fonts_);
-
         nfui::WindowCreateParams primary_cp{
             instance_, L"", L"",
             WS_CHILD | WS_VISIBLE | WS_CLIPCHILDREN,
@@ -889,7 +903,21 @@ private:
             hwnd(),
         };
         if (!primary_chart_.create(primary_cp)) return;
+        // CP40: ChartView::create() nulls palette_/fonts_, so inject_theme
+        // must run AFTER create() to take effect. Without this the chart
+        // falls back to settings_.theme, which is light by default and
+        // would render the comparison pane as a white surface.
+        primary_chart_.inject_theme(&palette_, &fonts_);
         primary_chart_.set_kind(nfui::ChartKind::line);
+        // CP40 demo polish: default to dark theme so the dashboard
+        // opens with the originally-curated dark surface. The Settings
+        // dialog toggles between dark/light at runtime.
+        {
+            nfui::ChartSettings init_s = primary_chart_.settings();
+            init_s.theme = nfui::ChartSettings::ThemeMode::dark;
+            init_s.kind_id = 2;  // line
+            primary_chart_.apply_settings(init_s);
+        }
 
         std::vector<nfui::ChartSeries> series;
         auto make_series = [&](std::wstring_view name, int color_idx,
@@ -926,7 +954,6 @@ private:
         // Comparison chart: temperature series on its own y range, no
         // interaction (this keeps it from competing with the primary for
         // input events). The ChartGroup is what wires it to the primary.
-        comparison_chart_.inject_theme(&palette_, &fonts_);
         nfui::WindowCreateParams comparison_cp{
             instance_, L"", L"",
             WS_CHILD | WS_VISIBLE | WS_CLIPCHILDREN,
@@ -934,7 +961,17 @@ private:
             hwnd(),
         };
         if (!comparison_chart_.create(comparison_cp)) return;
+        // Same rule as primary: bind theme AFTER create().
+        comparison_chart_.inject_theme(&palette_, &fonts_);
         comparison_chart_.set_kind(nfui::ChartKind::spline);
+        // Mirror the primary's theme so refresh_fallback_palette() also
+        // caches a dark fallback — if the host later clears palette_ the
+        // comparison chart still paints dark, matching the dashboard.
+        {
+            nfui::ChartSettings cmp_init = comparison_chart_.settings();
+            cmp_init.theme = nfui::ChartSettings::ThemeMode::dark;
+            comparison_chart_.apply_settings(cmp_init);
+        }
         std::vector<nfui::ChartSeries> cmp_series;
         nfui::ChartSeries cmp;
         cmp.name = L"Temperature (zoomed)";

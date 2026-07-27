@@ -46,11 +46,11 @@ void draw_value_axis_ticks_v(HDC hdc,
         const double value = axis_y.min + t * (axis_y.max - axis_y.min);
         const int py = pb.top + static_cast<int>((1.0 - t) * static_cast<double>(plot_h) + 0.5);
         const std::wstring text = format_axis_tick(value, axis_y.label_format);
-        // CP34: span the full y-axis gutter (kAxisGutter=40 in Charts.cpp)
-        // so 3-digit values like "100" fit when right-aligned. The previous
-        // 18-px rect (kAxisLabelGutter + 4) clipped the leading digit and
-        // the rendered label read "00".
-        RECT label{pb.left - 36, py - 8, pb.left - 4, py + 8};
+        // CP40: span the full y-axis gutter (kAxisGutter=40 in Charts.cpp) plus
+        // a small inset so 4-character "{:.1f}" labels like "85.0" right-align
+        // without ellipsizing the trailing zero. 36 px was 1-2 px short at
+        // 11pt Cascadia Code; bumping to 38 px keeps every common label whole.
+        RECT label{pb.left - 40, py - 8, pb.left - 2, py + 8};
         draw_text(hdc, label, text, font, pal.text_secondary,
                   DT_RIGHT | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS | DT_NOPREFIX);
 

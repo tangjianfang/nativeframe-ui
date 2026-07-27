@@ -128,7 +128,19 @@ void ChartView::set_group_observers(
     std::function<void(ChartAxisRange, ChartAxisRange)> on_view,
     std::function<void(std::optional<double>)> on_cursor) noexcept {
     if (!interaction_) {
+        // CP40: ChartGroup can attach to a chart that never had
+        // enable_interaction() called. Materialise InteractionImpl here
+        // and seed the view + home ranges from the chart's own axes so
+        // effective_axis_y() / effective_axis_x() return the configured
+        // values instead of the default (0,1). Without this seed, a
+        // group-attached chart would paint its first frame with all
+        // data clamped to the bottom-left corner.
         interaction_ = std::make_unique<InteractionImpl>();
+        interaction_->view_x = axis_x_;
+        interaction_->view_y = axis_y_;
+        interaction_->home_x = axis_x_;
+        interaction_->home_y = axis_y_;
+        interaction_->view_initialized = true;
     }
     interaction_->group_view_observer = std::move(on_view);
     interaction_->group_cursor_observer = std::move(on_cursor);
