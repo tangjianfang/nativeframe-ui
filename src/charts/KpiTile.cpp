@@ -151,22 +151,25 @@ void KpiTile::on_paint(HDC hdc, const RECT& bounds) noexcept {
     fill_rounded_rect(hdc, card, metrics.corner_radius_card, pal.surface, pal.border);
 
     const int dpi = (hwnd() != nullptr) ? dpi_of(hwnd()) : 96;
-    HFONT label_font = (fonts_ != nullptr) ? fonts_->regular(dpi, font_pt::xs)
+    HFONT label_font = (fonts_ != nullptr) ? fonts_->regular(dpi, font_pt::sm)
                                            : nullptr;
     HFONT value_font = (fonts_ != nullptr) ? fonts_->semibold(dpi, font_pt::lg)
                                            : nullptr;
     HFONT delta_font = (fonts_ != nullptr) ? fonts_->mono(dpi, font_pt::sm)
                                            : nullptr;
 
-    // Label (top of the card, secondary text).
-    RECT label_rc{card.left + 14, card.top + 10,
-                  card.right - 14, card.top + 10 + 18};
+    // Label (top of the card, secondary text). CP40 polish: bumped from
+    // xs to sm so the section title reads as a real header instead of a
+    // caption; a 1-px inset shift keeps the baseline aligned with the
+    // larger value below.
+    RECT label_rc{card.left + 16, card.top + 12,
+                  card.right - 16, card.top + 12 + 18};
     draw_text(hdc, label_rc, label_, label_font, pal.text_secondary,
               DT_LEFT | DT_TOP | DT_SINGLELINE | DT_END_ELLIPSIS | DT_NOPREFIX);
 
     // Value (large, primary text — never a series color).
-    RECT value_rc{card.left + 14, card.top + 32,
-                  card.right - 14, card.top + 32 + 36};
+    RECT value_rc{card.left + 16, card.top + 32,
+                  card.right - 16, card.top + 32 + 36};
     draw_text(hdc, value_rc, value_, value_font, pal.text,
               DT_LEFT | DT_TOP | DT_SINGLELINE | DT_END_ELLIPSIS | DT_NOPREFIX);
 
@@ -176,8 +179,8 @@ void KpiTile::on_paint(HDC hdc, const RECT& bounds) noexcept {
         (delta_percent_ > 0.0) ? pal.success
         : (delta_percent_ < 0.0) ? pal.danger
         : pal.text_secondary;
-    RECT delta_rc{card.left + 14, card.top + 70,
-                  card.right - 14, card.top + 70 + 18};
+    RECT delta_rc{card.left + 16, card.top + 70,
+                  card.right - 16, card.top + 70 + 18};
     draw_text(hdc, delta_rc, delta, delta_font, delta_color,
               DT_LEFT | DT_TOP | DT_SINGLELINE | DT_NOPREFIX);
 }

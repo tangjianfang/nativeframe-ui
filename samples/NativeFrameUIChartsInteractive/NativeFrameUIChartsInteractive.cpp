@@ -1197,7 +1197,18 @@ private:
         const int dpi = (hwnd() != nullptr) ? dpi_of(hwnd()) : 96;
         HFONT title_font = fonts_.mono(dpi, font_pt::md);
 
-        RECT title_text{kOuterPadding, 0, w / 2, kTitleStripHeight};
+        // CP40 polish: a small chart glyph to the left of the title anchors
+        // the brand mark to the sample's subject (charts). Three short
+        // polyline strokes in the series palette read as a miniature
+        // dashboard without taking real estate away from the title text.
+        const int glyph_box = 22;
+        const int glyph_x = kOuterPadding;
+        const int glyph_y = (kTitleStripHeight - glyph_box) / 2;
+        RECT glyph_rc{glyph_x, glyph_y, glyph_x + glyph_box,
+                      glyph_y + glyph_box};
+        draw_chart_glyph(hdc, glyph_rc);
+
+        RECT title_text{glyph_rc.right + 8, 0, w / 2, kTitleStripHeight};
         draw_text(hdc, title_text,
                   L"Interactive Charts \x2014 NativeFrame UI",
                   title_font, palette_.text,
@@ -1218,9 +1229,59 @@ private:
         RECT hint_rc{kOuterPadding, h - kStatusStripHeight,
                      w - kOuterPadding, h};
         draw_text(hdc, hint_rc,
-                  L"Drag to range-select  \x2022  Wheel zoom  \x2022  Space+drag = pan  \x2022  Dbl-click = reset  \x2022  Ctrl+Z/Y = undo/redo  \x2022  Cursor x sync across linked charts",
+                  L"Drag = range-select  \x2022  Wheel = zoom  \x2022  Space+drag = pan  \x2022  Dbl-click = reset  \x2022  Ctrl+Z/Y = undo  \x2022  Cursor syncs across linked charts",
                   hint_font, palette_.text_secondary,
                   DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX | DT_END_ELLIPSIS);
+    }
+
+    void draw_chart_glyph(HDC hdc, const RECT& bounds) noexcept {
+        // CP40 polish: three short polylines inside a 22x22 box — a
+        // miniature "dashboard" so the title strip reads as the app it
+        // represents. The three strokes use the same three palette
+        // accents as the primary chart's series colours; the frame uses
+        // a brighter border token so the glyph stays visible against
+        // both the dark and light chrome.
+        const int box_w = bounds.right - bounds.left;
+        const int box_h = bounds.bottom - bounds.top;
+
+        HBRUSH old_brush = static_cast<HBRUSH>(SelectObject(hdc, GetStockObject(NULL_BRUSH)));
+        HPEN frame_pen = CreatePen(PS_SOLID, 1, palette_.border.rgb);
+        HPEN old_pen = static_cast<HPEN>(SelectObject(hdc, frame_pen));
+        RoundRect(hdc, bounds.left, bounds.top, bounds.right, bounds.bottom, 4, 4);
+        SelectObject(hdc, old_pen);
+        DeleteObject(frame_pen);
+
+        const int inset = 4;
+        const int inset_x = bounds.left + inset;
+        const int inset_y = bounds.top + inset;
+        const int span_w = box_w - 2 * inset;
+        const int span_h = box_h - 2 * inset;
+
+        // Three sample points per series, mapped onto the box. Each
+        // pattern stays in the upper/lower band so the three strokes
+        // don't overlap into noise at this scale.
+        auto draw_series = [&](int series_idx, int dy_a, int dy_b, int dy_c) {
+            const nfui::Color color = nfui::chart_series_color(
+                theme_mode_ == nfui::ChartSettings::ThemeMode::dark
+                    ? nfui::ThemeMode::dark
+                    : nfui::ThemeMode::light,
+                series_idx);
+            HPEN pen = CreatePen(PS_SOLID, 2, color.rgb);
+            HPEN old = static_cast<HPEN>(SelectObject(hdc, pen));
+            POINT pts[3]{
+                {inset_x,                inset_y + dy_a * span_h / 16},
+                {inset_x + span_w / 2,   inset_y + dy_b * span_h / 16},
+                {inset_x + span_w,       inset_y + dy_c * span_h / 16},
+            };
+            Polyline(hdc, pts, 3);
+            SelectObject(hdc, old);
+            DeleteObject(pen);
+        };
+        // Distinct three-pattern set so the glyph reads as a multi-line chart.
+        draw_series(0, 4, 11, 6);   // Temperature (orange)
+        draw_series(1, 9, 4,  10);  // Humidity (green)
+        draw_series(2, 12, 6, 3);   // Light (blue)
+        SelectObject(hdc, old_brush);
     }
 
     void draw_toolbar_buttons(HDC hdc) noexcept {
