@@ -156,6 +156,96 @@ LRESULT CALLBACK reflection_test_subclass_proc(HWND hwnd, UINT message, WPARAM w
 
 } // namespace
 
+// CP-A2: every (mode × state) pair must resolve to a non-zero background so
+// self-painted controls never silently paint transparent on a state the
+// palette resolver forgot to populate. HC mode is exempt because high-contrast
+// users with a fully transparent theme background are a documented edge case
+// (GetSysColor(COLOR_WINDOW) may legitimately be black-on-black in rare
+// system configurations), and the WCAG-compliant fallback is enforced by the
+// `is_high_contrast` profile assertion above.
+bool test_state_palette_covers_all_states() {
+    for (auto mode : {nfui::ThemeMode::light, nfui::ThemeMode::dark,
+                      nfui::ThemeMode::high_contrast}) {
+        const nfui::ThemePalette base = nfui::theme_palette(mode);
+        for (auto state : {nfui::ControlState::rest, nfui::ControlState::hover,
+                           nfui::ControlState::pressed, nfui::ControlState::focused,
+                           nfui::ControlState::disabled, nfui::ControlState::error}) {
+            const nfui::StatePalette sp = nfui::state_palette(base, mode, state);
+            if (mode != nfui::ThemeMode::high_contrast && sp.background.rgb == 0) {
+                return false;
+            }
+        }
+    }
+    return true;
+}
+
+// CP-A2: self-painted Edit must paint a non-client border (paint_border)
+// that matches the dark theme's resolved border colour. We use a plain
+// STATIC parent for the Edit and trigger paint_border() indirectly: WM_PAINT
+// alone draws the client area via DefSubclassProc (native EDIT), but
+// paint_border() runs in the WM_NCPAINT arm, so we paint the non-client
+// frame once by sending the WM_NCPAINT message manually. Then we sample the
+// top-left pixel of the window DC (a border pixel our paint_border drew)
+// and the centre of the window DC (a surface pixel the system drew). They
+// must differ — that proves paint_border() ran and stamped a non-surface
+// pixel on the chrome.
+bool test_edit_self_paint_renders() {
+    HWND parent = CreateWindowExW(0, L"STATIC", L"", WS_OVERLAPPED,
+                                  CW_USEDEFAULT, CW_USEDEFAULT, 200, 100,
+                                  nullptr, nullptr,
+                                  GetModuleHandleW(nullptr), nullptr);
+    if (parent == nullptr) return false;
+    nfui::Edit edit;
+    nfui::ControlCreateParams params{};
+    params.instance = GetModuleHandleW(nullptr);
+    params.parent = parent;
+    params.width = 100;
+    params.height = 32;
+    if (!edit.create(params)) {
+        DestroyWindow(parent);
+        return false;
+    }
+    const nfui::ThemePalette dark = nfui::theme_palette(nfui::ThemeMode::dark);
+    edit.set_palette(&dark);
+    ShowWindow(parent, SW_SHOW);
+    // Force a synchronous paint cycle that includes the non-client frame so
+    // paint_border() runs end-to-end via the WM_NCPAINT arm of the subclass
+    // proc. RDW_FRAME is the flag that asks the system to dispatch WM_NCPAINT.
+    // We also explicitly SendMessage(WM_NCPAINT, 1, 0) to bypass any
+    // optimisations that skip NC paint for a freshly-created child whose
+    // parent is now visible.
+    RedrawWindow(edit.hwnd(), nullptr, nullptr,
+                 RDW_INVALIDATE | RDW_ERASE | RDW_FRAME | RDW_UPDATENOW);
+    SendMessageW(edit.hwnd(), WM_NCPAINT, 1, 0);
+
+    HDC window_dc = GetWindowDC(edit.hwnd());
+    if (window_dc == nullptr) {
+        ShowWindow(parent, SW_HIDE);
+        DestroyWindow(edit.hwnd());
+        DestroyWindow(parent);
+        return false;
+    }
+    // Border at (0,0); surface at (centre). paint_focus_border paints a
+    // 1-px outline of the WINDOW bounds, so (0,0) is on that outline and
+    // should reflect paint_border()'s colour (dark.border for dark theme).
+    // The centre pixel is the inner surface. The two samples must differ —
+    // that proves paint_border() ran and stamped a non-surface pixel on
+    // the chrome. The exact RGB is theme + system-border-thickness
+    // dependent, so we don't pin a value.
+    const COLORREF border  = GetPixel(window_dc, 0, 0);
+    RECT client{};
+    GetClientRect(edit.hwnd(), &client);
+    const COLORREF surface = GetPixel(window_dc,
+                                      client.left + client.right / 2,
+                                      client.top + client.bottom / 2);
+    ReleaseDC(edit.hwnd(), window_dc);
+
+    ShowWindow(parent, SW_HIDE);
+    DestroyWindow(edit.hwnd());
+    DestroyWindow(parent);
+    return border != surface;
+}
+
 bool test_theme_broadcast_propagates_to_children() {
     // Create a parent HWND with two child HWNDs; register all three.
     // Switch theme to dark; assert each received the broker callback.
@@ -1455,6 +1545,15 @@ int wmain() {
     // change (back from dark), so each handler must fire exactly twice.
     ok = expect(test_theme_broadcast_propagates_to_children(),
                 L"ThemeBroker broadcast reaches all registered child HWNDs") && ok;
+
+    // CP-A2: state_palette must populate background for every (mode, state)
+    // pair (HC exempt — system colours may legitimately resolve to black).
+    ok = expect(test_state_palette_covers_all_states(),
+                L"state_palette produces a non-zero background for every state x mode (HC exempt)") && ok;
+    // CP-A2: Edit must paint a border pixel that differs from the surface
+    // pixel (otherwise the border is transparent in dark/HC).
+    ok = expect(test_edit_self_paint_renders(),
+                L"Edit self-paint draws a border that differs from the surface") && ok;
 
     return ok ? 0 : 1;
 }

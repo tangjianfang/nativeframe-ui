@@ -48,6 +48,17 @@ public:
     [[nodiscard]] HWND hwnd() const noexcept;
     [[nodiscard]] bool valid() const noexcept;
 
+    // CP-A2: resolve the control's current visual state. CP-A1 introduced
+    // `ControlState` and `state_palette()`; this getter is the per-control
+    // hook that maps hover / pressed / focus / enabled into one of the six
+    // states every self-painted control (Edit / ComboBox / CheckBox /
+    // RadioButton / and the CP-A3 leaves) consume. `disabled` wins over
+    // every other state — a disabled control cannot be hovered, pressed,
+    // or focused. `pressed` wins over `focused` and `hover` because a
+    // control stays "pressed" until mouse-up even when keyboard focus
+    // shifts in the meantime.
+    [[nodiscard]] ControlState visual_state() const noexcept;
+
     // CP17: honor the system "client-area animation" setting. Returns false
     // when the user has disabled UI animations (Performance / Visual Effects
     // → "Animate controls and elements inside windows"); callers should

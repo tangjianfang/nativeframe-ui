@@ -34,6 +34,20 @@ bool Control::valid() const noexcept {
     return hwnd_.valid();
 }
 
+// CP-A2: state precedence ladder. Disabled > pressed > focused > hover > rest.
+// The base class does not own `error` — that is a per-control concern (e.g. an
+// Edit that fails validation) and is set by the leaf via `visual_state()` in a
+// subclass override or via a separate setter if/when one is added. Today the
+// default implementation never returns `error`; controls that need error chrome
+// paint from their own PaintState path.
+ControlState Control::visual_state() const noexcept {
+    if (!IsWindowEnabled(hwnd())) return ControlState::disabled;
+    if (hover_state_.pressed())    return ControlState::pressed;
+    if (GetFocus() == hwnd())      return ControlState::focused;
+    if (hover_state_.hover())      return ControlState::hover;
+    return ControlState::rest;
+}
+
 bool Control::create_native(std::wstring_view class_name, const ControlCreateParams& params, DWORD extra_style) noexcept {
     if (params.instance == nullptr || params.parent == nullptr || class_name.empty()) {
         return false;

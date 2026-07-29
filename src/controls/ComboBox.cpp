@@ -2,6 +2,7 @@
 
 #include <nfui/Dpi.hpp>
 #include <nfui/Paint.hpp>
+#include <nfui/Theme.hpp>
 #include <nfui/VectorIcon.hpp>
 
 #include <algorithm>
@@ -25,6 +26,9 @@ bool ComboBox::create(const ControlCreateParams& params) noexcept {
                        CBS_DROPDOWNLIST | CBS_OWNERDRAWFIXED | CBS_HASSTRINGS | WS_VSCROLL)) {
         return false;
     }
+    // CP-A2: disable comctl32's visual theme so the native combobox does not
+    // double-paint its dark/HC chrome over our state_palette() chrome.
+    theme_disable_window_theme(hwnd());
     const int row_height = font_pixel_height(font_pt::ui, dpi_of(hwnd())) + 8;
     SendMessageW(hwnd(), CB_SETITEMHEIGHT, 0, row_height);
     if (SetWindowSubclass(hwnd(), &ComboBox::visual_subclass_proc,
@@ -83,26 +87,28 @@ void ComboBox::draw_item(DRAWITEMSTRUCT* draw_info) noexcept {
               DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS);
 }
 
+// CP-A2: chrome paint reads `visual_state()` so the border, button fill, and
+// chevron tint all flow from one StatePalette per state. The popup items
+// (draw_item) still paint from the raw palette because ODS_SELECTED has its
+// own dedicated selection colour that lives outside the StatePalette scheme.
 void ComboBox::paint_chrome() noexcept {
     if (!valid()) {
         return;
     }
 
-    const ThemePalette& p = effective_palette(palette());
-    const bool enabled = IsWindowEnabled(hwnd()) != FALSE;
-    const bool focused = GetFocus() == hwnd();
+    const ThemePalette& base = effective_palette(palette());
+    const ControlState state = visual_state();
+    const StatePalette sp = state_palette(base, ThemeMode::light, state);
+    const bool focused = (state == ControlState::focused);
     const bool dropped = SendMessageW(hwnd(), CB_GETDROPPEDSTATE, 0, 0) != FALSE;
-    const Color border = !enabled
-        ? alpha_blend(p.border, p.background, 0.55f)
-        : (focused ? p.accent : p.border);
-    const int border_width = (enabled && focused) ? 2 : 1;
+    const int border_width = focused ? 2 : 1;
 
     HDC window_dc = GetWindowDC(hwnd());
     if (window_dc != nullptr) {
         RECT bounds{};
         GetWindowRect(hwnd(), &bounds);
         OffsetRect(&bounds, -bounds.left, -bounds.top);
-        paint_focus_border(window_dc, bounds, border, border_width);
+        paint_focus_border(window_dc, bounds, sp.border, border_width);
         ReleaseDC(hwnd(), window_dc);
     }
 
@@ -116,9 +122,10 @@ void ComboBox::paint_chrome() noexcept {
         RECT client{};
         GetClientRect(hwnd(), &client);
         IntersectRect(&button, &button, &client);
-        const Color button_fill = !enabled
-            ? alpha_blend(p.surface, p.background, 0.55f)
-            : (dropped ? p.surface_hover : p.surface);
+        // Pressed (dropped open) state tints the button face toward accent.
+        // Otherwise the chrome fills with the resolved state palette
+        // background, which already accounts for hover.
+        const Color button_fill = dropped ? sp.accent : sp.background;
         fill_rect(dc, button, button_fill);
 
         const int center_x = (button.left + button.right) / 2;
@@ -135,8 +142,7 @@ void ComboBox::paint_chrome() noexcept {
             center_x - cell / 2 + cell,
             center_y - cell / 2 + cell,
         };
-        const Color arrow_color = enabled ? p.text_secondary :
-            alpha_blend(p.text_secondary, p.background, 0.55f);
+        const Color arrow_color = sp.foreground;
         draw_vector_icon(dc, IconKind::chevron_down, glyph, arrow_color, 1);
     }
     ReleaseDC(hwnd(), dc);

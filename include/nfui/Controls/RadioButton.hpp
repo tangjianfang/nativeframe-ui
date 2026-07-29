@@ -10,6 +10,8 @@
 
 namespace nfui {
 
+// CP-A2: self-painted radio button. Mirrors CheckBox's owner-draw + manual
+// state pattern, but the inner glyph is a filled ellipse rather than a check.
 class RadioButton : public Control {
 public:
     [[nodiscard]] bool create(const ControlCreateParams& params) noexcept;
