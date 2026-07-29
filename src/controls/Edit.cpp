@@ -156,10 +156,11 @@ LRESULT CALLBACK Edit::visual_subclass_proc(HWND hwnd,
         return reinterpret_cast<LRESULT>(GetStockObject(DC_BRUSH));
     }
     case WM_PAINT: {
-        // CP-A2: paint the placeholder BEFORE forwarding to DefSubclassProc
+        // CP-A2: paint the placeholder AFTER forwarding to DefSubclassProc
         // so native text rendering composites over our placeholder (rare;
-        // placeholder only shows when the field is empty). The native path
-        // also handles caret + selection — we never replace it.
+        // placeholder only shows when the field is empty — paint_placeholder
+        // early-returns otherwise). The native path handles caret + selection;
+        // we never replace it.
         LRESULT result = DefSubclassProc(hwnd, message, wparam, lparam);
         HDC dc = GetDC(hwnd);
         if (dc != nullptr) {
