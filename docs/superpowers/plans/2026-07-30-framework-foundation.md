@@ -241,7 +241,7 @@ StatePalette state_palette(const ThemePalette& base,
         out.border = base.danger;
         out.accent = base.danger;
         break;
-    case ControlState::default:
+    case ControlState::rest:
         break;
     }
     return out;
@@ -533,7 +533,7 @@ ControlState Control::visual_state() const noexcept {
     if (hover_state_.pressed())    return ControlState::pressed;
     if (GetFocus() == hwnd())      return ControlState::focused;
     if (hover_state_.hovered())    return ControlState::hover;
-    return ControlState::default;
+    return ControlState::rest;
 }
 ```
 
@@ -625,7 +625,7 @@ bool test_state_palette_covers_all_states() {
     nfui::ThemePalette p = nfui::theme_palette(nfui::ThemeMode::light);
     for (auto mode : {nfui::ThemeMode::light, nfui::ThemeMode::dark,
                       nfui::ThemeMode::high_contrast}) {
-        for (auto state : {nfui::ControlState::default, nfui::ControlState::hover,
+        for (auto state : {nfui::ControlState::rest, nfui::ControlState::hover,
                            nfui::ControlState::pressed, nfui::ControlState::focused,
                            nfui::ControlState::disabled, nfui::ControlState::error}) {
             auto sp = nfui::state_palette(p, mode, state);
