@@ -1,5 +1,4 @@
 #include <nfui/Controls/Slider.hpp>
-#include <nfui/Controls/Detail/effective_palette.hpp>
 #include <nfui/Dpi.hpp>
 #include <nfui/Paint.hpp>
 #include <nfui/Theme.hpp>
