@@ -1,4 +1,5 @@
 #include <nfui/Controls/Slider.hpp>
+#include <nfui/Controls/Detail/effective_palette.hpp>
 #include <nfui/Dpi.hpp>
 #include <nfui/Paint.hpp>
 #include <nfui/Theme.hpp>
@@ -9,15 +10,6 @@
 namespace nfui {
 
 namespace {
-
-// CP25: resolve the effective palette. Mirrors ProgressBar's
-// `effective_palette` helper so the chrome subclass proc — which is a
-// free function and cannot reach the protected palette() accessor — can
-// be passed the resolved palette by value.
-const ThemePalette& effective_palette(const ThemePalette* injected) noexcept {
-    static const ThemePalette fallback = theme_palette(ThemeMode::light);
-    return injected ? *injected : fallback;
-}
 
 // CP25: project a slider position to a thumb centre pixel along the rail
 // axis. Uses TBM_GETRANGE / TBM_GETPOS so callers do not need to track the

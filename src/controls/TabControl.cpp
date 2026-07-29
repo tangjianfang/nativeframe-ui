@@ -1,4 +1,5 @@
 #include <nfui/Controls/TabControl.hpp>
+#include <nfui/Controls/Detail/effective_palette.hpp>
 #include <nfui/Dpi.hpp>
 #include <nfui/Paint.hpp>
 #include <nfui/Theme.hpp>
@@ -17,11 +18,6 @@ constexpr UINT ocm_base = WM_USER + 0x1c00;
 // the chain before applying its fallback, the chrome proc receives the reflected
 // notify regardless of install order.
 constexpr UINT_PTR tab_chrome_subclass_id = 0xC042u;
-
-const ThemePalette& effective_palette(const ThemePalette* injected) noexcept {
-    static const ThemePalette fallback = theme_palette(ThemeMode::light);
-    return injected ? *injected : fallback;
-}
 
 // CP-A3: resolve per-state tab fills via the palette. Active tab gets the
 // surface (cards stand out against the strip), hot gets surface_hover,
@@ -117,7 +113,7 @@ bool TabControl::set_padding(int cx, int cy) noexcept {
 
 void TabControl::paint_tab(const DRAWITEMSTRUCT* di) noexcept {
     if (di == nullptr || di->hDC == nullptr) return;
-    const ThemePalette& p = effective_palette(palette());
+    const ThemePalette& p = detail::effective_palette(palette());
     const bool selected = (di->itemState & ODS_SELECTED) != 0;
     const bool hot = (di->itemState & ODS_HOTLIGHT) != 0;
     const bool focused = (di->itemState & ODS_FOCUS) != 0;
@@ -220,7 +216,7 @@ LRESULT CALLBACK TabControl::visual_subclass_proc(HWND hwnd, UINT message,
         // chrome; the individual tabs are then overdrawn by WM_DRAWITEM.
         HDC dc = reinterpret_cast<HDC>(wparam);
         if (dc != nullptr) {
-            const ThemePalette& p = effective_palette(tc->palette());
+            const ThemePalette& p = detail::effective_palette(tc->palette());
             RECT rc{};
             GetClientRect(hwnd, &rc);
             fill_rect(dc, rc, p.surface);

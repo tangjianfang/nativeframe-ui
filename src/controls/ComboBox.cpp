@@ -1,5 +1,6 @@
 #include <nfui/Controls/ComboBox.hpp>
 
+#include <nfui/Controls/Detail/effective_palette.hpp>
 #include <nfui/Dpi.hpp>
 #include <nfui/Paint.hpp>
 #include <nfui/Theme.hpp>
@@ -11,11 +12,6 @@ namespace nfui {
 namespace {
 
 constexpr UINT ocm_base = WM_USER + 0x1c00;
-
-const ThemePalette& effective_palette(const ThemePalette* injected) noexcept {
-    static const ThemePalette fallback = theme_palette(ThemeMode::light);
-    return injected ? *injected : fallback;
-}
 
 } // namespace
 
@@ -54,7 +50,7 @@ void ComboBox::draw_item(DRAWITEMSTRUCT* draw_info) noexcept {
         return;
     }
 
-    const ThemePalette& p = effective_palette(palette());
+    const ThemePalette& p = detail::effective_palette(palette());
     const bool disabled = (draw_info->itemState & ODS_DISABLED) != 0;
     const bool selection_field = (draw_info->itemState & ODS_COMBOBOXEDIT) != 0;
     const bool selected = !selection_field && (draw_info->itemState & ODS_SELECTED) != 0;
@@ -96,9 +92,9 @@ void ComboBox::paint_chrome() noexcept {
         return;
     }
 
-    const ThemePalette& base = effective_palette(palette());
+    const ThemePalette& base = detail::effective_palette(palette());
     const ControlState state = visual_state();
-    const StatePalette sp = state_palette(base, ThemeMode::light, state);
+    const StatePalette sp = state_palette(base, state);
     const bool focused = (state == ControlState::focused);
     const bool dropped = SendMessageW(hwnd(), CB_GETDROPPEDSTATE, 0, 0) != FALSE;
     const int border_width = focused ? 2 : 1;

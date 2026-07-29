@@ -170,7 +170,7 @@ bool test_state_palette_covers_all_states() {
         for (auto state : {nfui::ControlState::rest, nfui::ControlState::hover,
                            nfui::ControlState::pressed, nfui::ControlState::focused,
                            nfui::ControlState::disabled, nfui::ControlState::error}) {
-            const nfui::StatePalette sp = nfui::state_palette(base, mode, state);
+            const nfui::StatePalette sp = nfui::state_palette(base, state);
             if (mode != nfui::ThemeMode::high_contrast && sp.background.rgb == 0) {
                 return false;
             }

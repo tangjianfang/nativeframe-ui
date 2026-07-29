@@ -91,9 +91,12 @@ struct StatePalette {
 // CP-A1: resolve a StatePalette from a base ThemePalette for the requested
 // state. HC mode defers background/foreground/border to GetSysColor so
 // high-contrast users see the OS-correct WCAG colours regardless of any
-// theme the application has injected. UI thread (no exceptions).
+// theme the application has injected. The HC branch is selected by inspecting
+// the palette itself (via `is_high_contrast(base)`) rather than a separate
+// mode argument — this keeps the signature compact and prevents call sites
+// from having to thread a mode value that the resolver ignores in non-HC
+// cases. UI thread (no exceptions).
 [[nodiscard]] StatePalette state_palette(const ThemePalette& base,
-                                         ThemeMode mode,
                                          ControlState state) noexcept;
 
 [[nodiscard]] ThemeTokens  theme_tokens(ThemeMode mode) noexcept;   // back-compat

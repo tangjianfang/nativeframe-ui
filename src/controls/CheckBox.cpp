@@ -112,7 +112,7 @@ void CheckBox::on_paint(HDC dc, const PaintState& state) noexcept {
     // enabled) but state_palette() guarantees the chrome matches Edit and
     // ComboBox exactly across all six states.
     const ControlState cs = visual_state();
-    const StatePalette sp = state_palette(p, ThemeMode::light, cs);
+    const StatePalette sp = state_palette(p, cs);
     const DpiScale scale(dpi_of(w));
 
     // Box metrics: 16 logical px square, 8 logical px gap to the label,

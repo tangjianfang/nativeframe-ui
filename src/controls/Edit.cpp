@@ -1,5 +1,6 @@
 #include <nfui/Controls/Edit.hpp>
 
+#include <nfui/Controls/Detail/effective_palette.hpp>
 #include <nfui/Dpi.hpp>
 #include <nfui/Font.hpp>
 #include <nfui/Paint.hpp>
@@ -12,16 +13,6 @@ namespace {
 
 constexpr UINT ocm_base = WM_USER + 0x1c00;
 
-// Resolve the effective palette. Control::palette() returns the caller's
-// injected palette pointer (may be null for an unstyled control). We keep the
-// caller-provided pointer when set, falling back to the light palette only so
-// paint always has a colour to fill — the WCAG concern is the modes that
-// actually get displayed, not this fallback path.
-const ThemePalette& effective_palette(const ThemePalette* injected) noexcept {
-    static const ThemePalette fallback = theme_palette(ThemeMode::light);
-    return injected ? *injected : fallback;
-}
-
 // CP-A2: native Edit paints its background via WM_CTLCOLOREDIT reflection.
 // `background` is the literal cell background the text renderer composites
 // over (matches `state_palette().background`); `foreground` swaps to
@@ -30,7 +21,7 @@ struct EditColorPair { Color background; Color foreground; };
 
 EditColorPair edit_colors_for_state(const ThemePalette& base,
                                      ControlState state) noexcept {
-    const StatePalette sp = state_palette(base, ThemeMode::light, state);
+    const StatePalette sp = state_palette(base, state);
     return { sp.background, sp.foreground };
 }
 
@@ -87,9 +78,9 @@ void Edit::paint_border() noexcept {
     RECT bounds{};
     GetWindowRect(hwnd(), &bounds);
     OffsetRect(&bounds, -bounds.left, -bounds.top);
-    const ThemePalette& base = effective_palette(palette());
+    const ThemePalette& base = detail::effective_palette(palette());
     const ControlState state = visual_state();
-    const StatePalette sp = state_palette(base, ThemeMode::light, state);
+    const StatePalette sp = state_palette(base, state);
     const bool focused = (state == ControlState::focused);
     const int width = focused ? 2 : 1;
     paint_focus_border(dc, bounds, sp.border, width);
@@ -106,9 +97,9 @@ void Edit::paint_placeholder(HDC dc) noexcept {
     if (placeholder_.empty()) return;
     if (GetWindowTextLengthW(hwnd()) > 0) return;
 
-    const ThemePalette& base = effective_palette(palette());
+    const ThemePalette& base = detail::effective_palette(palette());
     const ControlState state = visual_state();
-    const StatePalette sp = state_palette(base, ThemeMode::light, state);
+    const StatePalette sp = state_palette(base, state);
 
     RECT client{};
     GetClientRect(hwnd(), &client);
@@ -146,7 +137,7 @@ LRESULT CALLBACK Edit::visual_subclass_proc(HWND hwnd,
         // focused/hover/disabled bits flip on every focus/mouse event and we
         // want each new WM_CTLCOLOREDIT to reflect the current state.
         HDC dc = reinterpret_cast<HDC>(wparam);
-        const ThemePalette& base = effective_palette(edit->palette());
+        const ThemePalette& base = detail::effective_palette(edit->palette());
         const ControlState state = edit->visual_state();
         const EditColorPair pair = edit_colors_for_state(base, state);
         SetTextColor(dc, pair.foreground.rgb);

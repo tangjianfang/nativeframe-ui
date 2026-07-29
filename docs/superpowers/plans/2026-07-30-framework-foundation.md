@@ -175,33 +175,31 @@ struct StatePalette {
 
 // Resolve a state palette from a base ThemePalette. HC mode uses system
 // GetSysColor for background/foreground so high-contrast users see the
-// OS-correct WCAG colors regardless of injected theme.
+// OS-correct WCAG colors regardless of injected theme. The HC branch is
+// gated off `is_high_contrast(base)` rather than a separate `mode` arg —
+// the resolver inspects the palette itself.
 [[nodiscard]] StatePalette state_palette(const ThemePalette& base,
-                                         ThemeMode mode,
                                          ControlState state) noexcept;
 ```
 
 Add `src/theme/Theme.cpp` implementation:
 
 ```cpp
-namespace {
-
-[[nodiscard]] Color high_contrast_bg(ThemeMode mode) noexcept {
-    if (mode != ThemeMode::high_contrast) return {};
-    return Color{ GetSysColor(COLOR_WINDOW) };
-}
-
-[[nodiscard]] Color high_contrast_fg(ThemeMode mode) noexcept {
-    if (mode != ThemeMode::high_contrast) return {};
-    return Color{ GetSysColor(COLOR_WINDOWTEXT) };
-}
-
-} // namespace
-
 StatePalette state_palette(const ThemePalette& base,
-                           ThemeMode mode,
                            ControlState state) noexcept {
     StatePalette out{};
+
+    if (is_high_contrast(base)) {
+        // HC: defer to system colours.
+        out.background = Color{ GetSysColor(COLOR_WINDOW) };
+        out.foreground = Color{ GetSysColor(COLOR_WINDOWTEXT) };
+        out.border     = Color{ GetSysColor(COLOR_WINDOWFRAME) };
+        out.accent     = Color{ GetSysColor(COLOR_HIGHLIGHT) };
+        if (state == ControlState::disabled) {
+            out.foreground = Color{ GetSysColor(COLOR_GRAYTEXT) };
+        }
+        return out;
+    }
 
     if (mode == ThemeMode::high_contrast) {
         // HC: defer to system colors so users get WCAG-compliant contrast.
@@ -628,7 +626,7 @@ bool test_state_palette_covers_all_states() {
         for (auto state : {nfui::ControlState::rest, nfui::ControlState::hover,
                            nfui::ControlState::pressed, nfui::ControlState::focused,
                            nfui::ControlState::disabled, nfui::ControlState::error}) {
-            auto sp = nfui::state_palette(p, mode, state);
+            auto sp = nfui::state_palette(p, state);
             // All four colors must be non-zero RGB in light/dark; HC may use
             // system colors so we accept any non-zero background.
             if (sp.background.rgb == 0 && mode != nfui::ThemeMode::high_contrast) {
@@ -735,7 +733,7 @@ Gallery (input rows), ThemeDemo (input rows). Verified by audit PNG."
 In `src/controls/ListView.cpp`:
 
 - keep existing `LVS_OWNERDRAWFIXED` flow (verify it is set in `create()`); replace the row paint to:
-  - resolve `state_palette(palette, mode, hovered ? hover : default)`
+  - resolve `state_palette(palette, hovered ? hover : rest)`
   - fill row rect with `palette.background`
   - on selection: fill row rect with `palette.selection`, draw text in `palette.selection_text`
   - on focus-within-selection: add 2px focus ring around selected row via `paint_focus_border`
@@ -751,7 +749,7 @@ In `src/controls/ListView.cpp`:
 In `src/controls/TreeView.cpp`:
 
 - extend the existing `NM_CUSTOMDRAW` handler (per cp42 — confirms forward) to:
-  - on `CDDS_ITEM` (item stage), pick `state_palette(palette, mode, state)` and fill row
+  - on `CDDS_ITEM` (item stage), pick `state_palette(palette, state)` and fill row
   - indent guides: draw 1px dotted line at indent × 16px steps using `palette.divider`
   - expand/collapse chevron: paint 8×8 self-drawn `>` glyph when collapsed, `v` when expanded, using `palette.text_secondary`
   - selected state: full-row pill background `palette.selection` + text `palette.selection_text`

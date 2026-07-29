@@ -1,4 +1,5 @@
 #include <nfui/Controls/TreeView.hpp>
+#include <nfui/Controls/Detail/effective_palette.hpp>
 #include <nfui/Dpi.hpp>
 #include <nfui/Paint.hpp>
 #include <nfui/ThemeBroker.hpp>
@@ -10,11 +11,6 @@ namespace {
 
 constexpr UINT ocm_base = WM_USER + 0x1c00;
 
-const ThemePalette& effective_palette(const ThemePalette* injected) noexcept {
-    static const ThemePalette fallback = theme_palette(ThemeMode::light);
-    return injected ? *injected : fallback;
-}
-
 // CP-A3: TreeView rows resolve their fill from the per-state palette so
 // every state (rest/hover/pressed/focused/disabled/error) is driven from
 // one helper. Selection overrides fill + text via the selected_* style
@@ -22,13 +18,13 @@ const ThemePalette& effective_palette(const ThemePalette* injected) noexcept {
 // row (the CP20 approach).
 Color row_background_for(const ThemePalette& base, ControlState state,
                          const TreeViewStyle& style) noexcept {
-    const StatePalette sp = state_palette(base, ThemeMode::light, state);
+    const StatePalette sp = state_palette(base, state);
     return style.row_background.value_or(sp.background);
 }
 
 Color row_foreground_for(const ThemePalette& base, ControlState state,
                          const TreeViewStyle& style) noexcept {
-    const StatePalette sp = state_palette(base, ThemeMode::light, state);
+    const StatePalette sp = state_palette(base, state);
     return style.row_foreground.value_or(sp.foreground);
 }
 
@@ -80,7 +76,7 @@ void TreeView::on_palette_changed() noexcept {
     if (hwnd() == nullptr) {
         return;
     }
-    const ThemePalette& p = effective_palette(palette());
+    const ThemePalette& p = detail::effective_palette(palette());
     // TVM_SET*COLOR sets persist across palette swaps until explicitly changed.
     // Re-applying on every swap keeps the empty-area background, base text
     // colour, and indent-guide lines in sync with the palette. Custom-draw
@@ -105,7 +101,7 @@ LRESULT TreeView::handle_custom_draw(NMTVCUSTOMDRAW* cd) noexcept {
         // (Button / Showcase / etc.) so the visual contract is uniform.
         return CDRF_NOTIFYITEMDRAW | CDRF_NOTIFYPOSTPAINT;
     case CDDS_ITEMPREPAINT: {
-        const ThemePalette& p = effective_palette(palette());
+        const ThemePalette& p = detail::effective_palette(palette());
         const bool selected = (cd->nmcd.uItemState & CDIS_SELECTED) != 0;
         const bool hot = (cd->nmcd.uItemState & CDIS_HOT) != 0;
         // CP-A3: row chrome is fully driven by clrText / clrTextBk at
@@ -137,7 +133,7 @@ LRESULT TreeView::handle_custom_draw(NMTVCUSTOMDRAW* cd) noexcept {
         // activate even when the TreeView itself is not the foreground
         // window. Stroke-only via paint_focus_border means the selection
         // fill + text stay visible underneath.
-        const ThemePalette& p = effective_palette(palette());
+        const ThemePalette& p = detail::effective_palette(palette());
         const bool focused = (cd->nmcd.uItemState & CDIS_FOCUS) != 0;
         if (focused) {
             paint_focus_border(cd->nmcd.hdc, cd->nmcd.rc, p.accent, 1);

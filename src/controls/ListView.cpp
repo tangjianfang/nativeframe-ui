@@ -1,4 +1,5 @@
 #include <nfui/Controls/ListView.hpp>
+#include <nfui/Controls/Detail/effective_palette.hpp>
 #include <nfui/Dpi.hpp>
 #include <nfui/Paint.hpp>
 #include <nfui/ThemeBroker.hpp>
@@ -10,24 +11,19 @@ namespace {
 
 constexpr UINT ocm_base = WM_USER + 0x1c00;
 
-const ThemePalette& effective_palette(const ThemePalette* injected) noexcept {
-    static const ThemePalette fallback = theme_palette(ThemeMode::light);
-    return injected ? *injected : fallback;
-}
-
 // CP-A3: ListView rows resolve their fill from the per-state palette so
 // every state (rest/hover/pressed/focused/disabled/error) is driven from
 // one helper instead of six hand-rolled paths in the custom-draw handler.
 // Selection overrides fill + text via the explicit selected_* style slots.
 Color row_background_for(const ThemePalette& base, ControlState state,
                          const ListViewStyle& style) noexcept {
-    const StatePalette sp = state_palette(base, ThemeMode::light, state);
+    const StatePalette sp = state_palette(base, state);
     return style.row_background.value_or(sp.background);
 }
 
 Color row_foreground_for(const ThemePalette& base, ControlState state,
                          const ListViewStyle& style) noexcept {
-    const StatePalette sp = state_palette(base, ThemeMode::light, state);
+    const StatePalette sp = state_palette(base, state);
     return style.row_foreground.value_or(sp.foreground);
 }
 
@@ -339,7 +335,7 @@ LRESULT ListView::handle_custom_draw(NMLVCUSTOMDRAW* cd) noexcept {
         // even when the ListView itself is not the foreground window.
         const ThemePalette* pal = palette();
         const ThemePalette& p = pal ? *pal : theme_palette(ThemeMode::light);
-        const StatePalette sp = state_palette(p, ThemeMode::light, ControlState::focused);
+        const StatePalette sp = state_palette(p, ControlState::focused);
         paint_focus_border(cd->nmcd.hdc, cd->nmcd.rc, sp.accent, 2);
         return CDRF_DODEFAULT;
     }

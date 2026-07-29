@@ -62,7 +62,7 @@ void RadioButton::on_paint(HDC dc, const PaintState& state) noexcept {
     // Resolve the canonical ControlState and use state_palette() for every
     // colour so the chrome matches Edit / ComboBox / CheckBox exactly.
     const ControlState cs = visual_state();
-    const StatePalette sp = state_palette(p, ThemeMode::light, cs);
+    const StatePalette sp = state_palette(p, cs);
     const DpiScale scale(dpi_of(w));
 
     constexpr int kCircleLogical = 16;

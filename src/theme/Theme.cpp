@@ -264,11 +264,14 @@ void theme_disable_window_theme(HWND hwnd) noexcept {
 // colour. `pressed` uses lerp_channel(a=accent, b=surface, t=0.15f) so the
 // result reads as a tinted surface, not a solid accent fill.
 StatePalette state_palette(const ThemePalette& base,
-                           ThemeMode mode,
                            ControlState state) noexcept {
     StatePalette out{};
 
-    if (mode == ThemeMode::high_contrast) {
+    // CP-A1 final: gate the HC branch off the palette itself rather than a
+    // caller-supplied mode. Callers cannot mis-pass a ThemeMode value the
+    // resolver would silently ignore, and the mode argument has been
+    // removed from the public signature.
+    if (is_high_contrast(base)) {
         // HC: defer to system colours so users get WCAG-compliant contrast.
         out.background = Color{ GetSysColor(COLOR_WINDOW) };
         out.foreground = Color{ GetSysColor(COLOR_WINDOWTEXT) };

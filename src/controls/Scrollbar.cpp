@@ -1,4 +1,5 @@
 #include <nfui/Controls/Scrollbar.hpp>
+#include <nfui/Controls/Detail/effective_palette.hpp>
 #include <nfui/Dpi.hpp>
 #include <nfui/Paint.hpp>
 #include <nfui/Theme.hpp>
@@ -23,14 +24,6 @@ constexpr int thumb_width_hover = 8;
 // track is transparent so a strongly opaque thumb reads as a band
 // rather than a discrete elevator.
 constexpr unsigned char thumb_alpha = 0x99;  // 0x99 = 153 ≈ 60%
-
-// CP-A4: resolve the effective palette. The chrome subclass proc is a
-// free function and cannot reach the protected `palette()` accessor, so
-// callers pass the resolved palette by value.
-const ThemePalette& effective_palette(const ThemePalette* injected) noexcept {
-    static const ThemePalette fallback = theme_palette(ThemeMode::light);
-    return injected ? *injected : fallback;
-}
 
 RECT track_rect_for(HWND bar_hwnd, bool vertical) noexcept {
     RECT client{};
@@ -161,7 +154,7 @@ void Scrollbar::paint_chrome(HDC dc) noexcept {
     HWND bar_hwnd = hwnd();
     if (bar_hwnd == nullptr) return;
 
-    const ThemePalette& p = effective_palette(palette());
+    const ThemePalette& p = detail::effective_palette(palette());
     RECT client{};
     GetClientRect(bar_hwnd, &client);
     if (client.right <= client.left || client.bottom <= client.top) return;

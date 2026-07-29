@@ -1,4 +1,5 @@
 #include <nfui/Controls/ListBox.hpp>
+#include <nfui/Controls/Detail/effective_palette.hpp>
 #include <nfui/Dpi.hpp>
 #include <nfui/Paint.hpp>
 #include <windowsx.h>
@@ -6,11 +7,6 @@
 namespace nfui {
 
 namespace {
-
-const ThemePalette& effective_palette(const ThemePalette* injected) noexcept {
-    static const ThemePalette fallback = theme_palette(ThemeMode::light);
-    return injected ? *injected : fallback;
-}
 
 } // namespace
 
@@ -41,7 +37,7 @@ void ListBox::paint_border() noexcept {
     RECT bounds{};
     GetWindowRect(hwnd(), &bounds);
     OffsetRect(&bounds, -bounds.left, -bounds.top);
-    const ThemePalette& p = effective_palette(palette());
+    const ThemePalette& p = detail::effective_palette(palette());
     const bool enabled = IsWindowEnabled(hwnd()) != FALSE;
     const bool focused = GetFocus() == hwnd();
     const Color border = !enabled
@@ -79,7 +75,7 @@ LRESULT CALLBACK ListBox::visual_subclass_proc(HWND hwnd,
         // sidebar / panel host instead of leaving a white rectangle.
         HDC dc = reinterpret_cast<HDC>(wparam);
         if (dc != nullptr) {
-            const ThemePalette& p = effective_palette(box->palette());
+            const ThemePalette& p = detail::effective_palette(box->palette());
             RECT rc{};
             GetClientRect(hwnd, &rc);
             fill_rect(dc, rc, p.surface);
