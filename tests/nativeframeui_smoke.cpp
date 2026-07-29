@@ -246,6 +246,203 @@ bool test_edit_self_paint_renders() {
     return border != surface;
 }
 
+// CP-A3: self-painted ListView's custom-draw handler resolves row + header
+// backgrounds from the palette, so the header band and the row strip must
+// paint with two distinct fills in dark mode. We use the brief's exact
+// pattern: insert one column + one item, force a sync paint cycle, sample
+// a header pixel (top) and a row pixel (below the header), assert they
+// differ. The ListView is created inside a STATIC parent so its custom-
+// draw path fires (LVS_REPORT + LVS_EX_FULLROWSELECT + LVS_EX_TRACKSELECT).
+bool test_listview_self_paint_renders() {
+    HWND parent = CreateWindowExW(0, L"STATIC", L"", WS_OVERLAPPED,
+                                  CW_USEDEFAULT, CW_USEDEFAULT, 320, 220,
+                                  nullptr, nullptr,
+                                  GetModuleHandleW(nullptr), nullptr);
+    if (parent == nullptr) return false;
+    nfui::ListView lv;
+    nfui::ControlCreateParams params{};
+    params.instance = GetModuleHandleW(nullptr);
+    params.parent = parent;
+    params.width = 260;
+    params.height = 180;
+    if (!lv.create(params)) {
+        DestroyWindow(parent);
+        return false;
+    }
+    const nfui::ThemePalette dark = nfui::theme_palette(nfui::ThemeMode::dark);
+    lv.set_palette(&dark);
+    LVCOLUMNW col{};
+    col.mask = LVCF_TEXT | LVCF_WIDTH;
+    col.cx = 200;
+    col.pszText = const_cast<LPWSTR>(L"Name");
+    if (ListView_InsertColumn(lv.hwnd(), 0, &col) == -1) {
+        DestroyWindow(lv.hwnd());
+        DestroyWindow(parent);
+        return false;
+    }
+    LVITEMW it{};
+    it.mask = LVIF_TEXT;
+    it.iItem = 0;
+    it.pszText = const_cast<LPWSTR>(L"row1");
+    if (ListView_InsertItem(lv.hwnd(), &it) == -1) {
+        DestroyWindow(lv.hwnd());
+        DestroyWindow(parent);
+        return false;
+    }
+    ShowWindow(parent, SW_SHOW);
+    RedrawWindow(lv.hwnd(), nullptr, nullptr,
+                 RDW_INVALIDATE | RDW_ERASE | RDW_UPDATENOW);
+    UpdateWindow(lv.hwnd());
+
+    HDC dc = GetDC(lv.hwnd());
+    if (dc == nullptr) {
+        ShowWindow(parent, SW_HIDE);
+        DestroyWindow(lv.hwnd());
+        DestroyWindow(parent);
+        return false;
+    }
+    // Header band sits at the top of the ListView's client rect; rows
+    // start a few pixels below. Sample two pixel rows: header (5,5) and
+    // row (5, 40). If both fall in the row strip they could be the same
+    // colour, so the row sample is offset far enough below the header to
+    // guarantee it lands on a row.
+    const COLORREF header_pixel = GetPixel(dc, 5, 5);
+    const COLORREF row_pixel    = GetPixel(dc, 5, 60);
+    ReleaseDC(lv.hwnd(), dc);
+
+    ShowWindow(parent, SW_HIDE);
+    DestroyWindow(lv.hwnd());
+    DestroyWindow(parent);
+    // header and row must differ — the palette drives both fills so a
+    // regression that paints the strip the same as the body would fail.
+    return header_pixel != row_pixel;
+}
+
+// CP-A3: self-painted TreeView's custom-draw handler paints row chrome via
+// state_palette(), so the empty area below the last node must match the
+// palette.surface / row_background (no white island). We create a TreeView
+// with one parent item, force a paint, and assert the bottom-row pixel
+// matches the palette row background (rather than CLR_DEFAULT or white).
+bool test_treeview_self_paint_renders() {
+    HWND parent = CreateWindowExW(0, L"STATIC", L"", WS_OVERLAPPED,
+                                  CW_USEDEFAULT, CW_USEDEFAULT, 320, 220,
+                                  nullptr, nullptr,
+                                  GetModuleHandleW(nullptr), nullptr);
+    if (parent == nullptr) return false;
+    nfui::TreeView tv;
+    nfui::ControlCreateParams params{};
+    params.instance = GetModuleHandleW(nullptr);
+    params.parent = parent;
+    params.width = 260;
+    params.height = 180;
+    if (!tv.create(params)) {
+        DestroyWindow(parent);
+        return false;
+    }
+    const nfui::ThemePalette dark = nfui::theme_palette(nfui::ThemeMode::dark);
+    tv.set_palette(&dark);
+    TVINSERTSTRUCTW ins{};
+    ins.hParent = TVI_ROOT;
+    ins.item.mask = TVIF_TEXT;
+    ins.item.pszText = const_cast<LPWSTR>(L"root");
+    HTREEITEM root = TreeView_InsertItem(tv.hwnd(), &ins);
+    if (root == nullptr) {
+        DestroyWindow(tv.hwnd());
+        DestroyWindow(parent);
+        return false;
+    }
+    ShowWindow(parent, SW_SHOW);
+    RedrawWindow(tv.hwnd(), nullptr, nullptr,
+                 RDW_INVALIDATE | RDW_ERASE | RDW_UPDATENOW);
+    UpdateWindow(tv.hwnd());
+
+    HDC dc = GetDC(tv.hwnd());
+    if (dc == nullptr) {
+        ShowWindow(parent, SW_HIDE);
+        DestroyWindow(tv.hwnd());
+        DestroyWindow(parent);
+        return false;
+    }
+    // Sample an empty-area pixel well below the row (the row is at the top,
+    // height ~22 px). A native theme override would render white or
+    // CLR_DEFAULT; the CP-A3 palette drives row_background to dark.surface
+    // so the sampled pixel must be the palette surface colour (or at least
+    // not a default-theme white island).
+    RECT client{};
+    GetClientRect(tv.hwnd(), &client);
+    const int sample_x = client.right / 2;
+    const int sample_y = client.bottom - 8;
+    const COLORREF empty_pixel = GetPixel(dc, sample_x, sample_y);
+    const COLORREF expected    = dark.surface.rgb;
+    ReleaseDC(tv.hwnd(), dc);
+
+    ShowWindow(parent, SW_HIDE);
+    DestroyWindow(tv.hwnd());
+    DestroyWindow(parent);
+    // Empty area must match palette.surface (the documented dark.surface is
+    // RGB(46,46,48) for the CP32 palette). A white island would fail this.
+    return empty_pixel == expected;
+}
+
+// CP-A3: self-painted TabControl paints tab chrome via state_palette(), so
+// the tab strip background must match palette.surface (no white island in
+// dark mode). We create a tab control with one tab, force a paint, and
+// assert a body pixel below the tab strip matches the palette surface.
+bool test_tabcontrol_self_paint_renders() {
+    HWND parent = CreateWindowExW(0, L"STATIC", L"", WS_OVERLAPPED,
+                                  CW_USEDEFAULT, CW_USEDEFAULT, 320, 220,
+                                  nullptr, nullptr,
+                                  GetModuleHandleW(nullptr), nullptr);
+    if (parent == nullptr) return false;
+    nfui::TabControl tc;
+    nfui::ControlCreateParams params{};
+    params.instance = GetModuleHandleW(nullptr);
+    params.parent = parent;
+    params.width = 260;
+    params.height = 180;
+    if (!tc.create(params)) {
+        DestroyWindow(parent);
+        return false;
+    }
+    const nfui::ThemePalette dark = nfui::theme_palette(nfui::ThemeMode::dark);
+    tc.set_palette(&dark);
+    TCITEMW tci{};
+    tci.mask = TCIF_TEXT;
+    tci.pszText = const_cast<LPWSTR>(L"Tab 1");
+    if (TabCtrl_InsertItem(tc.hwnd(), 0, &tci) == -1) {
+        DestroyWindow(tc.hwnd());
+        DestroyWindow(parent);
+        return false;
+    }
+    ShowWindow(parent, SW_SHOW);
+    RedrawWindow(tc.hwnd(), nullptr, nullptr,
+                 RDW_INVALIDATE | RDW_ERASE | RDW_UPDATENOW);
+    UpdateWindow(tc.hwnd());
+
+    HDC dc = GetDC(tc.hwnd());
+    if (dc == nullptr) {
+        ShowWindow(parent, SW_HIDE);
+        DestroyWindow(tc.hwnd());
+        DestroyWindow(parent);
+        return false;
+    }
+    // Sample the body region — well below the tab strip (which is ~24 px).
+    // The CP-A3 WM_ERASEBKGND fills the whole client with palette.surface,
+    // so the body pixel must match dark.surface exactly.
+    RECT client{};
+    GetClientRect(tc.hwnd(), &client);
+    const int sample_x = client.right / 2;
+    const int sample_y = client.bottom - 8;
+    const COLORREF body_pixel = GetPixel(dc, sample_x, sample_y);
+    const COLORREF expected   = dark.surface.rgb;
+    ReleaseDC(tc.hwnd(), dc);
+
+    ShowWindow(parent, SW_HIDE);
+    DestroyWindow(tc.hwnd());
+    DestroyWindow(parent);
+    return body_pixel == expected;
+}
+
 bool test_theme_broadcast_propagates_to_children() {
     // Create a parent HWND with two child HWNDs; register all three.
     // Switch theme to dark; assert each received the broker callback.
@@ -1554,6 +1751,19 @@ int wmain() {
     // pixel (otherwise the border is transparent in dark/HC).
     ok = expect(test_edit_self_paint_renders(),
                 L"Edit self-paint draws a border that differs from the surface") && ok;
+    // CP-A3: ListView custom-draw paints header + row strips with two
+    // distinct palette fills; a regression that paints them identically
+    // (e.g. by passing through CLR_NONE or a transparent background) fails.
+    ok = expect(test_listview_self_paint_renders(),
+                L"ListView self-paint paints header and row with distinct palette fills") && ok;
+    // CP-A3: TreeView custom-draw paints the empty area with palette.surface
+    // so dark mode shows no white island.
+    ok = expect(test_treeview_self_paint_renders(),
+                L"TreeView self-paint paints empty area with palette surface (no white island)") && ok;
+    // CP-A3: TabControl WM_DRAWITEM paints the body region with palette
+    // surface; a regression that leaves the body native-themed fails.
+    ok = expect(test_tabcontrol_self_paint_renders(),
+                L"TabControl self-paint paints body region with palette surface (no white island)") && ok;
 
     return ok ? 0 : 1;
 }

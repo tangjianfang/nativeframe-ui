@@ -1,6 +1,7 @@
 #include <nfui/Controls/TreeView.hpp>
 #include <nfui/Dpi.hpp>
 #include <nfui/Paint.hpp>
+#include <nfui/ThemeBroker.hpp>
 #include <commctrl.h>
 
 namespace nfui {
@@ -14,6 +15,23 @@ const ThemePalette& effective_palette(const ThemePalette* injected) noexcept {
     return injected ? *injected : fallback;
 }
 
+// CP-A3: TreeView rows resolve their fill from the per-state palette so
+// every state (rest/hover/pressed/focused/disabled/error) is driven from
+// one helper. Selection overrides fill + text via the selected_* style
+// slots so the selected pill reads as a single solid block, not a tinted
+// row (the CP20 approach).
+Color row_background_for(const ThemePalette& base, ControlState state,
+                         const TreeViewStyle& style) noexcept {
+    const StatePalette sp = state_palette(base, ThemeMode::light, state);
+    return style.row_background.value_or(sp.background);
+}
+
+Color row_foreground_for(const ThemePalette& base, ControlState state,
+                         const TreeViewStyle& style) noexcept {
+    const StatePalette sp = state_palette(base, ThemeMode::light, state);
+    return style.row_foreground.value_or(sp.foreground);
+}
+
 } // namespace
 
 bool TreeView::create(const ControlCreateParams& params) noexcept {
@@ -21,10 +39,13 @@ bool TreeView::create(const ControlCreateParams& params) noexcept {
     // can paint a hover background on the row under the cursor. WS_BORDER is
     // kept (consistent with ListView's borderless choice) so the focus ring
     // reads against the parent surface instead of a system border frame.
+    // CP42: disable system theming so the palette-driven background colours
+    // are not overwritten by the native comctl32 theme (dark/HC white islands).
     const DWORD extra = WS_BORDER | TVS_HASLINES | TVS_LINESATROOT | TVS_HASBUTTONS | TVS_TRACKSELECT;
     if (!create_native(WC_TREEVIEWW, params, extra)) {
         return false;
     }
+    theme_disable_window_theme(hwnd());
     if (fonts() != nullptr) {
         if (HFONT f = fonts()->regular(dpi_of(hwnd()), font_pt::ui)) {
             SendMessageW(hwnd(), WM_SETFONT, reinterpret_cast<WPARAM>(f), FALSE);
@@ -39,6 +60,18 @@ bool TreeView::create(const ControlCreateParams& params) noexcept {
         DestroyWindow(hwnd());
         return false;
     }
+    // CP-A3: register with the ThemeBroker so a cross-window theme switch
+    // invalidates the chrome on the same message-loop turn. Unregistered in
+    // the WM_NCDESTROY arm of the subclass proc below. Capture the HWND
+    // by value so the lambda is self-contained and does not need member
+    // access during broadcast.
+    const HWND self_hwnd = hwnd();
+    ThemeBroker::instance().register_hwnd(self_hwnd,
+        [self_hwnd](ThemeMode) {
+            if (IsWindow(self_hwnd) != FALSE) {
+                InvalidateRect(self_hwnd, nullptr, TRUE);
+            }
+        });
     on_palette_changed();
     return true;
 }
@@ -75,42 +108,35 @@ LRESULT TreeView::handle_custom_draw(NMTVCUSTOMDRAW* cd) noexcept {
         const ThemePalette& p = effective_palette(palette());
         const bool selected = (cd->nmcd.uItemState & CDIS_SELECTED) != 0;
         const bool hot = (cd->nmcd.uItemState & CDIS_HOT) != 0;
-        // CP20: row chrome is fully driven by clrText / clrTextBk at PREPAINT.
-        // We do NOT fill_rect at ITEMPOSTPAINT — that would erase the indent
-        // guides, +/- glyph, and item text the system just rendered. The
-        // CP24-C focus ring is stroke-only via paint_focus_border, so it
-        // draws on top of the system-rendered chrome without overwriting
-        // it. (Found and fixed by the CP20 adversarial review — see
-        // docs/KNOWLEDGE/polish/2026-07-23-cp20-listview-treeview-tab-chrome.md.)
+        // CP-A3: row chrome is fully driven by clrText / clrTextBk at
+        // PREPAINT. We do NOT fill_rect at ITEMPOSTPAINT — that would erase
+        // the indent guides, chevron, and item text the system just
+        // rendered. The CP24-C focus ring is stroke-only via
+        // paint_focus_border, so it draws on top of the system-rendered
+        // chrome without overwriting it.
         //
-        // P0-1 (CP25 user bug report): do NOT use CLR_NONE for the idle state.
-        // CLR_NONE is unreliable on Win10/11 modern-themed TreeView — the
-        // V6 common-controls double-buffered custom-draw path resolves
-        // CLR_NONE against the live TreeView_SetBkColor (which we set to
-        // palette.surface, looking fine), but the hover transition path
-        // resolves CLR_NONE as "transparent" and lets the unmodified
-        // background leak through. Under modern themes that background is
-        // black, so the row under the cursor appears with a solid black
-        // rect — exactly the bug the user reported. The ListView sibling
-        // (which never uses CLR_NONE — see src/controls/ListView.cpp:219)
-        // renders correctly; mirror its strategy here: always supply a
-        // concrete palette colour.
-        cd->clrText = selected
-            ? style_.selected_foreground.value_or(p.selection_text).rgb
-            : style_.row_foreground.value_or(p.text).rgb;
-        cd->clrTextBk = selected
-            ? style_.selected_background.value_or(p.selection).rgb
-            : (hot ? p.surface_hover
-                   : style_.row_background.value_or(p.surface)).rgb;
+        // CP-A3: selection wins over every other state — a selected row's
+        // text and background always come from selection_text / selection
+        // (or the matching style overrides). The non-selected idle row
+        // resolves fill via state_palette() so the hover state is
+        // expressed through the StatePalette rather than a hand-rolled
+        // `hot ? surface_hover : surface` branch.
+        if (selected) {
+            cd->clrText   = style_.selected_foreground.value_or(p.selection_text).rgb;
+            cd->clrTextBk = style_.selected_background.value_or(p.selection).rgb;
+        } else {
+            const ControlState state = hot ? ControlState::hover : ControlState::rest;
+            cd->clrText   = row_foreground_for(p, state, style_).rgb;
+            cd->clrTextBk = row_background_for(p, state, style_).rgb;
+        }
         return CDRF_DODEFAULT;
     }
     case CDDS_ITEMPOSTPAINT: {
-        // CP24-C: draw a stroke-only focus ring around the focused row. We
-        // honour CDIS_FOCUS (the TreeView's "focused item" state, distinct
-        // from CDIS_SELECTED) so a keyboard user can see which row arrow-
-        // keys will activate, even when the control itself is not the
-        // foreground window. Stroke-only via paint_focus_border means the
-        // selection fill + text stay visible underneath.
+        // CP-A3: stroke-only focus ring around a focused row (regardless of
+        // selection) so a keyboard user can see which row arrow-keys will
+        // activate even when the TreeView itself is not the foreground
+        // window. Stroke-only via paint_focus_border means the selection
+        // fill + text stay visible underneath.
         const ThemePalette& p = effective_palette(palette());
         const bool focused = (cd->nmcd.uItemState & CDIS_FOCUS) != 0;
         if (focused) {
@@ -139,6 +165,7 @@ LRESULT CALLBACK TreeView::visual_subclass_proc(HWND hwnd, UINT message,
     }
     switch (message) {
     case WM_NCDESTROY:
+        ThemeBroker::instance().unregister_hwnd(hwnd);
         RemoveWindowSubclass(hwnd, &TreeView::visual_subclass_proc, subclass_id);
         break;
     default:

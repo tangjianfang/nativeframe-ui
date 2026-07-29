@@ -1,6 +1,7 @@
 #include <nfui/Controls/ListView.hpp>
 #include <nfui/Dpi.hpp>
 #include <nfui/Paint.hpp>
+#include <nfui/ThemeBroker.hpp>
 #include <commctrl.h>
 
 namespace nfui {
@@ -12,6 +13,22 @@ constexpr UINT ocm_base = WM_USER + 0x1c00;
 const ThemePalette& effective_palette(const ThemePalette* injected) noexcept {
     static const ThemePalette fallback = theme_palette(ThemeMode::light);
     return injected ? *injected : fallback;
+}
+
+// CP-A3: ListView rows resolve their fill from the per-state palette so
+// every state (rest/hover/pressed/focused/disabled/error) is driven from
+// one helper instead of six hand-rolled paths in the custom-draw handler.
+// Selection overrides fill + text via the explicit selected_* style slots.
+Color row_background_for(const ThemePalette& base, ControlState state,
+                         const ListViewStyle& style) noexcept {
+    const StatePalette sp = state_palette(base, ThemeMode::light, state);
+    return style.row_background.value_or(sp.background);
+}
+
+Color row_foreground_for(const ThemePalette& base, ControlState state,
+                         const ListViewStyle& style) noexcept {
+    const StatePalette sp = state_palette(base, ThemeMode::light, state);
+    return style.row_foreground.value_or(sp.foreground);
 }
 
 } // namespace
@@ -49,6 +66,20 @@ bool ListView::create(const ControlCreateParams& params) noexcept {
         theme_disable_window_theme(header);
         theme_header(header);
     }
+    // CP-A3: register this HWND + the header with the ThemeBroker so a
+    // cross-window theme switch invalidates the chrome on the same
+    // message-loop turn. Unregistered in the WM_NCDESTROY arm of the
+    // subclass proc below. Capture the HWND by value so the lambda is
+    // self-contained and does not need member access during broadcast.
+    const HWND self_hwnd = hwnd();
+    ThemeBroker::instance().register_hwnd(self_hwnd,
+        [self_hwnd](ThemeMode) {
+            if (IsWindow(self_hwnd) == FALSE) return;
+            InvalidateRect(self_hwnd, nullptr, TRUE);
+            if (HWND hdr = ListView_GetHeader(self_hwnd)) {
+                InvalidateRect(hdr, nullptr, TRUE);
+            }
+        });
     on_palette_changed();
     return true;
 }
@@ -100,18 +131,19 @@ void ListView::paint_header_item(HWND header, NMCUSTOMDRAW* cd) noexcept {
     const ThemePalette& p = pal ? *pal : theme_palette(ThemeMode::light);
     const bool hot = (cd->uItemState & CDIS_HOT) != 0;
     const bool disabled = (cd->uItemState & CDIS_DISABLED) != 0;
+    const bool selected = (cd->uItemState & CDIS_SELECTED) != 0;
 
-    // CP21: fill the column rect (CDRF_SKIPDEFAULT suppressed native paint),
-    // draw a 1px right-edge divider, then the caption. Background uses the
-    // palette surface so dark mode is readable; hot items use surface_hover.
-    // CP26: header_background style override takes precedence over surface
-    // so consumers can lift the header band (e.g. a one-stop-lighter shade
-    // for visual hierarchy) without redefining the whole palette.
-    const Color fill = hot
-        ? p.surface_hover
-        : style_.header_background.value_or(
-            style_.row_background.value_or(p.surface));
-    fill_rect(cd->hdc, cd->rc, fill);
+    // CP-A3: header band background lifts halfway between palette.surface and
+    // palette.background so it reads as a distinct structural layer against
+    // the row strip below. The brief specifies `alpha_blend(surface,
+    // background, 0.5)` — paint::alpha_blend() composites src over dst, so
+    // `alpha_blend(surface, background, 0.5)` resolves to a 50/50 mix of
+    // surface and background. header_background style override wins when a
+    // consumer has explicitly tinted the band.
+    const Color default_header = alpha_blend(p.surface, p.background, 0.5f);
+    const Color base_bg = style_.header_background.value_or(default_header);
+    const Color tint = hot ? p.surface_hover : base_bg;
+    fill_rect(cd->hdc, cd->rc, tint);
     RECT divider = cd->rc;
     divider.left = divider.right - 1;
     fill_rect(cd->hdc, divider, p.border);
@@ -137,7 +169,7 @@ void ListView::paint_header_item(HWND header, NMCUSTOMDRAW* cd) noexcept {
     const bool sort_down = (item.fmt & HDF_SORTDOWN) != 0;
 
     RECT text_rc = cd->rc;
-    const int pad = dpi.logical_to_pixels(6);
+    const int pad = dpi.logical_to_pixels(8);
     text_rc.left += pad;
     text_rc.right -= pad;
     if (has_sort) {
@@ -171,27 +203,23 @@ void ListView::paint_header_item(HWND header, NMCUSTOMDRAW* cd) noexcept {
     if (font == nullptr) {
         font = reinterpret_cast<HFONT>(SendMessageW(header, WM_GETFONT, 0, 0));
     }
-    // Caption colour: header_caption override > palette.text. Default to
-    // palette.text (rather than row_foreground, which is the body-row colour
-    // and would make the header indistinguishable from rows). In dark mode
-    // p.text is RGB(237,237,235) on RGB(42,41,39) surface ≈ 12:1 contrast;
-    // in HC it is white-on-dark-grey ≈ 14:1 — both clear WCAG AAA. Sort
-    // glyph inherits the same colour.
+    // CP-A3: caption colour is text_secondary by default (per the brief) so
+    // the header reads as a quieter layer than the body rows (which use
+    // text). header_caption style override wins when a consumer wants the
+    // caption emphasised. Sort glyph inherits the same colour.
     const Color fg = disabled
         ? p.text_secondary
-        : style_.header_caption.value_or(p.text);
+        : style_.header_caption.value_or(p.text_secondary);
     draw_text(cd->hdc, text_rc, text, font, fg, dt);
 
-    // Sort triangle on the trailing edge — replaces the native HDF_SORT* glyph
-    // that CDRF_SKIPDEFAULT suppresses. Triangle points down for SORTDOWN and
-    // up for SORTUP, filled with the same colour as the caption.
+    // CP-A3: sort triangle on the trailing edge — replaces the native
+    // HDF_SORT* glyph that CDRF_SKIPDEFAULT suppresses. Triangle points down
+    // for SORTDOWN and up for SORTUP, filled with the same colour as the
+    // caption. When the column is the "selected" sort column (passed via
+    // CDIS_SELECTED on the header item), the glyph inherits accent for
+    // emphasis.
     if (has_sort) {
         POINT tri[3]{};
-        // CP21: anchor the sort glyph inside the trailing box
-        // [rc.right - sort_gap - sort_size, rc.right - sort_gap]. The previous
-        // version placed cx at rc.right - sort_gap + sort_size/2, which pushed
-        // the triangle's right vertex past the column's right edge (and onto
-        // the divider / next column) — found by the CP21 adversarial review.
         const int right = cd->rc.right - sort_gap;
         const int cx = right - sort_size / 2;
         const int cy = cd->rc.top + (cd->rc.bottom - cd->rc.top) / 2;
@@ -204,7 +232,8 @@ void ListView::paint_header_item(HWND header, NMCUSTOMDRAW* cd) noexcept {
             tri[1] = {cx + sort_size / 2, cy + sort_size / 4};
             tri[2] = {cx,                  cy - sort_size / 4};
         }
-        fill_polygon(cd->hdc, tri, 3, fg, fg);
+        const Color sort_color = selected ? p.accent : fg;
+        fill_polygon(cd->hdc, tri, 3, sort_color, sort_color);
     }
 }
 
@@ -248,7 +277,8 @@ LRESULT ListView::on_custom_draw_item(NMLVCUSTOMDRAW* cd) noexcept {
     const ThemePalette& p = pal ? *pal : theme_palette(ThemeMode::light);
     const bool selected = (cd->nmcd.uItemState & CDIS_SELECTED) != 0;
     const bool hot = (cd->nmcd.uItemState & CDIS_HOT) != 0;
-    // CP20: row chrome is fully driven by clrText / clrTextBk at PREPAINT —
+    const bool focused = (cd->nmcd.uItemState & CDIS_FOCUS) != 0;
+    // CP-A3: row chrome is fully driven by clrText / clrTextBk at PREPAINT —
     // the system honours them in normal LVS_REPORT + LVS_EX_FULLROWSELECT
     // usage. We deliberately do NOT add CDRF_NOTIFYPOSTPAINT here: a
     // post-paint fill_rect over the row rectangle would erase the icons and
@@ -256,13 +286,25 @@ LRESULT ListView::on_custom_draw_item(NMLVCUSTOMDRAW* cd) noexcept {
     // divergence between the two computations (alpha blends, hover ramps)
     // leaves visible bands. (Found and fixed by the CP20 adversarial
     // review — see docs/KNOWLEDGE/polish/2026-07-23-cp20-listview-treeview-tab-chrome.md.)
-    cd->clrText = selected
-        ? style_.selected_foreground.value_or(p.selection_text).rgb
-        : style_.row_foreground.value_or(p.text).rgb;
-    cd->clrTextBk = selected
-        ? style_.selected_background.value_or(p.selection).rgb
-        : (hot ? p.surface_hover : style_.row_background.value_or(p.surface)).rgb;
-    return CDRF_DODEFAULT;
+    //
+    // CP-A3: selection wins over every other state — a selected row's text
+    // and background always come from selection_text / selection (or the
+    // matching style overrides). When the control is also focused, the
+    // CDIS_FOCUS bit lets us paint a 2px focus ring around the row via
+    // paint_focus_border at ITEMPOSTPAINT (see handle_custom_draw).
+    if (selected) {
+        cd->clrText     = style_.selected_foreground.value_or(p.selection_text).rgb;
+        cd->clrTextBk   = style_.selected_background.value_or(p.selection).rgb;
+    } else {
+        const ControlState state = hot ? ControlState::hover : ControlState::rest;
+        cd->clrText   = row_foreground_for(p, state, style_).rgb;
+        cd->clrTextBk = row_background_for(p, state, style_).rgb;
+    }
+    // CP-A3: ask for ITEMPOSTPAINT only when a focus ring is actually
+    // needed (selected + focused). Other items return CDRF_DODEFAULT so
+    // the system does not deliver a useless post-paint cycle.
+    return (selected && focused) ? (CDRF_DODEFAULT | CDRF_NOTIFYPOSTPAINT)
+                                 : CDRF_DODEFAULT;
 }
 
 LRESULT ListView::handle_custom_draw(NMLVCUSTOMDRAW* cd) noexcept {
@@ -288,6 +330,17 @@ LRESULT ListView::handle_custom_draw(NMLVCUSTOMDRAW* cd) noexcept {
         if (custom != CDRF_DODEFAULT) {
             return custom;
         }
+        return CDRF_DODEFAULT;
+    }
+    case CDDS_ITEMPOSTPAINT: {
+        // CP-A3: stroke-only focus ring around a focused + selected row.
+        // Mirrors the TreeView pattern (see TreeView::handle_custom_draw)
+        // so a keyboard user can see which row arrow-keys will activate
+        // even when the ListView itself is not the foreground window.
+        const ThemePalette* pal = palette();
+        const ThemePalette& p = pal ? *pal : theme_palette(ThemeMode::light);
+        const StatePalette sp = state_palette(p, ThemeMode::light, ControlState::focused);
+        paint_focus_border(cd->nmcd.hdc, cd->nmcd.rc, sp.accent, 2);
         return CDRF_DODEFAULT;
     }
     default:
@@ -328,6 +381,7 @@ LRESULT CALLBACK ListView::visual_subclass_proc(HWND hwnd, UINT message,
     }
     switch (message) {
     case WM_NCDESTROY:
+        ThemeBroker::instance().unregister_hwnd(hwnd);
         RemoveWindowSubclass(hwnd, &ListView::visual_subclass_proc, subclass_id);
         break;
     default:
