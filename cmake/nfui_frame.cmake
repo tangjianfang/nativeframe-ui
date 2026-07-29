@@ -5,6 +5,7 @@ add_library(nfui_frame STATIC
     src/controls/ProgressBar.cpp
     src/controls/Panel.cpp
     src/controls/Splitter.cpp
+    src/controls/Scrollbar.cpp
 )
 add_library(NativeFrameUI::nfui_frame ALIAS nfui_frame)
 target_include_directories(nfui_frame

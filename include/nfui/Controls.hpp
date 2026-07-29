@@ -24,3 +24,4 @@
 #include <nfui/Controls/Panel.hpp>
 #include <nfui/Controls/Slider.hpp>
 #include <nfui/Controls/Splitter.hpp>
+#include <nfui/Controls/Scrollbar.hpp>

@@ -25,6 +25,12 @@ protected:
     // chrome on top of the themed background. on_paint is the fallback path:
     // any caller that dispatches paint directly (rare) routes to
     // paint_chrome so the visual contract holds.
+    // CP-A4: paint_chrome also stamps a 1px divider above the size-grip
+    // reservation and recolours the grip dots to palette.text_secondary so
+    // the grip reads as a distinct chrome element rather than free-floating
+    // dots. The uxtheme-themed background is suppressed at create() via
+    // theme_disable_window_theme() so the chrome subclass is the only
+    // source of pixels on the bar.
     //
     // CP23 scope: paint_chrome paints part 0 only. Multi-part status bars
     // set up via SB_SETPARTS + SB_SETTEXTW(part, ...) will only show the

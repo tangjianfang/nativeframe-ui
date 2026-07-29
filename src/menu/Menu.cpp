@@ -2,6 +2,7 @@
 #include <nfui/Theme.hpp>
 
 #include <algorithm>
+#include <utility>
 
 namespace nfui {
 
@@ -80,12 +81,22 @@ void Menu::apply_palette(OwnedMenu& menu) noexcept {
 
 void Menu::apply_to_bar(HWND host) noexcept {
     apply_palette(bar_);
-    // CP28-B: nudge the bar to repaint with the new MENUINFO brush. On
-    // Win10/11 the menu bar chrome is themed and the background brush is
-    // only honored for popup submenus, so DrawMenuBar is a best-effort
-    // hint rather than a guarantee — but it prevents the stale theme
-    // paint that would otherwise stick until the next WM_NCACTIVATE.
+    // CP-A4: suppress the uxtheme-themed menu-bar background on the host
+    // so the MENUINFO brush we just installed is the only background source
+    // for popups. Without this, on hosts that use the system's themed
+    // menu chrome (visible in Workbench / DarkStudio dark captures as a
+    // pale ribbon along the top of the menu bar), the uxtheme background
+    // draws underneath the palette brush and bleeds through the gap
+    // between menu items. The popup itself (`#32768`) is owned by the
+    // system and is not reachable here — the host call is the only
+    // surface theme_disable_window_theme can reach.
     if (host != nullptr && IsWindow(host) != FALSE) {
+        theme_disable_window_theme(host);
+        // CP28-B: nudge the bar to repaint with the new MENUINFO brush. On
+        // Win10/11 the menu bar chrome is themed and the background brush is
+        // only honored for popup submenus, so DrawMenuBar is a best-effort
+        // hint rather than a guarantee — but it prevents the stale theme
+        // paint that would otherwise stick until the next WM_NCACTIVATE.
         DrawMenuBar(host);
     }
 }

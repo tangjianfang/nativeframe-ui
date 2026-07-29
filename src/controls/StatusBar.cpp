@@ -14,6 +14,13 @@ bool StatusBar::create(const ControlCreateParams& params) noexcept {
     if (!create_native(STATUSCLASSNAMEW, status_params, SBARS_SIZEGRIP)) {
         return false;
     }
+    // CP-A4: disable comctl32's themed background on the status bar so the
+    // chrome subclass's WM_PAINT paint_chrome is the only source of pixels
+    // on the bar. Without this, the uxtheme background brush (light grey
+    // in dark mode, visible as a pale stripe down the right-hand edge in
+    // Workbench + DarkStudio dark captures) draws underneath our themed
+    // fill and shows through the gap between the size grip and the gutter.
+    theme_disable_window_theme(hwnd());
     // CP23: install the chrome subclass AFTER create_native. SetWindowSubclass
     // chains onto whatever is already installed and dispatches in REVERSE
     // install order — the LAST installed subclass runs FIRST. So our chrome
@@ -132,9 +139,23 @@ void StatusBar::paint_chrome(HDC dc) noexcept {
                   DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS | DT_NOPREFIX);
     }
 
-    // Size grip — three diagonal rows of dots in palette.border. Replaces
-    // the native SBARS_SIZEGRIP chevrons (which paint in COLOR_BTNTEXT and
-    // read as a pale patch in dark mode).
+    // CP-A4: 1px divider line above the size-grip reservation so the grip
+    // reads as a distinct chrome element rather than a free-floating patch.
+    // `border` is the closest palette token available — there is no separate
+    // `divider` field. The line spans the grip column only (not the full
+    // bar width) so it does not duplicate the top hairline.
+    RECT grip_divider = paint_bounds;
+    grip_divider.left = paint_bounds.right - grip;
+    grip_divider.bottom = paint_bounds.bottom - grip;
+    grip_divider.top = std::max(static_cast<int>(grip_divider.bottom - hairline_h), 0);
+    fill_rect(target, grip_divider, p.border);
+
+    // Size grip — three diagonal rows of dots in palette.text_secondary.
+    // text_secondary is tuned to remain perceptible against the bar surface
+    // without dominating the chrome (vs palette.border which is the same
+    // colour used for the top hairline and would visually merge with the
+    // new divider above). Replaces the native SBARS_SIZEGRIP chevrons
+    // (which paint in COLOR_BTNTEXT and read as a pale patch in dark mode).
     const int base_x = paint_bounds.right - grip + gap;
     const int base_y = paint_bounds.bottom - grip + gap;
     for (int row = 0; row < 3; ++row) {
@@ -142,7 +163,7 @@ void StatusBar::paint_chrome(HDC dc) noexcept {
         for (int col = 0; col <= row; ++col) {
             const int x = base_x + col * (cell + gap);
             RECT dot{ x, y, x + cell, y + cell };
-            fill_rect(target, dot, p.border);
+            fill_rect(target, dot, p.text_secondary);
         }
     }
 }

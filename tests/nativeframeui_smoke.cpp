@@ -443,6 +443,64 @@ bool test_tabcontrol_self_paint_renders() {
     return body_pixel == expected;
 }
 
+// CP-A4: self-painted StatusBar chrome. The chrome subclass +
+// theme_disable_window_theme() pair must keep the dark surface away from
+// the system default white. We create a StatusBar against a STATIC parent,
+// inject the dark palette, force a paint cycle, and sample the centre
+// pixel — the documented dark.surface is RGB(46,46,48), so the pixel
+// must NOT be RGB(255,255,255) (the uxtheme default that the chrome
+// subclass is supposed to suppress) and must equal dark.surface exactly.
+bool test_statusbar_self_paint_renders() {
+    HWND parent = CreateWindowExW(0, L"STATIC", L"", WS_OVERLAPPED,
+                                  CW_USEDEFAULT, CW_USEDEFAULT, 320, 60,
+                                  nullptr, nullptr,
+                                  GetModuleHandleW(nullptr), nullptr);
+    if (parent == nullptr) return false;
+    nfui::StatusBar sb;
+    nfui::ControlCreateParams params{};
+    params.instance = GetModuleHandleW(nullptr);
+    params.parent = parent;
+    params.width = 320;
+    params.height = 24;
+    if (!sb.create(params)) {
+        DestroyWindow(parent);
+        return false;
+    }
+    const nfui::ThemePalette dark = nfui::theme_palette(nfui::ThemeMode::dark);
+    sb.set_palette(&dark);
+    ShowWindow(parent, SW_SHOW);
+    RedrawWindow(sb.hwnd(), nullptr, nullptr,
+                 RDW_INVALIDATE | RDW_ERASE | RDW_UPDATENOW);
+    UpdateWindow(sb.hwnd());
+
+    HDC dc = GetDC(sb.hwnd());
+    if (dc == nullptr) {
+        ShowWindow(parent, SW_HIDE);
+        DestroyWindow(sb.hwnd());
+        DestroyWindow(parent);
+        return false;
+    }
+    RECT client{};
+    GetClientRect(sb.hwnd(), &client);
+    // Sample well inside the part rect (avoid the grip column at the
+    // right edge and the top hairline at the top). The chrome subclass
+    // paints the client with palette.surface, so the centre pixel must
+    // match dark.surface exactly.
+    const int sample_x = client.right / 4;
+    const int sample_y = client.bottom / 2;
+    const COLORREF bg_pixel = GetPixel(dc, sample_x, sample_y);
+    const COLORREF expected = dark.surface.rgb;
+    ReleaseDC(sb.hwnd(), dc);
+
+    ShowWindow(parent, SW_HIDE);
+    DestroyWindow(sb.hwnd());
+    DestroyWindow(parent);
+    // bg_pixel must equal dark.surface exactly. A regression that lets
+    // the uxtheme default white bleed through would fail (we'd see
+    // RGB(255,255,255) instead of RGB(46,46,48)).
+    return bg_pixel == expected && bg_pixel != RGB(255, 255, 255);
+}
+
 bool test_theme_broadcast_propagates_to_children() {
     // Create a parent HWND with two child HWNDs; register all three.
     // Switch theme to dark; assert each received the broker callback.
@@ -1764,6 +1822,11 @@ int wmain() {
     // surface; a regression that leaves the body native-themed fails.
     ok = expect(test_tabcontrol_self_paint_renders(),
                 L"TabControl self-paint paints body region with palette surface (no white island)") && ok;
+    // CP-A4: StatusBar chrome subclass + theme_disable_window_theme()
+    // must keep the bar surface at palette.surface (no uxtheme white
+    // bleed-through).
+    ok = expect(test_statusbar_self_paint_renders(),
+                L"StatusBar self-paint paints surface with palette.surface (no uxtheme white island)") && ok;
 
     return ok ? 0 : 1;
 }

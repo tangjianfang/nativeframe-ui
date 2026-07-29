@@ -159,7 +159,17 @@ public:
     // the supported way to retarget a built Menu (used by Workbench's
     // --theme seed). Does NOT re-attach the menu to a host HWND — the
     // caller still owns SetMenu.
-    void set_palette(ThemePalette palette) noexcept { palette_ = palette; }
+    //
+    // CP-A4: the popup chrome is delivered via MENUINFO's `hbrBack` (a
+    // palette.surface brush built in apply_palette()). The host HWND's
+    // uxtheme background is suppressed by apply_to_bar() so the brush is
+    // the only source of pixel on the popup. Full per-item self-paint
+    // (rounded corners, drop shadow, selection highlight, item icons)
+    // requires MF_OWNERDRAW on every AppendMenuW + a WM_DRAWITEM handler
+    // on the menu owner; that is a separate CP (deferred — the MENUINFO
+    // approach covers the popup bg, which is the visible regression in
+    // the audit captures).
+    void set_palette(ThemePalette palette) noexcept { palette_ = std::move(palette); }
 
     // Item label helpers.
     [[nodiscard]] static std::wstring escape_mnemonic(const std::wstring& text) noexcept;
