@@ -1295,6 +1295,15 @@ private:
         // the status strip too.
         nfui::ChartCallbacks cbs{};
         cbs.on_point_edited = [this](std::size_t si, std::size_t pi, nfui::ChartPoint val) {
+            // Write the edit back into the demo's source vectors so the
+            // InfoPanel overview (built from get_chart_series(), which reads
+            // these vectors) reflects the new min/max. The drag mutated the
+            // chart's internal copy; without this write-back the overview
+            // would keep showing the pre-edit extents.
+            if (si == 0 && pi < temperature_.size()) temperature_[pi] = val;
+            else if (si == 1 && pi < humidity_.size()) humidity_[pi] = val;
+            else if (si == 2 && pi < light_.size()) light_[pi] = val;
+
             wchar_t buf[160];
             std::swprintf(buf, std::size(buf),
                           L"Edited [%zu][%zu] -> (%.1f, %.2f)  |  Undo: %s  Redo: %s",

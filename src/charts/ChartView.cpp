@@ -2,6 +2,8 @@
 #include <nfui/Dpi.hpp>
 #include <nfui/Paint.hpp>
 
+#include "internal/ChartsPaint.hpp"
+
 #include <cstdio>
 #include <string>
 #include <vector>
@@ -19,17 +21,25 @@ void draw_default_placeholder(HWND hwnd,
                               HDC target,
                               const RECT& bounds,
                               const ThemePalette& palette,
-                              FontCache* fonts) noexcept {
+                              FontCache* fonts,
+                              const ChartSettings& settings) noexcept {
     fill_rect(target, bounds, palette.background);
 
-    // Plot area: inset from the client area so the frame and axes fit cleanly.
-    const int legend_h = 24;
-    const int axis_pad = 32;
+    // Plot area: inset so the frame, axes, and axis-title bands all fit.
+    // The gutters mirror compute_chart_layout / draw_axis_titles so a bare
+    // ChartView reads as a coordinate system with titled axes, matching the
+    // real renderers once a subclass overrides on_paint.
+    constexpr int legend_h = 24;
+    const int left_pad   = charts_internal::kAxisGutter;       // y tick labels
+    const int top_pad    = legend_h + charts_internal::kAxisTitleHeight;  // legend + y-title band
+    const int right_pad  = 8;
+    const int bottom_pad = charts_internal::kBottomGutter +
+                           charts_internal::kAxisTitleHeight;  // x ticks + x-title band
     RECT plot{};
-    plot.left = bounds.left + axis_pad;
-    plot.top = bounds.top + legend_h;
-    plot.right = bounds.right - 8;
-    plot.bottom = bounds.bottom - axis_pad;
+    plot.left = bounds.left + left_pad;
+    plot.top = bounds.top + top_pad;
+    plot.right = bounds.right - right_pad;
+    plot.bottom = bounds.bottom - bottom_pad;
     if (plot.right <= plot.left || plot.bottom <= plot.top) {
         return;
     }
@@ -68,6 +78,17 @@ void draw_default_placeholder(HWND hwnd,
         draw_text(target, label, buf, tick_font, palette.text_secondary,
                   DT_RIGHT | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX);
     }
+
+    // Axis titles in the bands reserved above the plot (y) and below the x
+    // ticks (x). Empty labels suppress that axis. Uses the same regular sm
+    // title font as the real renderers so the placeholder chrome matches.
+    HFONT title_font = (fonts != nullptr) ? fonts->regular(dpi, font_pt::sm) : nullptr;
+    ChartLayout layout{};
+    layout.plot_bounds = plot;
+    charts_internal::draw_axis_titles(target, layout,
+                                      settings.x_axis_label,
+                                      settings.y_axis_label,
+                                      title_font, palette);
 }
 
 } // namespace
@@ -177,7 +198,7 @@ LRESULT ChartView::handle_message(UINT message, WPARAM wparam, LPARAM lparam) {
 
 void ChartView::on_paint(HDC hdc, const RECT& bounds) {
     const ThemePalette& pal = effective_palette();
-    draw_default_placeholder(hwnd(), hdc, bounds, pal, fonts_);
+    draw_default_placeholder(hwnd(), hdc, bounds, pal, fonts_, settings_);
     paint_interaction_overlay(hdc, bounds);
 }
 
