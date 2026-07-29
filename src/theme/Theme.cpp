@@ -1,5 +1,4 @@
 #include <nfui/Theme.hpp>
-#include <nfui/Paint.hpp>     // CP-A1: state_palette uses alpha_blend
 
 #include <cmath>
 
@@ -9,6 +8,22 @@ namespace {
 Color to_color(COLORREF c) noexcept { return Color{c}; }
 
 int clamp_byte(int v) noexcept { return v < 0 ? 0 : (v > 255 ? 255 : v); }
+
+// CP-A1: per-channel linear interpolation between two colours: returns `a` at
+// t == 0 and `b` at t == 1, with t clamped to [0,1]. Private to this TU so the
+// theme layer stays free of a paint dependency (docs/ARCHITECTURE.md: theme ->
+// core, dpi, UxTheme, DWM only). Equivalent to paint's alpha_blend with the
+// source/destination roles swapped (`alpha_blend(src, dst, a)` composites src
+// over dst, i.e. lerp_channel(dst, src, a)); the weighted-sum form below is
+// kept deliberately so results stay bit-identical to that helper.
+Color lerp_channel(Color a, Color b, float t) noexcept {
+    if (!(t > 0.0f)) return a;
+    if (t >= 1.0f) return b;
+    auto mix = [t](int va, int vb) { return clamp_byte(static_cast<int>(vb * t + va * (1.0f - t))); };
+    return Color{RGB(mix(GetRValue(a.rgb), GetRValue(b.rgb)),
+                  mix(GetGValue(a.rgb), GetGValue(b.rgb)),
+                  mix(GetBValue(a.rgb), GetBValue(b.rgb)))};
+}
 }
 
 ThemeMode detect_system_theme_mode() noexcept {
@@ -243,10 +258,10 @@ void theme_disable_window_theme(HWND hwnd) noexcept {
 // refined by state. HC mode (detected first) defers bg/fg/border/accent to
 // GetSysColor so users who have configured a high-contrast system palette
 // always see the WCAG-compliant OS colours regardless of what the app
-// theme injects. The remaining states layer alpha_blend over the resolved
-// surface — disabled dims against the window background, pressed tints
-// toward accent at 15%, error swaps the border for the danger colour.
-// `pressed` uses alpha_blend(src=accent, dst=surface, alpha=0.15f) so the
+// theme injects. The remaining states blend over the resolved surface via the
+// local lerp_channel helper — disabled dims against the window background,
+// pressed tints toward accent at 15%, error swaps the border for the danger
+// colour. `pressed` uses lerp_channel(a=accent, b=surface, t=0.15f) so the
 // result reads as a tinted surface, not a solid accent fill.
 StatePalette state_palette(const ThemePalette& base,
                            ThemeMode mode,
@@ -276,7 +291,7 @@ StatePalette state_palette(const ThemePalette& base,
         out.background = base.surface_hover;
         break;
     case ControlState::pressed:
-        out.background = alpha_blend(base.surface, base.accent, 0.15f);
+        out.background = lerp_channel(base.accent, base.surface, 0.15f);
         out.border     = base.accent;
         break;
     case ControlState::focused:
@@ -284,9 +299,9 @@ StatePalette state_palette(const ThemePalette& base,
         out.accent     = base.accent_hover;
         break;
     case ControlState::disabled:
-        out.background = alpha_blend(base.surface, base.background, 0.55f);
+        out.background = lerp_channel(base.background, base.surface, 0.55f);
         out.foreground = base.text_secondary;
-        out.border     = alpha_blend(base.border, base.background, 0.55f);
+        out.border     = lerp_channel(base.background, base.border, 0.55f);
         break;
     case ControlState::error:
         out.border = base.danger;

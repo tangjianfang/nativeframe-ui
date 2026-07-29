@@ -4,9 +4,16 @@
     Verifies the layered dependency direction described in docs/ARCHITECTURE.md.
 
 .DESCRIPTION
-    Scans every public header under include/nfui/**.hpp, extracts each
+    Scans every public header under include/nfui/**.hpp and every
+    implementation file under src/**/*.cpp, extracts each
     `#include <nfui/...>` edge, maps both endpoints to their owning module,
     and fails if an edge violates the documented dependency direction.
+
+    Headers are mapped to a module by file name; implementation files are
+    mapped by their owning `src/<module>/` directory. Scanning the .cpp files
+    matters because a forbidden edge can be introduced purely in an
+    implementation file (e.g. src/theme/Theme.cpp including <nfui/Paint.hpp>),
+    which the header-only scan cannot see.
 
     Two complementary rule sets are enforced (both mirror the
     "Detailed dependency rules" / "Forbidden dependencies" blocks in
@@ -77,6 +84,18 @@ function Get-ModuleName {
         'NativeFrameUI.hpp'   { return 'umbrella' }
         default               { return 'unknown' }
     }
+}
+
+# Map an implementation path relative to src (e.g. "theme/Theme.cpp" or
+# "charts/internal/ChartsPaint.cpp") to its owning module. The first path
+# segment is the module directory and matches the module names used above.
+function Get-SourceModuleName {
+    param([string]$Relative)
+
+    $normalized = $Relative -replace '\\', '/'
+    $segments = $normalized.Split('/')
+    if ($segments.Count -lt 2) { return 'unknown' }
+    return $segments[0]
 }
 
 # --- Rule set ---------------------------------------------------------------
@@ -177,10 +196,70 @@ foreach ($header in $headers) {
     }
 }
 
+# --- Scan implementation sources -------------------------------------------
+# Same rule set, applied to src/<module>/**/*.cpp. A .cpp can introduce a
+# forbidden edge that never shows up in a public header (the theme -> paint
+# case), so the implementation tree is walked with the identical allow-list and
+# named-forbidden patterns.
+$sourceRoot = Join-Path $Root 'src'
+$sources = @()
+if (Test-Path $sourceRoot) {
+    $sourceRoot = (Resolve-Path $sourceRoot).Path
+    $sources = @(Get-ChildItem -Path $sourceRoot -Recurse -File -Filter '*.cpp')
+    foreach ($source in $sources) {
+        $relative = $source.FullName.Substring($sourceRoot.Length).TrimStart('\', '/') -replace '\\', '/'
+        $srcModule = Get-SourceModuleName $relative
+
+        if (-not $allowed.ContainsKey($srcModule)) {
+            $violations += "UNMAPPED SOURCE: src/$relative is not assigned to a module (update verify_architecture.ps1)."
+            continue
+        }
+
+        # @() keeps single-line files an array (Set-StrictMode rejects .Count
+        # on a bare string).
+        $lines = @(Get-Content -Path $source.FullName)
+        for ($i = 0; $i -lt $lines.Count; $i++) {
+            $match = $includeRegex.Match($lines[$i])
+            if (-not $match.Success) { continue }
+
+            $targetRel = $match.Groups[1].Value
+            $tgtModule = Get-ModuleName $targetRel
+            $edgeCount++
+            $lineNo = $i + 1
+
+            if ($tgtModule -eq 'unknown') {
+                $violations += "src/$relative`:$lineNo -> nfui/$targetRel : target header is not mapped to a module."
+                continue
+            }
+
+            # The umbrella header drags in every module; no implementation file
+            # is allowed to shortcut the layering through it.
+            if ($tgtModule -eq 'umbrella') {
+                $violations += "src/$relative`:$lineNo : implementation files must not include the umbrella <nfui/$targetRel>."
+                continue
+            }
+
+            # Rule 1: module allow-list (intra-module always allowed).
+            if ($tgtModule -ne $srcModule -and ($allowed[$srcModule] -notcontains $tgtModule)) {
+                $violations += "src/$relative`:$lineNo : '$srcModule' must not depend on '$tgtModule' (include <nfui/$targetRel>)."
+            }
+
+            # Rule 2: named-forbidden header patterns for this module.
+            if ($forbiddenHeaders.ContainsKey($srcModule)) {
+                foreach ($pattern in $forbiddenHeaders[$srcModule]) {
+                    if ($targetRel -like "*$pattern*") {
+                        $violations += "src/$relative`:$lineNo : '$srcModule' is forbidden to include <nfui/$targetRel> (pattern '$pattern')."
+                    }
+                }
+            }
+        }
+    }
+}
+
 if ($violations.Count -gt 0) {
     Write-Host "NativeFrame UI architecture dependency check FAILED:" -ForegroundColor Red
     $violations | Sort-Object -Unique | ForEach-Object { Write-Error $_ }
     exit 1
 }
 
-Write-Output "NativeFrame UI architecture dependency check passed ($edgeCount nfui edge(s) across $($headers.Count) header(s))."
+Write-Output "NativeFrame UI architecture dependency check passed ($edgeCount nfui edge(s) across $($headers.Count) header(s) and $($sources.Count) source(s))."
