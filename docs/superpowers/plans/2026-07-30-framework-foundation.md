@@ -292,13 +292,8 @@ public:
 private:
     ThemeBroker() = default;
 
-    struct Entry {
-        ThemeChangeHandler handler;
-    };
-
-    // Use a small intrusive map; HWND lookups dominate.
-    // std::unordered_map is fine; the registry is bounded by visible HWNDs.
-    void* registry_;        // PIMPL to avoid leaking <unordered_map> in header
+    // Storage lives in the TU-local `Registry` struct in ThemeBroker.cpp to
+    // avoid leaking <unordered_map> into this public header.
     ThemeMode current_{ThemeMode::light};
 };
 
@@ -378,9 +373,6 @@ void ThemeBroker::broadcast() noexcept {
         if (handler) handler(current_);
     }
 }
-
-// Stub — keeps PIMPL pointer reserved for future expansion.
-void* ThemeBroker::registry_ = nullptr;
 
 } // namespace nfui
 ```
