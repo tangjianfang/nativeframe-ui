@@ -228,14 +228,6 @@ LRESULT CALLBACK TabControl::visual_subclass_proc(HWND hwnd, UINT message,
         }
         return DefSubclassProc(hwnd, message, wparam, lparam);
     }
-    case WM_PAINT: {
-        // CP-A3: belt-and-braces — if the native tab body leaks white
-        // (some ComCtl32 builds leave the page area transparent), paint
-        // the client rect with palette.surface after the default handler
-        // so the body matches the strip.
-        LRESULT result = DefSubclassProc(hwnd, message, wparam, lparam);
-        return result;
-    }
     case WM_NCDESTROY:
         ThemeBroker::instance().unregister_hwnd(hwnd);
         RemoveWindowSubclass(hwnd, &TabControl::visual_subclass_proc, subclass_id);
