@@ -113,4 +113,10 @@ if ($avg -lt $MinAvgBytes) {
 Write-Host ""
 Write-Host ("PASS: gate placeholder — 14 demos x 3 themes = {0} PNGs present, avg {1} bytes." -f $total, $avg)
 Write-Host "  (real per-pixel diff-vs-baseline scoring lands in the CP-A4 follow-up — see header.)"
+# CP-A final: surface the placeholder status as a GitHub Actions ::warning so
+# reviewers see "gate=placeholder" rather than mistaking PASS for a full
+# per-pixel baseline gate. The exit code is still 0 because the byte-size
+# heuristic is sufficient to catch the regression classes CP-A4 was scoped
+# to fix; the warning is documentation-of-truth, not a CI failure.
+Write-Host "::warning title=visual-audit gate placeholder::This gate is a byte-size heuristic, not per-pixel diff-vs-baseline. Real scoring is tracked in docs/FOLLOW_UP.md item B."
 exit 0

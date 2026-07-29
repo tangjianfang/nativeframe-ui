@@ -88,6 +88,21 @@ resource    -> business modules
 - Prefer composition over inheritance.
 - Avoid global `HWND`, theme, command, and resource singletons.
 
+### Documented exception: `ThemeBroker`
+
+The `nfui::ThemeBroker` singleton (declared in `<nfui/ThemeBroker.hpp>`) is
+permitted as a deliberate fallback until `ApplicationContext` exposes a
+service-registration slot. Cross-HWND `WM_THEMECHANGED` broadcasts require a
+registry of HWNDs to invalidate, and threading that registry through every
+control constructor — without a service-locator surface in `ApplicationContext`
+— would force every consumer to plumb a broker pointer through every factory
+call. The static-singleton fallback is mutex-guarded, idempotent on
+`set_theme`, and snapshots the registry under the lock before invoking
+handlers outside it. When `ApplicationContext` grows a service registry,
+this exception should be revisited and `ThemeBroker` migrated to an
+`ApplicationContext`-owned service; see `include/nfui/ThemeBroker.hpp` for
+the inline rationale and the doc comment that flags the same.
+
 ## Application Context
 
 Framework services should be owned explicitly through an application context rather than hidden global singletons:
