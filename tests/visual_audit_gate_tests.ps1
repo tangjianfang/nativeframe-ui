@@ -18,14 +18,14 @@ $tempRoot = Join-Path ([System.IO.Path]::GetTempPath()) ("nfui-gate-tests-{0}" -
 $failures = [System.Collections.Generic.List[string]]::new()
 $passes = 0
 
-# The placeholder gate produces 30 PNGs (10 demos x 3 themes), each well
+# The placeholder gate produces 42 PNGs (14 demos x 3 themes), each well
 # above the 4 KB per-file floor. The fake-payload helper writes a stub
 # PNG-sized file so the script's existence check + byte-size heuristic
 # both pass.
 $expectedFiles = @()
-foreach ($d in @('Workbench','Showcase','DarkStudio','SettingsDemo','DialogTour',
-                 'ResourceGallery','ComponentGallery','ThemeDemo','ControlsPlayground',
-                 'Charts')) {
+foreach ($d in @('Workbench','Showcase','DarkStudio','SettingsDemo','ResourceGallery',
+                 'ThemeDemo','ComponentGallery','Controls','Charts','ChartsInteractive',
+                 'Minimal','ControlsPlayground','IconGallery','DialogTour')) {
     foreach ($t in @('light','dark','hc')) {
         $expectedFiles += ("{0}_{1}.png" -f $d, $t)
     }
@@ -80,12 +80,12 @@ function Assert-ExitCode {
 try {
     New-Item -ItemType Directory -Path $tempRoot -Force | Out-Null
 
-    # Fixture 1: 30 stub PNGs above the byte-size floor → gate exits 0.
+    # Fixture 1: 42 stub PNGs above the byte-size floor → gate exits 0.
     $root1 = Join-Path $tempRoot 'all_passing'
     New-Item -ItemType Directory -Path $root1 -Force | Out-Null
     $audit1 = Join-Path $root1 'docs\VISUAL_AUDIT'
     New-StubAuditOutput -Path $audit1 -BytesPerFile 24576
-    Assert-ExitCode -Name 'all 30 PNGs present and above floor' `
+    Assert-ExitCode -Name 'all 42 PNGs present and above floor' `
         -Expected 0 `
         -Actual (Invoke-Gate -Root $root1 -AuditOutput $audit1)
 
@@ -109,7 +109,7 @@ try {
         -Expected 1 `
         -Actual (Invoke-Gate -Root $root3 -AuditOutput $audit3)
 
-    # Fixture 4: 29 PNGs (one missing) and the rest are tiny → still
+    # Fixture 4: 41 PNGs (one missing) and the rest are tiny → still
     # exits 1, but for the missing-file reason (missing check runs
     # first).
     $root4 = Join-Path $tempRoot 'missing_and_small'

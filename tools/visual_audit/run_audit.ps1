@@ -37,17 +37,24 @@ if (-not (Test-Path -LiteralPath $auditExe -PathType Leaf)) {
     throw "Visual-audit executable not found: $auditExe. Configure and build x64-debug with BUILD_TESTING=ON first."
 }
 
+# Order mirrors the `add_executable(NativeFrameUI* WIN32 ...)` block in
+# the root CMakeLists.txt so the audit / gate / CI stay in lockstep with
+# the source of truth. 14 demos x 3 themes = 42 PNGs.
 $samples = @(
-    [pscustomobject]@{ Name = 'Workbench';         Exe = 'NativeFrameUIWorkbench.exe' },
-    [pscustomobject]@{ Name = 'Showcase';          Exe = 'NativeFrameUIShowcase.exe' },
-    [pscustomobject]@{ Name = 'DarkStudio';        Exe = 'NativeFrameUIDarkStudio.exe' },
-    [pscustomobject]@{ Name = 'SettingsDemo';      Exe = 'NativeFrameUISettingsDemo.exe' },
-    [pscustomobject]@{ Name = 'DialogTour';        Exe = 'NativeFrameUIDialogTour.exe' },
-    [pscustomobject]@{ Name = 'ResourceGallery';   Exe = 'NativeFrameUIResourceGallery.exe' },
-    [pscustomobject]@{ Name = 'ComponentGallery';  Exe = 'NativeFrameUIComponentGallery.exe' },
-    [pscustomobject]@{ Name = 'ThemeDemo';         Exe = 'NativeFrameUIThemeDemo.exe' },
-    [pscustomobject]@{ Name = 'ControlsPlayground';Exe = 'NativeFrameUIControlsPlayground.exe' },
-    [pscustomobject]@{ Name = 'Charts';            Exe = 'NativeFrameUICharts.exe' }
+    [pscustomobject]@{ Name = 'Workbench';          Exe = 'NativeFrameUIWorkbench.exe' },
+    [pscustomobject]@{ Name = 'Showcase';           Exe = 'NativeFrameUIShowcase.exe' },
+    [pscustomobject]@{ Name = 'DarkStudio';         Exe = 'NativeFrameUIDarkStudio.exe' },
+    [pscustomobject]@{ Name = 'SettingsDemo';       Exe = 'NativeFrameUISettingsDemo.exe' },
+    [pscustomobject]@{ Name = 'ResourceGallery';    Exe = 'NativeFrameUIResourceGallery.exe' },
+    [pscustomobject]@{ Name = 'ThemeDemo';          Exe = 'NativeFrameUIThemeDemo.exe' },
+    [pscustomobject]@{ Name = 'ComponentGallery';   Exe = 'NativeFrameUIComponentGallery.exe' },
+    [pscustomobject]@{ Name = 'Controls';           Exe = 'NativeFrameUIControls.exe' },
+    [pscustomobject]@{ Name = 'Charts';             Exe = 'NativeFrameUICharts.exe' },
+    [pscustomobject]@{ Name = 'ChartsInteractive';  Exe = 'NativeFrameUIChartsInteractive.exe' },
+    [pscustomobject]@{ Name = 'Minimal';            Exe = 'NativeFrameUIMinimal.exe' },
+    [pscustomobject]@{ Name = 'ControlsPlayground'; Exe = 'NativeFrameUIControlsPlayground.exe' },
+    [pscustomobject]@{ Name = 'IconGallery';        Exe = 'NativeFrameUIIconGallery.exe' },
+    [pscustomobject]@{ Name = 'DialogTour';         Exe = 'NativeFrameUIDialogTour.exe' }
 )
 
 $results = [System.Collections.Generic.List[object]]::new()

@@ -18,7 +18,7 @@
 
     The placeholder is sufficient to catch the regression classes the
     chrome polish pass is designed to fix:
-      * The visual audit script produced fewer than 30 PNGs (something
+      * The visual audit script produced fewer than 42 PNGs (something
         crashed / a sample's HWND did not appear).
       * A sample's PNG dropped to a near-empty background (audit timed
         out before the window painted) — the byte-size heuristic bottoms
@@ -29,7 +29,7 @@
     0 = pass) so wiring into CI is straightforward.
 
     Exit codes:
-      0  all 30 audit PNGs present, average byte-size above floor
+      0  all 42 audit PNGs present, average byte-size above floor
       1  at least one audit PNG missing OR average below floor
       2  bad / missing parameters (StrictMode / Resolve-Path failure)
 #>
@@ -46,10 +46,12 @@ $ErrorActionPreference = 'Stop'
 
 # CP-A4 placeholder scorer: the per-demo / per-theme pairs we expect to
 # have been produced by run_audit.ps1. Mirrors the sample list in
-# `run_audit.ps1` so the two scripts stay in lockstep.
-$demos = @('Workbench','Showcase','DarkStudio','SettingsDemo','DialogTour',
-           'ResourceGallery','ComponentGallery','ThemeDemo','ControlsPlayground',
-           'Charts')
+# `run_audit.ps1` (and the `add_executable(NativeFrameUI* WIN32 ...)`
+# block in the root CMakeLists.txt) so the two scripts stay in lockstep
+# — 14 demos x 3 themes = 42 PNGs.
+$demos = @('Workbench','Showcase','DarkStudio','SettingsDemo','ResourceGallery',
+           'ThemeDemo','ComponentGallery','Controls','Charts','ChartsInteractive',
+           'Minimal','ControlsPlayground','IconGallery','DialogTour')
 $themes = @('light','dark','hc')
 
 $missing = New-Object System.Collections.Generic.List[string]
@@ -109,6 +111,6 @@ if ($avg -lt $MinAvgBytes) {
 }
 
 Write-Host ""
-Write-Host ("PASS: gate placeholder — 10 demos x 3 themes = {0} PNGs present, avg {1} bytes." -f $total, $avg)
+Write-Host ("PASS: gate placeholder — 14 demos x 3 themes = {0} PNGs present, avg {1} bytes." -f $total, $avg)
 Write-Host "  (real per-pixel diff-vs-baseline scoring lands in the CP-A4 follow-up — see header.)"
 exit 0
