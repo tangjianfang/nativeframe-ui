@@ -56,6 +56,7 @@ constexpr int kStatusStripHeight = 28;
 constexpr int kInfoPanelWidth = 320;
 constexpr int kOuterPadding = 12;
 constexpr int kPanelHeaderHeight = 28;
+constexpr int kComparisonToggleId = 7000;
 
 // --- Demo data ---------------------------------------------------------------
 //
@@ -171,11 +172,24 @@ public:
         if (hwnd()) InvalidateRect(hwnd(), nullptr, FALSE);
     }
 
+    void set_cursor_readout(nfui::ChartCursorReadout readout) noexcept {
+        cursor_readout_ = std::move(readout);
+        if (hwnd()) InvalidateRect(hwnd(), nullptr, FALSE);
+    }
+
+    void set_comparison_visible(bool visible) noexcept {
+        comparison_visible_ = visible;
+        if (hwnd()) InvalidateRect(hwnd(), nullptr, FALSE);
+    }
+
     [[nodiscard]] bool owns_hwnd(HWND) const noexcept { return false; }
 
     [[nodiscard]] std::size_t series_count() const noexcept { return series_.size(); }
     [[nodiscard]] bool is_checked(std::size_t idx) const noexcept {
         return idx < checked_.size() && checked_[idx];
+    }
+    [[nodiscard]] bool is_comparison_checked() const noexcept {
+        return comparison_visible_;
     }
 
 protected:
@@ -201,6 +215,14 @@ protected:
                     const int id = kSeriesCheckboxBase + static_cast<int>(*hit);
                     SendMessageW(parent, WM_COMMAND,
                                  MAKEWPARAM(id, BN_CLICKED),
+                                 reinterpret_cast<LPARAM>(hwnd()));
+                }
+                if (hwnd()) InvalidateRect(hwnd(), nullptr, FALSE);
+            } else if (hit_test_comparison_toggle(pt)) {
+                comparison_visible_ = !comparison_visible_;
+                if (HWND parent = GetParent(hwnd()); parent != nullptr) {
+                    SendMessageW(parent, WM_COMMAND,
+                                 MAKEWPARAM(kComparisonToggleId, BN_CLICKED),
                                  reinterpret_cast<LPARAM>(hwnd()));
                 }
                 if (hwnd()) InvalidateRect(hwnd(), nullptr, FALSE);
@@ -239,12 +261,13 @@ private:
     static constexpr int kSeriesCheckboxBase = 8000;
     static constexpr int kCheckboxBox = 14;
     static constexpr int kCheckboxHitSlop = 6;  // bigger than box for easier targeting
+    static constexpr int kComparisonSectionHeight = 50;  // label+gap+row+gap
 
     [[nodiscard]] std::optional<std::size_t> hit_test_checkbox(POINT pt) const noexcept {
         // The checkbox row sits where on_paint draws it: chk_x = kOuterPadding,
         // chk_y computed from the SERIES section header + per-row offsets.
         const int chk_x = kOuterPadding;
-        int y = kPanelHeaderHeight + 14 + 14 + 6;
+        int y = kPanelHeaderHeight + 14 + kComparisonSectionHeight;
         for (std::size_t i = 0; i < series_.size(); ++i) {
             const RECT hit{chk_x - kCheckboxHitSlop, y,
                            chk_x + kCheckboxBox + kCheckboxHitSlop, y + 18};
@@ -252,6 +275,15 @@ private:
             y += 18 + 14 + 10;  // name + stats + gap (matches on_paint)
         }
         return std::nullopt;
+    }
+
+    [[nodiscard]] bool hit_test_comparison_toggle(POINT pt) const noexcept {
+        // The comparison toggle is the first interactive row under the header.
+        constexpr int row_top = kPanelHeaderHeight + 14 + 14 + 6;
+        const RECT hit{kOuterPadding - kCheckboxHitSlop, row_top,
+                       kOuterPadding + kCheckboxBox + kCheckboxHitSlop,
+                       row_top + 18};
+        return PtInRect(&hit, pt) != FALSE;
     }
 
     void ensure_series_controls() noexcept {
@@ -300,6 +332,42 @@ private:
         HFONT section_font = fonts_.mono(dpi, font_pt::xs);
         HFONT name_font = fonts_.regular(dpi, font_pt::base);
         HFONT stat_font = fonts_.mono(dpi, font_pt::xs);
+
+        // COMPARISON section: visibility toggle for the secondary chart.
+        RECT cmp_label{kOuterPadding, y, bounds.right - kOuterPadding, y + 14};
+        draw_text(hdc, cmp_label, L"COMPARISON", section_font, palette_.text_secondary,
+                  DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX);
+        y = cmp_label.bottom + 6;
+
+        {
+            const int chk_x = kOuterPadding;
+            const int chk_y = y + 1;
+            const nfui::Color fill = comparison_visible_
+                ? nfui::Color{palette_.accent.rgb}
+                : nfui::Color{palette_.surface.rgb};
+            const RECT chk_rc{chk_x, chk_y,
+                              chk_x + kCheckboxBox,
+                              chk_y + kCheckboxBox};
+            fill_rounded_rect(hdc, chk_rc, 3, fill, palette_.border);
+            if (comparison_visible_) {
+                HPEN tick_pen = CreatePen(PS_SOLID, 2, palette_.text.rgb);
+                HPEN old_tick_pen = static_cast<HPEN>(SelectObject(hdc, tick_pen));
+                const int tip_x = chk_rc.left + 3;
+                const int tip_y = chk_rc.top + kCheckboxBox / 2;
+                MoveToEx(hdc, tip_x, tip_y, nullptr);
+                LineTo(hdc, tip_x + 3, tip_y + 3);
+                LineTo(hdc, tip_x + 7, tip_y - 3);
+                SelectObject(hdc, old_tick_pen);
+                DeleteObject(tick_pen);
+            }
+
+            RECT name_rc{chk_x + kCheckboxBox + 6, y,
+                         bounds.right - kOuterPadding, y + 18};
+            draw_text(hdc, name_rc, L"Show comparison chart",
+                      name_font, palette_.text,
+                      DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX);
+            y = name_rc.bottom + 12;
+        }
 
         RECT series_label{kOuterPadding, y, bounds.right - kOuterPadding, y + 14};
         draw_text(hdc, series_label, L"SERIES", section_font, palette_.text_secondary,
@@ -479,13 +547,80 @@ private:
         RECT range_rc{kOuterPadding, y, bounds.right - kOuterPadding, y + 13};
         draw_text(hdc, range_rc, footer, stat_font, palette_.text_secondary,
                   DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX);
+        y = range_rc.bottom + 2;
+
+        // CP40: cursor readout panel shows interpolated per-series values.
+        y += 8;
+        HPEN sep_pen3 = CreatePen(PS_SOLID, 1, palette_.border.rgb);
+        HPEN old_sep3 = static_cast<HPEN>(SelectObject(hdc, sep_pen3));
+        MoveToEx(hdc, kOuterPadding, y, nullptr);
+        LineTo(hdc, bounds.right - kOuterPadding, y);
+        SelectObject(hdc, old_sep3);
+        DeleteObject(sep_pen3);
+        y += 12;
+
+        RECT readout_label{kOuterPadding, y, bounds.right - kOuterPadding, y + 14};
+        draw_text(hdc, readout_label, L"CURSOR READOUT", section_font,
+                  palette_.text_secondary,
+                  DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX);
+        y = readout_label.bottom + 6;
+
+        if (!cursor_readout_.has_value() || cursor_readout_->series_values.empty()) {
+            RECT hint_rc{kOuterPadding, y,
+                         bounds.right - kOuterPadding, y + 14};
+            draw_text(hdc, hint_rc,
+                      L"Hover the plot to see live per-series values",
+                      name_font, palette_.text_secondary,
+                      DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX);
+        } else {
+            wchar_t x_label[64]{};
+            std::swprintf(x_label, std::size(x_label),
+                          L"x = %.2f", cursor_readout_->x);
+            RECT x_rc{kOuterPadding, y, bounds.right - kOuterPadding, y + 14};
+            draw_text(hdc, x_rc, x_label, stat_font, palette_.text,
+                      DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX);
+            y = x_rc.bottom + 4;
+
+            for (const auto& [idx, value] : cursor_readout_->series_values) {
+                nfui::Color dot_color = palette_.accent;
+                std::wstring name_text;
+                if (idx < series_.size()) {
+                    dot_color = series_[idx].color;
+                    name_text = series_[idx].name;
+                }
+                const int dot_r = 4;
+                const int dot_cx = kOuterPadding + dot_r;
+                const int dot_cy = y + 7;
+                HBRUSH dot_brush = CreateSolidBrush(dot_color.rgb);
+                HBRUSH old_brush = static_cast<HBRUSH>(SelectObject(hdc, dot_brush));
+                HPEN old_pen_local = static_cast<HPEN>(SelectObject(hdc, GetStockObject(NULL_PEN)));
+                Ellipse(hdc, dot_cx - dot_r, dot_cy - dot_r,
+                           dot_cx + dot_r, dot_cy + dot_r);
+                SelectObject(hdc, old_pen_local);
+                SelectObject(hdc, old_brush);
+                DeleteObject(dot_brush);
+
+                RECT row_rc{dot_cx + dot_r + 6, y,
+                            bounds.right - kOuterPadding, y + 14};
+                wchar_t row_text[96]{};
+                std::swprintf(row_text, std::size(row_text),
+                              L"%.*s: %.2f",
+                              static_cast<int>(name_text.size()),
+                              name_text.data(), value);
+                draw_text(hdc, row_rc, row_text, stat_font, palette_.text,
+                          DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX);
+                y = row_rc.bottom + 4;
+            }
+        }
     }
 
     std::vector<SeriesOverview> series_{};
     std::optional<nfui::ChartRangeSelection> selection_{};
+    std::optional<nfui::ChartCursorReadout> cursor_readout_{};
     nfui::ThemePalette palette_{};
     nfui::FontCache fonts_{};
     std::vector<bool> checked_{};
+    bool comparison_visible_{true};
     std::optional<std::size_t> hover_index_{};
 };
 
@@ -499,8 +634,10 @@ class MainWindow;  // forward decl
 class SettingsDialog : public nfui::Window {
 public:
     bool open(HWND owner, nfui::ChartSettings initial,
+              nfui::ChartSettings::ThemeMode mode,
               std::function<void(nfui::ChartSettings)> on_apply) noexcept {
         on_apply_ = std::move(on_apply);
+        dialog_theme_mode_ = mode;
         nfui::WindowCreateParams cp{
             GetModuleHandleW(nullptr),
             L"NativeFrameUIChartsSettingsDialog",
@@ -562,6 +699,31 @@ private:
     static constexpr int kApplyId    = 9201;
     static constexpr int kCancelId   = 9202;
 
+    // The combo box presents kinds in user-friendly order; ChartSettings
+    // stores the canonical ChartKind id. Convert both ways so the dialog
+    // never leaks its list-box ordering to the rest of the app.
+    [[nodiscard]] static int kind_model_to_dialog(int kind_id) noexcept {
+        switch (kind_id) {
+        case 2: return 0;  // line
+        case 3: return 1;  // spline
+        case 4: return 2;  // area
+        case 0: return 3;  // bar vertical
+        case 1: return 4;  // bar horizontal
+        default: return 0; // line
+        }
+    }
+
+    [[nodiscard]] static int kind_dialog_to_model(int dialog_idx) noexcept {
+        switch (dialog_idx) {
+        case 0: return 2;  // line
+        case 1: return 3;  // spline
+        case 2: return 4;  // area
+        case 3: return 0;  // bar vertical
+        case 4: return 1;  // bar horizontal
+        default: return 2; // line (default)
+        }
+    }
+
     void populate_controls(nfui::ChartSettings s) noexcept {
         RECT rc{};
         GetClientRect(hwnd(), &rc);
@@ -601,7 +763,7 @@ private:
                       reinterpret_cast<LPARAM>(L"Bar (vertical)"));
         SendMessageW(kind_combo_, CB_ADDSTRING, 0,
                       reinterpret_cast<LPARAM>(L"Bar (horizontal)"));
-        SendMessageW(kind_combo_, CB_SETCURSEL, s.kind_id, 0);
+        SendMessageW(kind_combo_, CB_SETCURSEL, kind_model_to_dialog(s.kind_id), 0);
 
         cross_chk_ = CreateWindowExW(0, L"BUTTON", L"Show crosshair",
             BS_AUTOCHECKBOX | WS_CHILD | WS_VISIBLE | WS_TABSTOP,
@@ -645,8 +807,8 @@ private:
         s.theme = (theme_idx == 1)
             ? nfui::ChartSettings::ThemeMode::dark
             : nfui::ChartSettings::ThemeMode::light;
-        s.kind_id = static_cast<int>(SendMessageW(kind_combo_, CB_GETCURSEL, 0, 0));
-        if (s.kind_id < 0 || s.kind_id > 4) s.kind_id = 2;  // default line
+        const int kind_dialog_idx = static_cast<int>(SendMessageW(kind_combo_, CB_GETCURSEL, 0, 0));
+        s.kind_id = kind_dialog_to_model(kind_dialog_idx);
         s.show_crosshair = (SendMessageW(cross_chk_, BM_GETCHECK, 0, 0) == BST_CHECKED);
         s.show_tooltip = (SendMessageW(tip_chk_, BM_GETCHECK, 0, 0) == BST_CHECKED);
         s.show_legend = (SendMessageW(legend_chk_, BM_GETCHECK, 0, 0) == BST_CHECKED);
@@ -665,8 +827,12 @@ private:
         DeleteObject(pen);
     }
 
-    static nfui::ThemePalette palette_for_dialog() noexcept {
-        return nfui::theme_palette(nfui::ThemeMode::dark);
+    [[nodiscard]] nfui::ThemePalette palette_for_dialog() const noexcept {
+        const nfui::ThemeMode mode = (dialog_theme_mode_ ==
+                                      nfui::ChartSettings::ThemeMode::dark)
+                                      ? nfui::ThemeMode::dark
+                                      : nfui::ThemeMode::light;
+        return nfui::theme_palette(mode);
     }
 
     HINSTANCE instance_{GetModuleHandleW(nullptr)};
@@ -675,6 +841,7 @@ private:
     HWND cross_chk_{};
     HWND tip_chk_{};
     HWND legend_chk_{};
+    nfui::ChartSettings::ThemeMode dialog_theme_mode_{nfui::ChartSettings::ThemeMode::light};
     std::function<void(nfui::ChartSettings)> on_apply_{};
 };
 
@@ -702,6 +869,7 @@ public:
         create_charts();      // creates primary_chart_ first so apply_theme() can read its theme
         create_kpi_tiles();
         create_info_panel();
+        SetWindowTextW(hwnd(), L"Interactive Charts \x2014 NativeFrame UI");
         ShowWindow(hwnd(), show_cmd);
         UpdateWindow(hwnd());
         return true;
@@ -753,6 +921,14 @@ protected:
                     static_cast<std::size_t>(id - kSeriesCheckboxBase);
                 primary_chart_.set_series_visible(series_idx,
                                                   info_.is_checked(series_idx));
+                return 0;
+            }
+            if (code == BN_CLICKED && id == kComparisonToggleId) {
+                const bool visible = info_.is_comparison_checked();
+                if (comparison_chart_.hwnd() != nullptr) {
+                    ShowWindow(comparison_chart_.hwnd(), visible ? SW_SHOW : SW_HIDE);
+                }
+                layout_children();
                 return 0;
             }
             return 0;
@@ -849,18 +1025,27 @@ private:
                       L"%s  \x2014  %s",
                       ok ? L"Exported" : L"Export FAILED",
                       path.c_str());
-        SetWindowTextW(hwnd(), buf);
+        set_status_text(buf);
     }
 
     void reset_views() noexcept {
         primary_chart_.reset_view();
         comparison_chart_.reset_view();
-        SetWindowTextW(hwnd(), L"View Reset \x2014 Interactive Charts \x2014 NativeFrame UI");
+        set_status_text(L"View Reset");
+    }
+
+    void set_status_text(std::wstring text) noexcept {
+        status_text_ = std::move(text);
+        if (hwnd() == nullptr) return;
+        RECT rc{};
+        GetClientRect(hwnd(), &rc);
+        RECT status{0, rc.bottom - kStatusStripHeight, rc.right, rc.bottom};
+        InvalidateRect(hwnd(), &status, FALSE);
     }
 
     void open_settings_dialog() noexcept {
         settings_dialog_ = std::make_unique<SettingsDialog>();
-        settings_dialog_->open(hwnd(), primary_chart_.settings(),
+        settings_dialog_->open(hwnd(), primary_chart_.settings(), theme_mode_,
             [this](nfui::ChartSettings s) {
                 theme_mode_ = s.theme;
                 primary_chart_.apply_settings(s);
@@ -913,29 +1098,41 @@ private:
             tile.set_sparkline(std::move(points), color);
         };
 
-        const double temp_first = temperature_.front().y;
         const double temp_last = temperature_.back().y;
-        const double hum_first = humidity_.front().y;
         const double hum_last = humidity_.back().y;
-        const double light_first = light_.front().y;
         const double light_last = light_.back().y;
+
+        auto delta_percent = [](const std::vector<nfui::ChartPoint>& pts,
+                              double last) -> double {
+            if (pts.size() < 2) return 0.0;
+            constexpr double eps = 1e-9;
+            const double first = pts.front().y;
+            if (std::fabs(first) > eps) {
+                return (last - first) / first * 100.0;
+            }
+            const double previous = pts[pts.size() - 2].y;
+            if (std::fabs(previous) > eps) {
+                return (last - previous) / previous * 100.0;
+            }
+            return 0.0;
+        };
 
         make_tile(temperature_kpi_,
                   L"Temperature",
                   std::to_wstring(static_cast<int>(std::lround(temp_last))) + L" \xB0" + L"C",
-                  (temp_last - temp_first),
+                  delta_percent(temperature_, temp_last),
                   temperature_,
                   tile_color(0));
         make_tile(humidity_kpi_,
                   L"Humidity",
                   std::to_wstring(static_cast<int>(std::lround(hum_last))) + L" %",
-                  (hum_last - hum_first),
+                  delta_percent(humidity_, hum_last),
                   humidity_,
                   tile_color(1));
         make_tile(light_kpi_,
                   L"Light",
                   std::to_wstring(static_cast<int>(std::lround(light_last))) + L" lx",
-                  (light_last - light_first),
+                  delta_percent(light_, light_last),
                   light_,
                   tile_color(2));
     }
@@ -1066,7 +1263,7 @@ private:
                           si, pi, val.x, val.y,
                           primary_chart_.can_undo() ? L"Yes" : L"No",
                           primary_chart_.can_redo() ? L"Yes" : L"No");
-            SetWindowTextW(hwnd(), buf);
+            set_status_text(buf);
             info_.set_series_overview(build_overview(get_chart_series()));
         };
         cbs.on_range_selected = [this](nfui::ChartRangeSelection sel) {
@@ -1074,35 +1271,38 @@ private:
             wchar_t buf[200];
             if (sel.total_count == 0) {
                 std::swprintf(buf, std::size(buf),
-                              L"Range: no points inside selection \x2014 Interactive Charts");
+                              L"Range: no points inside selection");
             } else if (sel.series_stats.size() == 1) {
                 std::swprintf(buf, std::size(buf),
-                              L"Selected %zu pts  \x2014  y %.2f \x2192 %.2f   \x03bc = %.2f  \x2014  Interactive Charts",
+                              L"Selected %zu pts  \x2014  y %.2f \x2192 %.2f   \x03bc = %.2f",
                               sel.total_count, sel.min_y, sel.max_y, sel.mean_y);
             } else {
                 std::swprintf(buf, std::size(buf),
-                              L"Selected %zu pts across %zu series  \x2014  y %.2f \x2192 %.2f   \x03bc = %.2f  \x2014  Interactive Charts",
+                              L"Selected %zu pts across %zu series  \x2014  y %.2f \x2192 %.2f   \x03bc = %.2f",
                               sel.total_count, sel.series_stats.size(),
                               sel.min_y, sel.max_y, sel.mean_y);
             }
-            SetWindowTextW(hwnd(), buf);
+            set_status_text(buf);
         };
         cbs.on_view_changed = [this](nfui::ChartAxisRange x, nfui::ChartAxisRange y) {
             wchar_t buf[200];
             std::swprintf(buf, std::size(buf),
                           L"View: X[%.1f..%.1f] Y[%.1f..%.1f]",
                           x.min, x.max, y.min, y.max);
-            SetWindowTextW(hwnd(), buf);
+            set_status_text(buf);
         };
         cbs.on_cursor_x_changed = [this](std::optional<double> x) {
             if (!x.has_value()) return;  // quiet when the cursor leaves
             wchar_t buf[160];
             std::swprintf(buf, std::size(buf),
-                          L"Cursor x = %.2f  \x2014  Interactive Charts", *x);
-            SetWindowTextW(hwnd(), buf);
+                          L"Cursor x = %.2f", *x);
+            set_status_text(buf);
         };
         cbs.on_view_reset = [this]() {
-            SetWindowTextW(hwnd(), L"View Reset \x2014 Interactive Charts \x2014 NativeFrame UI");
+            set_status_text(L"View Reset");
+        };
+        cbs.on_cursor_readout = [this](nfui::ChartCursorReadout r) {
+            info_.set_cursor_readout(std::move(r));
         };
         primary_chart_.set_callbacks(std::move(cbs));
     }
@@ -1111,6 +1311,7 @@ private:
         RECT placeholder{0, 0, 100, 100};
         info_.create(hwnd(), placeholder, palette_);
         info_.set_theme(palette_);
+        info_.set_comparison_visible(true);
     }
 
     std::vector<nfui::ChartSeries> get_chart_series() const {
@@ -1153,8 +1354,13 @@ private:
         const int kpi_h = 132;
         const int gap = kOuterPadding;
         const int remaining = body_height - kpi_h - gap * 3;
-        const int primary_h = (remaining * 55) / 100;
-        const int comparison_h = remaining - primary_h - gap;
+        const bool show_comparison = info_.is_comparison_checked();
+        const int primary_h = show_comparison
+            ? (remaining * 55) / 100
+            : remaining;
+        const int comparison_h = show_comparison
+            ? (remaining - primary_h - gap)
+            : 0;
 
         DashboardGeometry g{};
         g.body_height = body_height;
@@ -1285,12 +1491,18 @@ private:
         DeleteObject(status_pen);
 
         HFONT hint_font = fonts_.mono(dpi, font_pt::xs);
+        const int split_x = (w * 55) / 100;
         RECT hint_rc{kOuterPadding, h - kStatusStripHeight,
-                     w - kOuterPadding, h};
+                     split_x - kOuterPadding, h};
         draw_text(hdc, hint_rc,
                   L"Drag = range-select  \x2022  Wheel = zoom  \x2022  Space+drag = pan  \x2022  Dbl-click = reset  \x2022  Ctrl+Z/Y = undo  \x2022  Cursor syncs across linked charts",
                   hint_font, palette_.text_secondary,
                   DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX | DT_END_ELLIPSIS);
+
+        RECT status_rc{split_x + kOuterPadding, h - kStatusStripHeight,
+                       w - kOuterPadding, h};
+        draw_text(hdc, status_rc, status_text_.c_str(), hint_font, palette_.text,
+                  DT_RIGHT | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX | DT_END_ELLIPSIS);
     }
 
     void draw_chart_glyph(HDC hdc, const RECT& bounds) noexcept {
@@ -1443,6 +1655,7 @@ private:
     HINSTANCE instance_{GetModuleHandleW(nullptr)};
     nfui::ThemePalette palette_{};
     nfui::FontCache fonts_{};
+    std::wstring status_text_{};
 
     // CP40: KPI tiles (row 1) -> primary chart (row 2) -> comparison
     // chart (row 3) -> group. Reverse destruction drops the group

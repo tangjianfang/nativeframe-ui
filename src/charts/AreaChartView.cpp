@@ -91,15 +91,25 @@ void AreaChartView::on_paint(HDC hdc, const RECT& bounds) {
     fill_rect(hdc, bounds, pal.background);
 
     const std::size_t series_count = series_.size();
-    ChartLayout layout = compute_chart_layout(bounds, ChartKind::area, series_count);
-    if (layout.plot_bounds.right <= layout.plot_bounds.left ||
-        layout.plot_bounds.bottom <= layout.plot_bounds.top) {
-        return;
-    }
-
     std::size_t point_count = 0;
     for (const auto& s : series_) {
         point_count = std::max(point_count, s.points.size());
+    }
+
+    const int dpi = (hwnd() != nullptr) ? dpi_of(hwnd()) : 96;
+    HFONT tick_font = (fonts_ != nullptr) ? fonts_->mono(dpi, font_pt::chart_tick) : nullptr;
+    HFONT title_font = (fonts_ != nullptr) ? fonts_->regular(dpi, font_pt::sm) : nullptr;
+
+    const SIZE y_tick_size =
+        charts_internal::measure_axis_tick_extent(hdc, tick_font, effective_axis_y(), kTickCount);
+    const SIZE x_tick_size =
+        charts_internal::measure_axis_tick_extent(hdc, tick_font, effective_axis_x(), kTickCount);
+
+    ChartLayout layout = compute_chart_layout(bounds, ChartKind::area, series_count,
+                                              y_tick_size.cx, x_tick_size.cy);
+    if (layout.plot_bounds.right <= layout.plot_bounds.left ||
+        layout.plot_bounds.bottom <= layout.plot_bounds.top) {
+        return;
     }
 
     // Inner grid behind the filled area so the polygon reads against light
@@ -111,7 +121,6 @@ void AreaChartView::on_paint(HDC hdc, const RECT& bounds) {
     draw_plot_frame(hdc, layout, pal);
 
     if (point_count == 0) {
-        const int dpi = (hwnd() != nullptr) ? dpi_of(hwnd()) : 96;
         if (show_legend_) {
             charts_internal::draw_legend_column(hdc, layout.plot_bounds,
                                                 layout.legend_width_px, series_,
@@ -186,11 +195,11 @@ void AreaChartView::on_paint(HDC hdc, const RECT& bounds) {
         }
     }
 
-    const int dpi = (hwnd() != nullptr) ? dpi_of(hwnd()) : 96;
-    HFONT tick_font = (fonts_ != nullptr) ? fonts_->mono(dpi, font_pt::chart_tick) : nullptr;
-
     draw_value_axis_ticks_v(hdc, layout, effective_axis_y(), tick_font, pal);
     draw_index_axis_ticks_v(hdc, layout, point_count, tick_font, pal);
+    charts_internal::draw_axis_titles(hdc, layout,
+                                      settings_.x_axis_label, settings_.y_axis_label,
+                                      title_font, pal);
     if (show_legend_) {
         charts_internal::draw_legend_column(hdc, layout.plot_bounds,
                                             layout.legend_width_px, series_,

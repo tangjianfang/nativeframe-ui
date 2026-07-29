@@ -8,6 +8,8 @@
 #include "NativeFrameUIResource.h"
 
 #include <nfui/Charts.hpp>
+#include <nfui/KpiTile.hpp>
+#include <nfui/Sparkline.hpp>
 
 #include <psapi.h>
 #include <windows.h>
@@ -718,6 +720,51 @@ int wmain() {
             const bool bmp_ok = uncreated.export_to_bmp(L"C:\\should_not_exist.bmp");
             ok = expect(!png_ok, L"export_to_png on uncreated chart returns false") && ok;
             ok = expect(!bmp_ok, L"export_to_bmp on uncreated chart returns false") && ok;
+        }
+
+        // CP40: Sparkline smoke test — create, populate, and paint a
+        // minimal line-only chart. No axes/grid/legend; just an AA stroke.
+        {
+            using namespace nfui;
+            Sparkline spark;
+            WindowCreateParams p{};
+            p.instance = GetModuleHandleW(nullptr);
+            p.parent = controls_parent.hwnd();
+            p.style = WS_CHILD | WS_VISIBLE | WS_CLIPCHILDREN;
+            p.x = 0; p.y = 0; p.width = 160; p.height = 48;
+            ok = expect(spark.create(p), L"Sparkline::create") && ok;
+            ok = expect(spark.hwnd() != nullptr, L"Sparkline exposes HWND") && ok;
+            const ThemePalette palette_for_spark = theme_palette(ThemeMode::light);
+            spark.set_palette(&palette_for_spark);
+            spark.set_color(palette_for_spark.accent);
+            spark.set_points({{0.0, 10.0}, {1.0, 25.0}, {2.0, 18.0}, {3.0, 30.0}});
+            RedrawWindow(spark.hwnd(), nullptr, nullptr, RDW_INVALIDATE | RDW_UPDATENOW);
+            ok = expect(spark.hwnd() != nullptr, L"Sparkline paint cycle completes without crash") && ok;
+        }
+
+        // CP40: KpiTile smoke test — create the card, inject a theme + font
+        // cache, set label/value/delta/sparkline, and paint. The tile owns
+        // a Sparkline child HWND that must survive the paint cycle.
+        {
+            using namespace nfui;
+            KpiTile tile;
+            WindowCreateParams p{};
+            p.instance = GetModuleHandleW(nullptr);
+            p.parent = controls_parent.hwnd();
+            p.style = WS_CHILD | WS_VISIBLE | WS_CLIPCHILDREN;
+            p.x = 0; p.y = 0; p.width = 180; p.height = 120;
+            ok = expect(tile.create(p), L"KpiTile::create") && ok;
+            ok = expect(tile.hwnd() != nullptr, L"KpiTile exposes HWND") && ok;
+            const ThemePalette palette_for_tile = theme_palette(ThemeMode::light);
+            FontCache fonts_for_tile;
+            tile.inject_theme(&palette_for_tile, &fonts_for_tile);
+            tile.set_label(L"Revenue");
+            tile.set_value(L"$42K");
+            tile.set_delta_percent(3.5);
+            tile.set_sparkline({{0.0, 10.0}, {1.0, 25.0}, {2.0, 18.0}, {3.0, 30.0}},
+                               palette_for_tile.accent);
+            RedrawWindow(tile.hwnd(), nullptr, nullptr, RDW_INVALIDATE | RDW_UPDATENOW);
+            ok = expect(tile.hwnd() != nullptr, L"KpiTile paint cycle completes without crash") && ok;
         }
 
         controls_parent.destroy();

@@ -33,6 +33,32 @@ constexpr UINT_PTR kTimerAnimation = 0x4302;
 constexpr UINT kTooltipDelayMs = 300;
 constexpr UINT kAnimationIntervalMs = 16;
 constexpr double kZoomFactor = 1.15;
+
+// Linearly interpolate y for the given x across a monotonic series.
+[[nodiscard]] double interpolate_series_value(
+    const std::vector<ChartPoint>& points, double x) noexcept {
+    if (points.empty()) {
+        return std::numeric_limits<double>::quiet_NaN();
+    }
+    if (x <= points.front().x) {
+        return points.front().y;
+    }
+    if (x >= points.back().x) {
+        return points.back().y;
+    }
+    auto it = std::lower_bound(points.begin(), points.end(), x,
+        [](const ChartPoint& p, double value) { return p.x < value; });
+    if (it == points.begin()) {
+        return it->y;
+    }
+    const auto prev = it - 1;
+    const double dx = it->x - prev->x;
+    if (dx == 0.0) {
+        return prev->y;
+    }
+    const double t = (x - prev->x) / dx;
+    return prev->y + t * (it->y - prev->y);
+}
 } // namespace
 
 // PIMPL-style internal state. Heap-allocated so Charts.hpp stays light.
@@ -384,6 +410,9 @@ LRESULT ChartView::handle_interaction_message(UINT message, WPARAM wparam, LPARA
             if (interaction_->group_cursor_observer) {
                 interaction_->group_cursor_observer(std::nullopt);
             }
+            if (interaction_->callbacks.on_cursor_readout) {
+                interaction_->callbacks.on_cursor_readout(ChartCursorReadout{});
+            }
         }
         return 0;
     }
@@ -551,6 +580,27 @@ void ChartView::on_mouse_move_interaction(POINT cursor) {
         }
         if (impl.group_cursor_observer) {
             impl.group_cursor_observer(data_px.x);
+        }
+
+        // CP40: emit interpolated per-series readout for the cursor x.
+        if (impl.callbacks.on_cursor_readout) {
+            ChartCursorReadout readout{};
+            readout.x = data_px.x;
+            const std::size_t n = series_.size();
+            readout.series_values.reserve(n);
+            for (std::size_t i = 0; i < n; ++i) {
+                if (!is_series_visible(i)) {
+                    continue;
+                }
+                const double y = interpolate_series_value(series_[i].points, data_px.x);
+                readout.series_values.emplace_back(i, y);
+            }
+            impl.callbacks.on_cursor_readout(std::move(readout));
+        }
+    } else {
+        // Cursor left plot: clear readout so stale values do not linger.
+        if (impl.callbacks.on_cursor_readout) {
+            impl.callbacks.on_cursor_readout(ChartCursorReadout{});
         }
     }
 }

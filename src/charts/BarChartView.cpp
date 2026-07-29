@@ -176,15 +176,25 @@ void BarChartView::on_paint(HDC hdc, const RECT& bounds) {
     fill_rect(hdc, bounds, pal.background);
 
     const std::size_t series_count = series_.size();
-    ChartLayout layout = compute_chart_layout(bounds, ChartKind::bar_vertical, series_count);
-    if (layout.plot_bounds.right <= layout.plot_bounds.left ||
-        layout.plot_bounds.bottom <= layout.plot_bounds.top) {
-        return;
-    }
-
     std::size_t bar_count = 0;
     for (const auto& s : series_) {
         bar_count = std::max(bar_count, s.points.size());
+    }
+
+    const int dpi = (hwnd() != nullptr) ? dpi_of(hwnd()) : 96;
+    HFONT tick_font = (fonts_ != nullptr) ? fonts_->mono(dpi, font_pt::chart_tick) : nullptr;
+    HFONT title_font = (fonts_ != nullptr) ? fonts_->regular(dpi, font_pt::sm) : nullptr;
+
+    const SIZE y_tick_size =
+        charts_internal::measure_axis_tick_extent(hdc, tick_font, effective_axis_y(), kTickCount);
+    const SIZE x_tick_size =
+        charts_internal::measure_axis_tick_extent(hdc, tick_font, effective_axis_x(), kTickCount);
+
+    ChartLayout layout = compute_chart_layout(bounds, ChartKind::bar_vertical, series_count,
+                                              y_tick_size.cx, x_tick_size.cy);
+    if (layout.plot_bounds.right <= layout.plot_bounds.left ||
+        layout.plot_bounds.bottom <= layout.plot_bounds.top) {
+        return;
     }
     if (bar_count == 0) {
         // Even on an empty plot, draw the value-axis grid so the chrome
@@ -194,7 +204,6 @@ void BarChartView::on_paint(HDC hdc, const RECT& bounds) {
         const Color grid_color = charts_internal::derive_grid_color(pal);
         charts_internal::draw_grid_hlines(hdc, layout.plot_bounds, grid_color, kTickCount);
         draw_plot_frame(hdc, layout, pal);
-        const int dpi = (hwnd() != nullptr) ? dpi_of(hwnd()) : 96;
         if (show_legend_) {
             charts_internal::draw_legend_column(hdc, layout.plot_bounds,
                                                 layout.legend_width_px, series_,
@@ -221,7 +230,6 @@ void BarChartView::on_paint(HDC hdc, const RECT& bounds) {
     const int plot_h = layout.plot_bounds.bottom - layout.plot_bounds.top;
     const int band_slot_w = bands.front().right - bands.front().left;
     const int sub_w = std::max(1, band_slot_w / static_cast<int>(visible_series_count));
-    const int dpi = (hwnd() != nullptr) ? dpi_of(hwnd()) : 96;
     const DpiScale dpi_scale(dpi);
     HFONT value_font = (fonts_ != nullptr)
         ? fonts_->semibold(dpi, font_pt::sm)
@@ -375,8 +383,6 @@ void BarChartView::on_paint(HDC hdc, const RECT& bounds) {
         }
     }
 
-    HFONT tick_font = (fonts_ != nullptr) ? fonts_->mono(dpi, font_pt::chart_tick) : nullptr;
-
     // In stacked mode the tick labels should reflect the column-sum range, not
     // the per-series axis range, so the y-axis reads [axis_y.min, max_col_sum].
     ChartAxisRange tick_axis_y = effective_axis_y();
@@ -386,6 +392,9 @@ void BarChartView::on_paint(HDC hdc, const RECT& bounds) {
 
     draw_value_axis_ticks_v(hdc, layout, tick_axis_y, tick_font, pal);
     draw_category_axis_ticks_v(hdc, layout, bar_count, tick_font, pal);
+    charts_internal::draw_axis_titles(hdc, layout,
+                                      settings_.x_axis_label, settings_.y_axis_label,
+                                      title_font, pal);
     if (show_legend_) {
         charts_internal::draw_legend_column(hdc, layout.plot_bounds,
                                             layout.legend_width_px, series_,

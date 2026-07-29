@@ -111,6 +111,74 @@ void draw_grid_vlines(HDC hdc,
     }
 }
 
+SIZE measure_axis_tick_extent(HDC hdc,
+                              HFONT font,
+                              const ChartAxisRange& axis,
+                              int tick_count) noexcept {
+    SIZE out{0, 0};
+    if (hdc == nullptr || font == nullptr || tick_count < 1 ||
+        !(axis.max > axis.min)) {
+        return out;
+    }
+
+    const HFONT prev_font = static_cast<HFONT>(SelectObject(hdc, font));
+    SIZE max_size{0, 0};
+    for (int i = 0; i <= tick_count; ++i) {
+        const double t = static_cast<double>(i) / static_cast<double>(tick_count);
+        const double value = axis.min + t * (axis.max - axis.min);
+        const std::wstring text = format_axis_tick(value, axis.label_format);
+        SIZE sz{};
+        if (GetTextExtentPoint32W(hdc, text.c_str(),
+                                  static_cast<int>(text.size()), &sz) != 0) {
+            if (sz.cx > max_size.cx) max_size.cx = sz.cx;
+            if (sz.cy > max_size.cy) max_size.cy = sz.cy;
+        }
+    }
+    SelectObject(hdc, prev_font);
+    return max_size;
+}
+
+void draw_axis_titles(HDC hdc,
+                      const ChartLayout& layout,
+                      std::wstring_view x_label,
+                      std::wstring_view y_label,
+                      HFONT font,
+                      const ThemePalette& pal) noexcept {
+    if (hdc == nullptr) return;
+
+    const RECT& pb = layout.plot_bounds;
+    if (pb.right <= pb.left || pb.bottom <= pb.top) return;
+
+    const HFONT prev_font = (font != nullptr)
+        ? static_cast<HFONT>(SelectObject(hdc, font))
+        : nullptr;
+    const int prev_mode = SetBkMode(hdc, TRANSPARENT);
+
+    if (!x_label.empty()) {
+        RECT rc{ pb.left,
+                 pb.bottom + kBottomGutter,
+                 pb.right,
+                 pb.bottom + kBottomGutter + kAxisTitleHeight };
+        draw_text(hdc, rc, x_label, font, pal.text_secondary,
+                  DT_CENTER | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX);
+    }
+
+    if (!y_label.empty()) {
+        RECT rc{ pb.left - kAxisGutter,
+                 pb.top - kAxisTitleHeight,
+                 pb.right,
+                 pb.top };
+        draw_text(hdc, rc, y_label, font, pal.text_secondary,
+                  DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX |
+                  DT_END_ELLIPSIS);
+    }
+
+    SetBkMode(hdc, prev_mode);
+    if (prev_font != nullptr) {
+        SelectObject(hdc, prev_font);
+    }
+}
+
 void draw_legend_column(HDC hdc,
                         const RECT& plot_bounds,
                         int legend_width_px,

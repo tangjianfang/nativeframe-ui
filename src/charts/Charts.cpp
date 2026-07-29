@@ -1,5 +1,7 @@
 #include <nfui/Charts.hpp>
 
+#include "internal/ChartsPaint.hpp"
+
 #include <algorithm>
 #include <cstddef>
 #include <cstdio>
@@ -11,9 +13,7 @@ namespace nfui {
 
 namespace {
 
-constexpr int kAxisGutter = 40;      // px reserved for the y-axis tick labels (must exceed BarChartView::kAxisLabelGutter=28 + 8 px tick mark so the rightmost glyph doesn't sit flush against the plot frame)
-constexpr int kTopGutter = 24;       // px reserved above the plot for value labels above the tallest bar
-constexpr int kBottomGutter = 28;    // px reserved below the plot for category-axis tick labels (must cover kAxisLabelGutter so 1..N digits aren't clipped)
+using namespace charts_internal;
 
 [[nodiscard]] int normalize_axis(double v, double axis_min, double axis_max, int span) noexcept {
     if (span <= 0) return 0;
@@ -28,7 +28,9 @@ constexpr int kBottomGutter = 28;    // px reserved below the plot for category-
 
 ChartLayout compute_chart_layout(RECT content_bounds,
                                  ChartKind kind,
-                                 std::size_t series_count) noexcept {
+                                 std::size_t series_count,
+                                 int y_label_w_px,
+                                 int x_label_h_px) noexcept {
     ChartLayout layout{};
     const int width = content_bounds.right - content_bounds.left;
     const int height = content_bounds.bottom - content_bounds.top;
@@ -43,9 +45,16 @@ ChartLayout compute_chart_layout(RECT content_bounds,
     // horizontal bars get their width from the height budget via the swap.
     const bool right_gutter_needed = (series_count <= 1) &
                                      (kind != ChartKind::bar_horizontal);
-    const int reserved_w = layout.legend_width_px + kAxisGutter +
+    const int left_gutter   = std::max(kAxisGutter, y_label_w_px + 8);
+    const int bottom_gutter = std::max(kBottomGutter, x_label_h_px + 6);
+    const int reserved_w = layout.legend_width_px + left_gutter +
                            (right_gutter_needed ? kAxisGutter : 0);
-    const int reserved_h = kTopGutter + kBottomGutter + kAxisGutter;
+    // Reserve room for the y-title band above the plot and the x-title band
+    // below the x ticks. Defaults keep labels non-empty, so every chart pays
+    // this cost; an empty label still reserves the band (minor waste, but it
+    // avoids changing this helper's signature across all call sites).
+    const int reserved_h = kTopGutter + kAxisTitleHeight +
+                           bottom_gutter + kAxisTitleHeight;
 
     int plot_w = width - reserved_w;
     int plot_h = height - reserved_h;
@@ -58,12 +67,19 @@ ChartLayout compute_chart_layout(RECT content_bounds,
     }
 
     layout.plot_bounds = RECT{
-        content_bounds.left + kAxisGutter,
-        content_bounds.top + kTopGutter,
-        content_bounds.left + kAxisGutter + plot_w,
-        content_bounds.top + kTopGutter + plot_h,
+        content_bounds.left + left_gutter,
+        content_bounds.top + kTopGutter + kAxisTitleHeight,
+        content_bounds.left + left_gutter + plot_w,
+        content_bounds.top + kTopGutter + kAxisTitleHeight + plot_h,
     };
     return layout;
+}
+
+ChartLayout compute_chart_layout(RECT content_bounds,
+                                 ChartKind kind,
+                                 std::size_t series_count) noexcept {
+    return compute_chart_layout(content_bounds, kind, series_count,
+                                kAxisGutter, kBottomGutter);
 }
 
 std::vector<POINT> normalize_points(const std::vector<ChartPoint>& points,

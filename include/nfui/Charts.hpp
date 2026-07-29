@@ -67,6 +67,13 @@ struct ChartLayout {
 // Pure helpers (HWND-free, unit-testable):
 [[nodiscard]] ChartLayout compute_chart_layout(RECT content_bounds,
                                               ChartKind kind,
+                                              std::size_t series_count,
+                                              int y_label_w_px,
+                                              int x_label_h_px) noexcept;
+
+// Convenience overload that uses the fixed default gutter sizes.
+[[nodiscard]] ChartLayout compute_chart_layout(RECT content_bounds,
+                                              ChartKind kind,
                                               std::size_t series_count) noexcept;
 
 [[nodiscard]] std::vector<POINT> normalize_points(const std::vector<ChartPoint>& points,

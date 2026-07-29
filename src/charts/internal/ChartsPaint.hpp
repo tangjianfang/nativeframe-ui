@@ -12,6 +12,14 @@
 
 namespace nfui::charts_internal {
 
+// Shared layout constants. Centralized here so compute_chart_layout (Charts.cpp)
+// and the tick/title/legend helpers below use one source of truth. Kept internal
+// because public callers should rely on ChartLayout, not these numbers.
+inline constexpr int kAxisGutter      = 40;  // y tick label gutter
+inline constexpr int kTopGutter       = 24;  // room above plot
+inline constexpr int kBottomGutter    = 28;  // x tick label gutter
+inline constexpr int kAxisTitleHeight = 16;  // reserved band for an axis title
+
 // Draws a multi-point polyline (count >= 2). When GDI+ is active the stroke
 // is antialiased; otherwise falls back to the existing nfui::draw_polyline.
 void draw_polyline_aa(HDC hdc,
@@ -86,5 +94,24 @@ void draw_legend_column(HDC hdc,
                         const ThemePalette* palette,
                         FontCache* fonts,
                         int dpi) noexcept;
+
+// Draws the x and y axis titles in the bands reserved by compute_chart_layout.
+// Empty labels suppress that axis. Titles use the supplied font and the palette's
+// text_secondary color so they read as chrome, not data.
+void draw_axis_titles(HDC hdc,
+                      const ChartLayout& layout,
+                      std::wstring_view x_label,
+                      std::wstring_view y_label,
+                      HFONT font,
+                      const ThemePalette& pal) noexcept;
+
+// Measures the widest and tallest formatted tick label for an axis range.
+// Samples `tick_count + 1` evenly spaced values across `[axis.min, axis.max]`
+// and returns the maximum width and height in logical pixels. A null HDC or
+// null font returns {0,0} so callers fall back to the fixed default gutters.
+[[nodiscard]] SIZE measure_axis_tick_extent(HDC hdc,
+                                            HFONT font,
+                                            const ChartAxisRange& axis,
+                                            int tick_count) noexcept;
 
 } // namespace nfui::charts_internal

@@ -159,11 +159,33 @@ void HBarChartView::on_paint(HDC hdc, const RECT& bounds) {
 
     fill_rect(hdc, bounds, pal.background);
 
+    const std::size_t series_count = series_.size();
+    std::size_t bar_count = 0;
+    for (const auto& s : series_) {
+        bar_count = std::max(bar_count, s.points.size());
+    }
+
+    const int dpi = (hwnd() != nullptr) ? dpi_of(hwnd()) : 96;
+    const DpiScale dpi_scale(dpi);
+    HFONT tick_font = (fonts_ != nullptr) ? fonts_->mono(dpi, font_pt::chart_tick) : nullptr;
+    HFONT title_font = (fonts_ != nullptr) ? fonts_->regular(dpi, font_pt::sm) : nullptr;
+    HFONT value_font = (fonts_ != nullptr)
+        ? fonts_->semibold(dpi, font_pt::sm)
+        : nullptr;
+
+    // Horizontal bars: the category axis sits on the left, the value axis on
+    // the bottom. Measure those extents so the gutters fit the actual labels.
+    const ChartAxisRange category_axis{1.0, static_cast<double>(bar_count), L"{:.0f}"};
+    const SIZE y_tick_size =
+        charts_internal::measure_axis_tick_extent(hdc, tick_font, category_axis, kTickCount);
+    const SIZE x_tick_size =
+        charts_internal::measure_axis_tick_extent(hdc, tick_font, effective_axis_y(), kTickCount);
+
     // Start with the shared horizontal-chart layout, then restore its available
     // width/height below because this renderer performs the orientation mapping
     // directly when it computes rows and bar lengths.
-    const std::size_t series_count = series_.size();
-    ChartLayout layout = compute_chart_layout(bounds, ChartKind::bar_horizontal, series_count);
+    ChartLayout layout = compute_chart_layout(bounds, ChartKind::bar_horizontal, series_count,
+                                              y_tick_size.cx, x_tick_size.cy);
     // compute_chart_layout transposes the available plot dimensions for the
     // horizontal kind. This renderer already maps values to x and categories
     // to y explicitly, so undo that transposition here; otherwise a wide,
@@ -175,17 +197,6 @@ void HBarChartView::on_paint(HDC hdc, const RECT& bounds) {
     if (layout.plot_bounds.right <= layout.plot_bounds.left ||
         layout.plot_bounds.bottom <= layout.plot_bounds.top) {
         return;
-    }
-
-    const int dpi = (hwnd() != nullptr) ? dpi_of(hwnd()) : 96;
-    const DpiScale dpi_scale(dpi);
-    HFONT value_font = (fonts_ != nullptr)
-        ? fonts_->semibold(dpi, font_pt::sm)
-        : nullptr;
-
-    std::size_t bar_count = 0;
-    for (const auto& s : series_) {
-        bar_count = std::max(bar_count, s.points.size());
     }
 
     if (bar_count == 0) {
@@ -427,8 +438,6 @@ void HBarChartView::on_paint(HDC hdc, const RECT& bounds) {
         }
     }
 
-    HFONT tick_font = (fonts_ != nullptr) ? fonts_->mono(dpi, font_pt::chart_tick) : nullptr;
-
     // In stacked mode the tick labels should reflect the row-sum range, not
     // the per-series axis range, so the x-axis reads [axis_y.min, max_row_sum].
     ChartAxisRange tick_axis = effective_axis_y();
@@ -438,6 +447,9 @@ void HBarChartView::on_paint(HDC hdc, const RECT& bounds) {
 
     draw_value_axis_ticks_h(hdc, layout, tick_axis, tick_font, pal);
     draw_category_axis_ticks_h(hdc, layout, bar_count, tick_font, pal);
+    charts_internal::draw_axis_titles(hdc, layout,
+                                      settings_.x_axis_label, settings_.y_axis_label,
+                                      title_font, pal);
     if (show_legend_) {
         charts_internal::draw_legend_column(hdc, layout.plot_bounds,
                                             layout.legend_width_px, series_,

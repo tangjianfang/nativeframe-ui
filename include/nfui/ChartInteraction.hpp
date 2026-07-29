@@ -165,6 +165,14 @@ struct ChartInteractionOptions {
     unsigned undo_depth{64};       // Maximum undo stack depth.
 };
 
+// CP40: per-series interpolated values at the current cursor x. Fires from
+// the chart interaction controller so the host can build a readout panel
+// without re-implementing the data-space interpolation.
+struct ChartCursorReadout {
+    double x{0.0};
+    std::vector<std::pair<std::size_t, double>> series_values{};  // index, y
+};
+
 // Callback interface. The host sets individual std::function members; unset
 // callbacks are simply not invoked. All callbacks fire on the UI thread that
 // owns the chart HWND, and never while an internal lock is held.
@@ -197,6 +205,10 @@ struct ChartCallbacks {
     // the new values from chart.settings() (e.g. to rewire its palette
     // for theme changes, or rebuild controls for kind changes).
     std::function<void(ChartSettings)> on_settings_changed;
+
+    // CP40: interpolated per-series values at the cursor x. Fires after
+    // crosshair (so it carries current x) and before tooltip.
+    std::function<void(ChartCursorReadout)> on_cursor_readout;
 };
 
 // A single undoable/redoable edit command.
