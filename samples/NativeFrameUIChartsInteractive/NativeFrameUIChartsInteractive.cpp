@@ -649,6 +649,9 @@ public:
         };
         if (!Window::create(cp)) return false;
         SetWindowLongPtrW(hwnd(), GWLP_ID, kDialogId);
+        // CP42: seed the dialog palette before populating so the self-painted
+        // nfui children are themed on their first paint.
+        palette_ = palette_for_dialog();
         populate_controls(initial);
         return true;
     }
@@ -670,6 +673,20 @@ protected:
         case WM_COMMAND: {
             const int id = LOWORD(wparam);
             const int code = HIWORD(wparam);
+            if (code == CBN_SELCHANGE && id == kThemeId) {
+                // CP42: live theme switch. The theme combo is now a self-painted
+                // nfui::ComboBox, so re-injecting the palette repaints every
+                // child in the new theme immediately — the raw-native dialog
+                // could not do this because native controls ignored the palette.
+                const int sel = static_cast<int>(
+                    SendMessageW(theme_combo_.hwnd(), CB_GETCURSEL, 0, 0));
+                dialog_theme_mode_ = (sel == 1)
+                    ? nfui::ChartSettings::ThemeMode::dark
+                    : nfui::ChartSettings::ThemeMode::light;
+                palette_ = palette_for_dialog();
+                retheme_children();
+                return 0;
+            }
             if (code == BN_CLICKED) {
                 if (id == kApplyId) {
                     if (on_apply_) on_apply_(collect_settings());
@@ -725,99 +742,114 @@ private:
     }
 
     void populate_controls(nfui::ChartSettings s) noexcept {
-        RECT rc{};
-        GetClientRect(hwnd(), &rc);
+        // CP42: self-painted nfui controls replace the raw COMBOBOX /
+        // BS_AUTOCHECKBOX / STATIC / BUTTON that bleached native gray in dark
+        // mode. Each is injected with the dialog palette + font cache before
+        // create() so the first paint is themed; retheme_children() re-injects
+        // when the theme combo selection changes.
+        theme_combo_.inject_theme(&palette_, &fonts_);
+        kind_combo_.inject_theme(&palette_, &fonts_);
+        theme_label_.inject_theme(&palette_, &fonts_);
+        kind_label_.inject_theme(&palette_, &fonts_);
+        cross_chk_.inject_theme(&palette_, &fonts_);
+        tip_chk_.inject_theme(&palette_, &fonts_);
+        legend_chk_.inject_theme(&palette_, &fonts_);
+        apply_btn_.inject_theme(&palette_, &fonts_);
+        cancel_btn_.inject_theme(&palette_, &fonts_);
 
-        CreateWindowExW(0, L"STATIC", L"Theme:",
-                        WS_CHILD | WS_VISIBLE,
-                        16, 20, 80, 18,
-                        hwnd(), nullptr, instance_, nullptr);
-        theme_combo_ = CreateWindowExW(0, L"COMBOBOX", nullptr,
-            CBS_DROPDOWNLIST | WS_CHILD | WS_VISIBLE | WS_TABSTOP,
-            110, 18, 230, 80,
-            hwnd(), reinterpret_cast<HMENU>(static_cast<INT_PTR>(kThemeId)),
-            instance_, nullptr);
-        SendMessageW(theme_combo_, CB_ADDSTRING, 0,
+        style_labels();
+        if (!theme_label_.create({instance_, hwnd(), 0, L"Theme:", 16, 20, 80, 18})) return;
+        if (!theme_combo_.create({instance_, hwnd(), kThemeId, L"", 110, 18, 230, 80})) return;
+        SendMessageW(theme_combo_.hwnd(), CB_ADDSTRING, 0,
                       reinterpret_cast<LPARAM>(L"Light"));
-        SendMessageW(theme_combo_, CB_ADDSTRING, 0,
+        SendMessageW(theme_combo_.hwnd(), CB_ADDSTRING, 0,
                       reinterpret_cast<LPARAM>(L"Dark"));
-        SendMessageW(theme_combo_, CB_SETCURSEL,
+        SendMessageW(theme_combo_.hwnd(), CB_SETCURSEL,
                      s.theme == nfui::ChartSettings::ThemeMode::dark ? 1 : 0, 0);
 
-        CreateWindowExW(0, L"STATIC", L"Chart kind:",
-                        WS_CHILD | WS_VISIBLE,
-                        16, 56, 80, 18,
-                        hwnd(), nullptr, instance_, nullptr);
-        kind_combo_ = CreateWindowExW(0, L"COMBOBOX", nullptr,
-            CBS_DROPDOWNLIST | WS_CHILD | WS_VISIBLE | WS_TABSTOP,
-            110, 54, 230, 120,
-            hwnd(), reinterpret_cast<HMENU>(static_cast<INT_PTR>(kKindId)),
-            instance_, nullptr);
-        SendMessageW(kind_combo_, CB_ADDSTRING, 0,
+        if (!kind_label_.create({instance_, hwnd(), 0, L"Chart kind:", 16, 56, 80, 18})) return;
+        if (!kind_combo_.create({instance_, hwnd(), kKindId, L"", 110, 54, 230, 120})) return;
+        SendMessageW(kind_combo_.hwnd(), CB_ADDSTRING, 0,
                       reinterpret_cast<LPARAM>(L"Line"));
-        SendMessageW(kind_combo_, CB_ADDSTRING, 0,
+        SendMessageW(kind_combo_.hwnd(), CB_ADDSTRING, 0,
                       reinterpret_cast<LPARAM>(L"Spline"));
-        SendMessageW(kind_combo_, CB_ADDSTRING, 0,
+        SendMessageW(kind_combo_.hwnd(), CB_ADDSTRING, 0,
                       reinterpret_cast<LPARAM>(L"Area"));
-        SendMessageW(kind_combo_, CB_ADDSTRING, 0,
+        SendMessageW(kind_combo_.hwnd(), CB_ADDSTRING, 0,
                       reinterpret_cast<LPARAM>(L"Bar (vertical)"));
-        SendMessageW(kind_combo_, CB_ADDSTRING, 0,
+        SendMessageW(kind_combo_.hwnd(), CB_ADDSTRING, 0,
                       reinterpret_cast<LPARAM>(L"Bar (horizontal)"));
-        SendMessageW(kind_combo_, CB_SETCURSEL, kind_model_to_dialog(s.kind_id), 0);
+        SendMessageW(kind_combo_.hwnd(), CB_SETCURSEL, kind_model_to_dialog(s.kind_id), 0);
 
-        cross_chk_ = CreateWindowExW(0, L"BUTTON", L"Show crosshair",
-            BS_AUTOCHECKBOX | WS_CHILD | WS_VISIBLE | WS_TABSTOP,
-            16, 100, 320, 20,
-            hwnd(), reinterpret_cast<HMENU>(static_cast<INT_PTR>(kCrossId)),
-            instance_, nullptr);
-        SendMessageW(cross_chk_, BM_SETCHECK,
-                     s.show_crosshair ? BST_CHECKED : BST_UNCHECKED, 0);
+        if (!cross_chk_.create({instance_, hwnd(), kCrossId, L"Show crosshair",
+                                16, 100, 320, 20})) return;
+        cross_chk_.set_checked(s.show_crosshair);
+        if (!tip_chk_.create({instance_, hwnd(), kTooltipId, L"Show tooltip",
+                              16, 128, 320, 20})) return;
+        tip_chk_.set_checked(s.show_tooltip);
+        if (!legend_chk_.create({instance_, hwnd(), kLegendId, L"Show legend",
+                                 16, 156, 320, 20})) return;
+        legend_chk_.set_checked(s.show_legend);
 
-        tip_chk_ = CreateWindowExW(0, L"BUTTON", L"Show tooltip",
-            BS_AUTOCHECKBOX | WS_CHILD | WS_VISIBLE | WS_TABSTOP,
-            16, 128, 320, 20,
-            hwnd(), reinterpret_cast<HMENU>(static_cast<INT_PTR>(kTooltipId)),
-            instance_, nullptr);
-        SendMessageW(tip_chk_, BM_SETCHECK,
-                     s.show_tooltip ? BST_CHECKED : BST_UNCHECKED, 0);
+        // Apply = accent primary (default); Cancel = muted secondary.
+        nfui::ButtonStyle apply_style{};
+        apply_style.use_semibold = true;
+        apply_btn_.set_style(apply_style);
+        if (!apply_btn_.create({instance_, hwnd(), kApplyId, L"Apply",
+                                110, 220, 100, 28})) return;
+        nfui::ButtonStyle cancel_style{};
+        cancel_style.use_semibold = true;
+        cancel_style.secondary = true;
+        cancel_btn_.set_style(cancel_style);
+        if (!cancel_btn_.create({instance_, hwnd(), kCancelId, L"Cancel",
+                                 230, 220, 100, 28})) return;
+    }
 
-        legend_chk_ = CreateWindowExW(0, L"BUTTON", L"Show legend",
-            BS_AUTOCHECKBOX | WS_CHILD | WS_VISIBLE | WS_TABSTOP,
-            16, 156, 320, 20,
-            hwnd(), reinterpret_cast<HMENU>(static_cast<INT_PTR>(kLegendId)),
-            instance_, nullptr);
-        SendMessageW(legend_chk_, BM_SETCHECK,
-                     s.show_legend ? BST_CHECKED : BST_UNCHECKED, 0);
+    // CP42: re-inject the live palette into every self-painted child so a
+    // theme-combo change flips the whole dialog (controls + background) at once.
+    void retheme_children() noexcept {
+        style_labels();
+        const auto re = [this](nfui::Control& c) {
+            if (c.valid()) c.inject_theme(&palette_, &fonts_);
+        };
+        re(theme_combo_); re(kind_combo_);
+        re(theme_label_); re(kind_label_);
+        re(cross_chk_); re(tip_chk_); re(legend_chk_);
+        re(apply_btn_); re(cancel_btn_);
+        InvalidateRect(hwnd(), nullptr, FALSE);
+    }
 
-        CreateWindowExW(0, L"BUTTON", L"Apply",
-            BS_DEFPUSHBUTTON | WS_CHILD | WS_VISIBLE | WS_TABSTOP,
-            110, 220, 100, 28,
-            hwnd(), reinterpret_cast<HMENU>(static_cast<INT_PTR>(kApplyId)),
-            instance_, nullptr);
-        CreateWindowExW(0, L"BUTTON", L"Cancel",
-            WS_CHILD | WS_VISIBLE | WS_TABSTOP,
-            230, 220, 100, 28,
-            hwnd(), reinterpret_cast<HMENU>(static_cast<INT_PTR>(kCancelId)),
-            instance_, nullptr);
+    // CP42: StaticText paints its own background (default palette.background),
+    // which would seam against the dialog's surface fill. Pin the labels to the
+    // dialog surface colour so they blend, and refresh on every retheme.
+    void style_labels() noexcept {
+        nfui::TextStyle label_style{};
+        label_style.background = palette_.background;
+        label_style.foreground = palette_.text_secondary;
+        theme_label_.set_style(label_style);
+        kind_label_.set_style(label_style);
     }
 
     nfui::ChartSettings collect_settings() const noexcept {
         nfui::ChartSettings s{};
-        const int theme_idx = static_cast<int>(SendMessageW(theme_combo_, CB_GETCURSEL, 0, 0));
+        const int theme_idx = static_cast<int>(SendMessageW(theme_combo_.hwnd(), CB_GETCURSEL, 0, 0));
         s.theme = (theme_idx == 1)
             ? nfui::ChartSettings::ThemeMode::dark
             : nfui::ChartSettings::ThemeMode::light;
-        const int kind_dialog_idx = static_cast<int>(SendMessageW(kind_combo_, CB_GETCURSEL, 0, 0));
+        const int kind_dialog_idx = static_cast<int>(SendMessageW(kind_combo_.hwnd(), CB_GETCURSEL, 0, 0));
         s.kind_id = kind_dialog_to_model(kind_dialog_idx);
-        s.show_crosshair = (SendMessageW(cross_chk_, BM_GETCHECK, 0, 0) == BST_CHECKED);
-        s.show_tooltip = (SendMessageW(tip_chk_, BM_GETCHECK, 0, 0) == BST_CHECKED);
-        s.show_legend = (SendMessageW(legend_chk_, BM_GETCHECK, 0, 0) == BST_CHECKED);
+        s.show_crosshair = (SendMessageW(cross_chk_.hwnd(), BM_GETCHECK, 0, 0) == BST_CHECKED);
+        s.show_tooltip = (SendMessageW(tip_chk_.hwnd(), BM_GETCHECK, 0, 0) == BST_CHECKED);
+        s.show_legend = (SendMessageW(legend_chk_.hwnd(), BM_GETCHECK, 0, 0) == BST_CHECKED);
         return s;
     }
 
     void paint_background(HDC hdc, const RECT& bounds) noexcept {
+        // CP42: fill with palette.background so the self-painted CheckBox rows
+        // and StaticText labels (which clear with p.background) blend with the
+        // dialog surface; the ComboBox fields lift as p.surface cards on top.
         const nfui::ThemePalette& pal = palette_for_dialog();
-        fill_rect(hdc, bounds, pal.surface);
+        fill_rect(hdc, bounds, pal.background);
         HPEN pen = CreatePen(PS_SOLID, 1, pal.border.rgb);
         HPEN old = static_cast<HPEN>(SelectObject(hdc, pen));
         HBRUSH old_brush = static_cast<HBRUSH>(SelectObject(hdc, GetStockObject(NULL_BRUSH)));
@@ -836,11 +868,17 @@ private:
     }
 
     HINSTANCE instance_{GetModuleHandleW(nullptr)};
-    HWND theme_combo_{};
-    HWND kind_combo_{};
-    HWND cross_chk_{};
-    HWND tip_chk_{};
-    HWND legend_chk_{};
+    nfui::ThemePalette palette_{};
+    nfui::FontCache fonts_{};
+    nfui::ComboBox theme_combo_{};
+    nfui::ComboBox kind_combo_{};
+    nfui::StaticText theme_label_{};
+    nfui::StaticText kind_label_{};
+    nfui::CheckBox cross_chk_{};
+    nfui::CheckBox tip_chk_{};
+    nfui::CheckBox legend_chk_{};
+    nfui::Button apply_btn_{};
+    nfui::Button cancel_btn_{};
     nfui::ChartSettings::ThemeMode dialog_theme_mode_{nfui::ChartSettings::ThemeMode::light};
     std::function<void(nfui::ChartSettings)> on_apply_{};
 };
