@@ -4,6 +4,7 @@
 #include <nfui/Clock.hpp>
 #include <nfui/Animation.hpp>
 #include <nfui/VectorIcon.hpp>
+#include <nfui/ThemeBroker.hpp>
 
 #include "NativeFrameUIResource.h"
 
@@ -154,6 +155,47 @@ LRESULT CALLBACK reflection_test_subclass_proc(HWND hwnd, UINT message, WPARAM w
 }
 
 } // namespace
+
+bool test_theme_broadcast_propagates_to_children() {
+    // Create a parent HWND with two child HWNDs; register all three.
+    // Switch theme to dark; assert each received the broker callback.
+    // Switch back to light; assert again. Each registered HWND must
+    // observe exactly two callback invocations: 1 for dark, 1 for light.
+    HWND parent = CreateWindowExW(0, L"STATIC", L"", WS_OVERLAPPED,
+                                  0, 0, 100, 100, nullptr, nullptr,
+                                  GetModuleHandleW(nullptr), nullptr);
+    if (parent == nullptr) return false;
+
+    HWND child1 = CreateWindowExW(0, L"BUTTON", L"", WS_CHILD,
+                                  0, 0, 10, 10, parent, nullptr,
+                                  GetModuleHandleW(nullptr), nullptr);
+    HWND child2 = CreateWindowExW(0, L"EDIT", L"", WS_CHILD,
+                                  0, 0, 10, 10, parent, nullptr,
+                                  GetModuleHandleW(nullptr), nullptr);
+
+    int parent_hits = 0, c1_hits = 0, c2_hits = 0;
+
+    nfui::ThemeBroker::instance().register_hwnd(parent,
+        [&](nfui::ThemeMode) { ++parent_hits; });
+    nfui::ThemeBroker::instance().register_hwnd(child1,
+        [&](nfui::ThemeMode) { ++c1_hits; });
+    nfui::ThemeBroker::instance().register_hwnd(child2,
+        [&](nfui::ThemeMode) { ++c2_hits; });
+
+    nfui::ThemeBroker::instance().set_theme(nfui::ThemeMode::dark);
+    nfui::ThemeBroker::instance().set_theme(nfui::ThemeMode::light);
+
+    bool ok = (parent_hits == 2) && (c1_hits == 2) && (c2_hits == 2);
+
+    nfui::ThemeBroker::instance().unregister_hwnd(parent);
+    nfui::ThemeBroker::instance().unregister_hwnd(child1);
+    nfui::ThemeBroker::instance().unregister_hwnd(child2);
+
+    DestroyWindow(child2);
+    DestroyWindow(child1);
+    DestroyWindow(parent);
+    return ok;
+}
 
 int per_component_smoke(); // defined below main() — per-component lib split smoke checks (T4-T12).
 
@@ -1405,6 +1447,14 @@ int wmain() {
         ok = expect(all_widths_painted, L"paint_focus_border paints exactly w px on each edge (no over-thick) and leaves interior untouched for widths 1/2/3") && ok;
         ok = expect(degenerate_safe, L"paint_focus_border degenerate-rect path is a safe no-op") && ok;
     }
+
+    // CP-A1: ThemeBroker must broadcast WM_THEMECHANGED to every registered
+    // HWND on a theme switch — parent + both children each receive the
+    // callback once per actual change. The first set_theme(dark) is a real
+    // change (current is light by default). set_theme(light) is another real
+    // change (back from dark), so each handler must fire exactly twice.
+    ok = expect(test_theme_broadcast_propagates_to_children(),
+                L"ThemeBroker broadcast reaches all registered child HWNDs") && ok;
 
     return ok ? 0 : 1;
 }

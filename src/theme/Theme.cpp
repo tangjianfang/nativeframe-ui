@@ -1,4 +1,5 @@
 #include <nfui/Theme.hpp>
+#include <nfui/Paint.hpp>     // CP-A1: state_palette uses alpha_blend
 
 #include <cmath>
 
@@ -236,6 +237,65 @@ void theme_disable_window_theme(HWND hwnd) noexcept {
     if (proc != nullptr) {
         proc(hwnd, L"", L"");
     }
+}
+
+// CP-A1: per-state palette resolver. Started from the base palette, then
+// refined by state. HC mode (detected first) defers bg/fg/border/accent to
+// GetSysColor so users who have configured a high-contrast system palette
+// always see the WCAG-compliant OS colours regardless of what the app
+// theme injects. The remaining states layer alpha_blend over the resolved
+// surface — disabled dims against the window background, pressed tints
+// toward accent at 15%, error swaps the border for the danger colour.
+// `pressed` uses alpha_blend(src=accent, dst=surface, alpha=0.15f) so the
+// result reads as a tinted surface, not a solid accent fill.
+StatePalette state_palette(const ThemePalette& base,
+                           ThemeMode mode,
+                           ControlState state) noexcept {
+    StatePalette out{};
+
+    if (mode == ThemeMode::high_contrast) {
+        // HC: defer to system colours so users get WCAG-compliant contrast.
+        out.background = Color{ GetSysColor(COLOR_WINDOW) };
+        out.foreground = Color{ GetSysColor(COLOR_WINDOWTEXT) };
+        out.border     = Color{ GetSysColor(COLOR_WINDOWFRAME) };
+        out.accent     = Color{ GetSysColor(COLOR_HIGHLIGHT) };
+        if (state == ControlState::disabled) {
+            out.foreground = Color{ GetSysColor(COLOR_GRAYTEXT) };
+        }
+        return out;
+    }
+
+    // non-HC: start from the base palette and refine per state.
+    out.background = base.surface;
+    out.border     = base.border;
+    out.foreground = base.text;
+    out.accent     = base.accent;
+
+    switch (state) {
+    case ControlState::hover:
+        out.background = base.surface_hover;
+        break;
+    case ControlState::pressed:
+        out.background = alpha_blend(base.surface, base.accent, 0.15f);
+        out.border     = base.accent;
+        break;
+    case ControlState::focused:
+        out.border     = base.accent;
+        out.accent     = base.accent_hover;
+        break;
+    case ControlState::disabled:
+        out.background = alpha_blend(base.surface, base.background, 0.55f);
+        out.foreground = base.text_secondary;
+        out.border     = alpha_blend(base.border, base.background, 0.55f);
+        break;
+    case ControlState::error:
+        out.border = base.danger;
+        out.accent = base.danger;
+        break;
+    case ControlState::rest:
+        break;
+    }
+    return out;
 }
 
 } // namespace nfui

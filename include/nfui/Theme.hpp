@@ -57,6 +57,45 @@ struct ThemeMetrics {
     int row_height{28};              // list row baseline
 };
 
+// CP-A1: per-control visual states. Each control maps its current state to
+// one of these so a single palette resolver produces every chrome variant
+// that the self-painted controls need (CP-A2/A3/A4 all consume StatePalette).
+//
+// Note: the brief originally named the resting case `default`. `default` is
+// a C++ keyword (used in `switch ... default:` and `= default;` member
+// functions) and cannot legally be an enumerator in MSVC /permissive-, so
+// the closest non-reserved synonym `rest` is used here. Consumers should
+// treat it as the no-special-interaction baseline.
+enum class ControlState {
+    rest,
+    hover,
+    pressed,
+    focused,
+    disabled,
+    error,
+};
+
+// CP-A1: per-state palette derived from a base ThemePalette. Used by every
+// self-painted control to fill bg / border / fg consistently across the
+// three application themes. The `accent` field is what the focus ring or
+// pressed highlight resolves to — it swaps with the state so a control can
+// always paint a single accent derivative without having to branch on
+// mode + state itself.
+struct StatePalette {
+    Color background;
+    Color border;
+    Color foreground;
+    Color accent;       // focus ring / pressed highlight
+};
+
+// CP-A1: resolve a StatePalette from a base ThemePalette for the requested
+// state. HC mode defers background/foreground/border to GetSysColor so
+// high-contrast users see the OS-correct WCAG colours regardless of any
+// theme the application has injected. UI thread (no exceptions).
+[[nodiscard]] StatePalette state_palette(const ThemePalette& base,
+                                         ThemeMode mode,
+                                         ControlState state) noexcept;
+
 [[nodiscard]] ThemeTokens  theme_tokens(ThemeMode mode) noexcept;   // back-compat
 [[nodiscard]] ThemePalette theme_palette(ThemeMode mode) noexcept;
 [[nodiscard]] ThemeMetrics theme_metrics() noexcept;

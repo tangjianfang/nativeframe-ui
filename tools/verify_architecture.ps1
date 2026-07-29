@@ -57,6 +57,8 @@ function Get-ModuleName {
         'Easing.hpp'          { return 'core' }
         'Dpi.hpp'             { return 'dpi' }
         'Theme.hpp'           { return 'theme' }
+        'ThemeBroker.hpp'     { return 'theme' }
+        'design_tokens.hpp'   { return 'theme' }
         'Font.hpp'            { return 'font' }
         'Icon.hpp'            { return 'icon' }
         'Paint.hpp'           { return 'paint' }

@@ -1,5 +1,7 @@
 add_library(nfui_theme STATIC
     src/theme/Theme.cpp
+    src/theme/design_tokens.cpp
+    src/theme/ThemeBroker.cpp
 )
 add_library(NativeFrameUI::nfui_theme ALIAS nfui_theme)
 
