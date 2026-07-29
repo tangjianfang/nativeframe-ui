@@ -1,6 +1,7 @@
 #include <nfui/Controls/TabControl.hpp>
 #include <nfui/Dpi.hpp>
 #include <nfui/Paint.hpp>
+#include <nfui/Theme.hpp>
 #include <commctrl.h>
 
 namespace nfui {
@@ -8,6 +9,13 @@ namespace nfui {
 namespace {
 
 constexpr UINT ocm_base = WM_USER + 0x1c00;
+
+// CP42: the base Control::subclass_proc is installed with the control instance
+// pointer as its subclass id. The chrome subclass uses a distinct id so it is a
+// separate chain entry; since CP42-C the base handler forwards NM_CUSTOMDRAW to
+// the chain before applying its fallback, the chrome proc receives the reflected
+// notify regardless of install order.
+constexpr UINT_PTR tab_chrome_subclass_id = 0xC042u;
 
 const ThemePalette& effective_palette(const ThemePalette* injected) noexcept {
     static const ThemePalette fallback = theme_palette(ThemeMode::light);
@@ -40,12 +48,18 @@ bool TabControl::create(const ControlCreateParams& params) noexcept {
     if (!create_native(WC_TABCONTROLW, params, WS_CLIPSIBLINGS)) {
         return false;
     }
-    // CP20: install the chrome subclass for NMCTCUSTOMDRAW. The base
-    // Control::subclass_proc does not know about TabControl's NM_CUSTOMDRAW
-    // structure (NMCUSTOMDRAW vs NMLVCUSTOMDRAW layout), so the chrome proc
-    // owns the entire custom-draw path.
+    // CP20: install the chrome subclass for NM_CUSTOMDRAW and WM_ERASEBKGND.
+    // The base Control::subclass_proc does not know about TabControl's
+    // NMCUSTOMDRAW payload (it assumes NMLVCUSTOMDRAW), so the chrome proc
+    // owns the entire custom-draw path. CP42-C: the base handler now forwards
+    // reflected NM_CUSTOMDRAW to the next chain entry, so the chrome proc
+    // always receives the notify regardless of which SetWindowSubclass call
+    // ended up head-of-chain.
+    // CP42: disable system theming so the tab strip is fully self-painted
+    // instead of being overdrawn by the native light theme in dark/HC.
+    theme_disable_window_theme(hwnd());
     if (SetWindowSubclass(hwnd(), &TabControl::visual_subclass_proc,
-                          reinterpret_cast<UINT_PTR>(this),
+                          tab_chrome_subclass_id,
                           reinterpret_cast<DWORD_PTR>(this)) == FALSE) {
         DestroyWindow(hwnd());
         return false;
@@ -58,7 +72,9 @@ void TabControl::on_palette_changed() noexcept {
     // The chrome subclass already pulls palette+FrameStyle from
     // handle_custom_draw on every paint cycle, so the only work here is to
     // invalidate so the system asks us to repaint tabs with the new theme.
+    // CP42: re-disable system theming in case it was re-applied externally.
     if (valid()) {
+        theme_disable_window_theme(hwnd());
         InvalidateRect(hwnd(), nullptr, TRUE);
     }
 }
@@ -133,7 +149,9 @@ void TabControl::paint_tab(NMCUSTOMDRAW* cd) noexcept {
 }
 
 LRESULT TabControl::handle_custom_draw(NMCUSTOMDRAW* cd) noexcept {
-    if (cd == nullptr) return CDRF_DODEFAULT;
+    if (cd == nullptr) {
+        return CDRF_DODEFAULT;
+    }
     switch (cd->dwDrawStage) {
     case CDDS_PREPAINT:
         return CDRF_NOTIFYITEMDRAW;

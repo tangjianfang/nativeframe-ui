@@ -92,4 +92,10 @@ struct ThemeMetrics {
 // (ThemeMetrics) do not change across themes, so only colors interpolate.
 [[nodiscard]] ThemePalette lerp_palette(const ThemePalette& a, const ThemePalette& b, float t) noexcept;
 
+// CP42: disable system visual theming for an HWND so self-painted common
+// controls are not overdrawn by the native comctl32 theme background (e.g.
+// the light empty area of a ListView or the light tabs of a TabControl in
+// dark mode). No-op on Windows versions without uxtheme.dll.
+void theme_disable_window_theme(HWND hwnd) noexcept;
+
 } // namespace nfui

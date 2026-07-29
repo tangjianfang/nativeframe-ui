@@ -36,6 +36,9 @@ bool ListView::create(const ControlCreateParams& params) noexcept {
 
     // CP20: install the chrome subclass on the body and on the header window
     // (the header is a separate child HWND, addressed via ListView_GetHeader).
+    // CP42: disable system theming so our palette-driven background colours
+    // are not overwritten by the native comctl32 theme (dark/HC white islands).
+    theme_disable_window_theme(hwnd());
     if (SetWindowSubclass(hwnd(), &ListView::visual_subclass_proc,
                           reinterpret_cast<UINT_PTR>(this),
                           reinterpret_cast<DWORD_PTR>(this)) == FALSE) {
@@ -43,6 +46,7 @@ bool ListView::create(const ControlCreateParams& params) noexcept {
         return false;
     }
     if (HWND header = ListView_GetHeader(hwnd())) {
+        theme_disable_window_theme(header);
         theme_header(header);
     }
     on_palette_changed();
@@ -61,8 +65,11 @@ void ListView::on_palette_changed() noexcept {
     const Color fg = style_.row_foreground.value_or(p.text);
     ListView_SetBkColor(hwnd(), bg.rgb);
     ListView_SetTextColor(hwnd(), fg.rgb);
-    // CP20: re-theme the header in case the palette swapped.
+    // CP20: re-theme the header in case the palette swapped. CP42: also
+    // re-disable system theming in case a later external call re-applied it.
+    theme_disable_window_theme(hwnd());
     if (HWND header = ListView_GetHeader(hwnd())) {
+        theme_disable_window_theme(header);
         theme_header(header);
         InvalidateRect(header, nullptr, TRUE);
     }
@@ -204,19 +211,31 @@ void ListView::paint_header_item(HWND header, NMCUSTOMDRAW* cd) noexcept {
 LRESULT ListView::handle_header_custom_draw(HWND header, NMCUSTOMDRAW* cd) noexcept {
     if (header == nullptr || cd == nullptr) return CDRF_DODEFAULT;
     switch (cd->dwDrawStage) {
-    case CDDS_PREPAINT:
+    case CDDS_PREPAINT: {
+        // Paint the full header band background first so the empty area
+        // beyond the rightmost column is not left as the native/theme colour
+        // (which reads as a white island in dark/HC captures).
+        const ThemePalette* pal = palette();
+        const ThemePalette& p = pal ? *pal : theme_palette(ThemeMode::light);
+        const Color bg = style().row_background.value_or(p.surface);
+        fill_rect(cd->hdc, cd->rc, bg);
         // Request per-item notifications so we can paint each column with
-        // its own palette state and format (alignment, sort glyph).
-        return CDRF_NOTIFYITEMDRAW;
+        // its own palette state and format (alignment, sort glyph). Skip the
+        // default header band paint so the native/theme background does not
+        // overwrite our fill in the empty area beyond the rightmost column.
+        return CDRF_SKIPDEFAULT | CDRF_NOTIFYITEMDRAW;
+    }
     case CDDS_ITEMPREPAINT:
-        // Suppress the default header paint so we can paint the whole column
-        // (background + divider + caption + sort glyph) in CDDS_ITEMPOSTPAINT.
-        // The header's NM_CUSTOMDRAW payload is the universal NMCUSTOMDRAW
-        // (no clrText/clrTextBk), so a pure PREPAINT colour override is not
-        // available — full self-paint is the only palette-driven path.
-        return CDRF_SKIPDEFAULT | CDRF_NOTIFYPOSTPAINT;
-    case CDDS_ITEMPOSTPAINT:
+        // Suppress the default header paint and self-paint the whole column
+        // (background + divider + caption + sort glyph) while the item HDC is
+        // current. The header's NM_CUSTOMDRAW payload is the universal
+        // NMCUSTOMDRAW (no clrText/clrTextBk), so a pure PREPAINT colour
+        // override is not available — full self-paint is the only palette
+        // path. POSTPAINT is not reliably delivered by the Header control,
+        // so all drawing happens here.
         paint_header_item(header, cd);
+        return CDRF_SKIPDEFAULT;
+    case CDDS_ITEMPOSTPAINT:
         return CDRF_DODEFAULT;
     default:
         return CDRF_DODEFAULT;
@@ -249,8 +268,21 @@ LRESULT ListView::on_custom_draw_item(NMLVCUSTOMDRAW* cd) noexcept {
 LRESULT ListView::handle_custom_draw(NMLVCUSTOMDRAW* cd) noexcept {
     if (cd == nullptr) return CDRF_DODEFAULT;
     switch (cd->nmcd.dwDrawStage) {
-    case CDDS_PREPAINT:
+    case CDDS_PREPAINT: {
+        // CP20: fill the full client background so the empty area (right of
+        // the rightmost column / below the last row) matches the palette.
+        // Without this, comctl32's native/theme background can read as a white
+        // island in dark/HC captures.
+        const ThemePalette* pal = palette();
+        const ThemePalette& p = pal ? *pal : theme_palette(ThemeMode::light);
+        const Color bg = style().row_background.value_or(p.surface);
+        fill_rect(cd->nmcd.hdc, cd->nmcd.rc, bg);
+        // Ask for per-item notifications so on_custom_draw_item can drive the
+        // row text/item colours. The empty-area background is now handled by
+        // ListView_SetBkColor after theme_disable_window_theme removed the
+        // native theme override; this fill is a defensive guard.
         return CDRF_NOTIFYITEMDRAW;
+    }
     case CDDS_ITEMPREPAINT: {
         const LRESULT custom = on_custom_draw_item(cd);
         if (custom != CDRF_DODEFAULT) {
@@ -270,6 +302,19 @@ LRESULT CALLBACK ListView::visual_subclass_proc(HWND hwnd, UINT message,
     auto* lv = reinterpret_cast<ListView*>(ref_data);
     if (lv == nullptr) {
         return DefSubclassProc(hwnd, message, wparam, lparam);
+    }
+    // CP20: the header is a separate child HWND; its WM_NOTIFY is delivered to
+    // the ListView (its immediate parent), not to the top-level Window. Reflect
+    // it to the header chrome subclass so NM_CUSTOMDRAW based header painting
+    // fires in LVS_REPORT.
+    if (message == WM_NOTIFY) {
+        auto* nmh = reinterpret_cast<NMHDR*>(lparam);
+        if (nmh != nullptr) {
+            if (HWND header = ListView_GetHeader(hwnd);
+                header != nullptr && nmh->hwndFrom == header) {
+                return SendMessageW(header, ocm_base + WM_NOTIFY, wparam, lparam);
+            }
+        }
     }
     // CP20: intercept reflected NM_CUSTOMDRAW (ocm_base + WM_NOTIFY with code
     // NM_CUSTOMDRAW) before the base Control::subclass_proc sees it. The base

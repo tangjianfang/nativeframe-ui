@@ -228,4 +228,14 @@ Color chart_series_color(ThemeMode mode, std::size_t index) noexcept {
     return palette[index % palette.size()];
 }
 
+void theme_disable_window_theme(HWND hwnd) noexcept {
+    if (hwnd == nullptr) return;
+    using SetWindowThemeProc = HRESULT (WINAPI*)(HWND, LPCWSTR, LPCWSTR);
+    static auto* const proc = reinterpret_cast<SetWindowThemeProc>(
+        GetProcAddress(GetModuleHandleW(L"uxtheme.dll"), "SetWindowTheme"));
+    if (proc != nullptr) {
+        proc(hwnd, L"", L"");
+    }
+}
+
 } // namespace nfui

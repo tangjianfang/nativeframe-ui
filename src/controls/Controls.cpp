@@ -261,20 +261,25 @@ LRESULT CALLBACK Control::subclass_proc(HWND hwnd,
     case ocm_base + WM_NOTIFY: {
         auto* nmh = reinterpret_cast<NMHDR*>(lparam);
         if (nmh != nullptr && nmh->code == NM_CUSTOMDRAW) {
-            auto* cd = reinterpret_cast<NMLVCUSTOMDRAW*>(lparam);
-            if (cd->nmcd.dwDrawStage == CDDS_PREPAINT) {
-                return CDRF_NOTIFYITEMDRAW;
+            // Let any control-specific chrome subclass (e.g. TabControl,
+            // ListView, TreeView) handle custom draw first. If it takes
+            // ownership we must return its flags; otherwise the base applies
+            // the generic ListView colour fallback. Forwarding is required
+            // because SetWindowSubclass may dispatch the base entry before a
+            // separately-id chrome entry installed later.
+            const LRESULT chrome = DefSubclassProc(hwnd, message, wparam, lparam);
+            if (chrome != CDRF_DODEFAULT) {
+                return chrome;
             }
-            if (cd->nmcd.dwDrawStage == CDDS_ITEMPREPAINT) {
+            auto* cd = reinterpret_cast<NMLVCUSTOMDRAW*>(lparam);
+            switch (cd->nmcd.dwDrawStage) {
+            case CDDS_PREPAINT:
+                return CDRF_NOTIFYITEMDRAW;
+            case CDDS_ITEMPREPAINT: {
                 const LRESULT custom = control ? control->on_custom_draw_item(cd) : CDRF_DODEFAULT;
-                if (custom != CDRF_DODEFAULT) {
-                    return custom;
-                }
-                const ThemePalette* pal = control ? control->palette() : nullptr;
-                const ThemePalette& p = pal ? *pal : theme_palette(ThemeMode::light);
-                const bool selected = (cd->nmcd.uItemState & CDIS_SELECTED) != 0;
-                cd->clrText = selected ? p.selection_text.rgb : p.text.rgb;
-                cd->clrTextBk = selected ? p.selection.rgb : p.surface.rgb;
+                return custom;
+            }
+            default:
                 return CDRF_DODEFAULT;
             }
         }
