@@ -1,4 +1,6 @@
 #include <nfui/NativeFrameUI.hpp>
+#include <nfui/ThemeBroker.hpp>
+#include <nfui/design_tokens.hpp>
 
 #include "NativeFrameUIResource.h"
 
@@ -24,6 +26,15 @@ constexpr int idm_run        = 42004;
 constexpr int idm_debug      = 42005;
 constexpr int idm_search     = 42006;
 
+// CP-B1: View > Theme submenu. Routes through ThemeBroker so a runtime theme
+// switch re-skins every chrome HWND on the same message-loop turn. The IDs
+// mirror the ID_THEME_* tokens in <nfui/ThemeBroker.hpp> for callers that
+// prefer the public constants; the local copies keep the menu builder self
+// contained.
+constexpr int idm_theme_light   = nfui::ID_THEME_LIGHT;
+constexpr int idm_theme_dark    = nfui::ID_THEME_DARK;
+constexpr int idm_theme_hc      = nfui::ID_THEME_HIGH_CONTRAST;
+
 constexpr int id_search          = 101;
 constexpr int id_tree            = 102;
 constexpr int id_tabs            = 103;
@@ -38,6 +49,12 @@ constexpr int id_inspector_panel = 109;
 // from these values through DpiScale::logical_to_pixels() so the workbench
 // keeps the same proportions at 96, 144, and 192 DPI.
 //
+// CP-B1: derived from the 8/12/16/24 design tokens in <nfui/design_tokens.hpp>
+// so the workbench rhythm matches the rest of the framework. Per-token
+// aliases are kept here as a thin layer so the layout() body still reads as
+// "margin = spacing_sm" rather than "margin = 8" — that way a token bump
+// (e.g. spacing_sm 8 → 10) flows through without a layout rewrite.
+//
 // Layout (top → down):
 //   menu bar (OS)   y = 0..~20
 //   toolbar strip   y = base_toolbar_top..base_toolbar_top + base_toolbar_height
@@ -45,22 +62,31 @@ constexpr int id_inspector_panel = 109;
 //   search row      y = base_search_top..base_search_top + base_search_height
 //   tree            y = base_search_top + base_search_height + base_margin..bottom
 //   right pane      y = base_search_top..bottom (synchronized with the search row)
-constexpr int base_margin           = 8;
-constexpr int base_toolbar_top      = 8;    // top of icon strip (just under menu)
-constexpr int base_toolbar_height   = 36;   // icon strip beneath the menu
-constexpr int base_top              = 56;   // top of PROJECT label / left-pane content
-constexpr int base_project_label_h  = 24;   // PROJECT header strip
-constexpr int base_left_width       = 250;
-constexpr int base_right_width      = 240;
+constexpr int base_margin           = nfui::design::spacing_sm;       // 8
+constexpr int base_splitter_gap     = nfui::design::spacing_sm;       // 8 — between panes
+constexpr int base_toolbar_top      = nfui::design::spacing_sm;       // 8
+constexpr int base_toolbar_height   = nfui::design::control_height_lg;// 40
+constexpr int base_top              = 56;                             // toolbar + margin + label
+constexpr int base_project_label_h  = nfui::design::control_height_sm;// 24
+constexpr int base_left_width       = 260;
+constexpr int base_right_width      = 260;
 constexpr int base_splitter_width   = 4;
-constexpr int base_search_height    = 28;
-constexpr int base_tabs_height      = 28;
+constexpr int base_search_height    = nfui::design::control_height_md;// 32
+constexpr int base_tabs_height      = nfui::design::control_height_md;// 32
 constexpr int base_zoom_label_h     = 20;
-constexpr int base_slider_height    = 28;
-constexpr int base_build_panel_h    = 92;   // rounded card under the slider
-constexpr int base_toolbar_button   = 28;
-constexpr int base_toolbar_gap      = 4;
-constexpr int base_toolbar_group    = 12;
+constexpr int base_slider_height    = nfui::design::control_height_md;// 32
+constexpr int base_build_panel_h    = 96;                             // rounded card under the slider
+constexpr int base_inspector_min_h  = 220;                            // enough room for 4 metadata rows
+constexpr int base_toolbar_button   = nfui::design::control_height_md;// 32
+constexpr int base_toolbar_gap      = nfui::design::spacing_xs;       // 4
+constexpr int base_toolbar_group    = nfui::design::spacing_md;       // 16
+
+// CP-B1: vertical rhythm tokens. The inspector card stacks rows on a
+// 12-px rhythm (spacing_md between rows, spacing_sm inside rows) so the
+// metadata table reads as a single composition rather than loose text.
+constexpr int base_inspector_row_h  = 20;                             // metadata row height
+constexpr int base_inspector_pad    = nfui::design::spacing_md;       // 16 — outer inspector padding
+constexpr int base_inspector_gap    = nfui::design::spacing_sm;       // 8  — between sections
 
 // CP28: status dot text codes used to colour the dot rendered before each
 // list row's status column. The leading "● " glyph is plain text — the colour
@@ -103,11 +129,17 @@ public:
     // chrome — the wrapped controls stay light. The menu_ field is move-only
     // so we update its palette in place via set_palette() rather than
     // reassigning the whole wrapper.
+    //
+    // CP-B1: also seeds ThemeBroker so the View > Theme menu's runtime
+    // switch has a stable baseline to compare against. set_theme() is a
+    // no-op when the broker's current mode matches (idempotent guard), so
+    // seeding here doesn't trigger an extra broadcast on the first paint.
     [[nodiscard]] bool set_initial_theme(nfui::ThemeMode mode) noexcept {
         if (hwnd() != nullptr) return false;
         mode_ = mode;
         palette_ = nfui::theme_palette(mode);
         menu_.set_palette(palette_);
+        nfui::ThemeBroker::instance().set_theme(mode);
         return true;
     }
 
@@ -264,7 +296,17 @@ public:
             .item(L"&Zoom In",  idm_search)
             .item(L"Zoom &Out", idm_new)
             .separator()
-            .item(L"&Reset",    idm_open);
+            .item(L"&Reset",    idm_open)
+            .separator()
+            // CP-B1: View > Theme submenu routes the runtime switch through
+            // ThemeBroker so every chrome HWND on the same message-loop
+            // turn receives WM_THEMECHANGED (broker broadcasts). Menu ids
+            // are the ID_THEME_* tokens from <nfui/ThemeBroker.hpp>;
+            // on_command maps them back to ThemeBroker::set_theme.
+            .popup(L"Th&eme")
+                .item(L"&Light",         idm_theme_light)
+                .item(L"&Dark",          idm_theme_dark)
+                .item(L"&High Contrast", idm_theme_hc);
         (void)menu_.builder(menu_.bar()).popup(L"&Run")
             .item(L"&Run",   idm_run)
             .item(L"&Debug", idm_debug);
@@ -309,6 +351,16 @@ protected:
             apply_search_margins();
             layout();
             InvalidateRect(hwnd(), nullptr, FALSE);
+            return 0;
+        }
+        // CP-B1: ThemeBroker broadcasts WM_THEMECHANGED to every registered
+        // HWND when set_theme() is called. Resync the workbench's local
+        // palette / menu / fonts from the new mode so the chrome tracks the
+        // broker. The broadcast itself drives per-control InvalidateRect on
+        // every wrapped child via set_palette, so we only need to refresh
+        // the workbench-owned chrome here (toolbar, status text, inspector).
+        case WM_THEMECHANGED: {
+            apply_theme(nfui::ThemeBroker::instance().current());
             return 0;
         }
         case WM_HSCROLL:
@@ -385,6 +437,25 @@ protected:
         return false;
     }
 
+    LRESULT on_notify(int control_id, NMHDR* header) override {
+        // CP-B1: track ListView selection so the inspector overlay can
+        // surface the metadata of the currently focused row. LVN_ITEMCHANGED
+        // fires on selection change; we capture the new focused row's index
+        // and request a paint on the inspector panel so the overlay updates
+        // on the same message-loop turn.
+        if (header != nullptr && control_id == id_list && header->code == LVN_ITEMCHANGED) {
+            auto* lv = reinterpret_cast<LPNMLISTVIEW>(header);
+            if (lv != nullptr && (lv->uNewState & LVIS_SELECTED) != 0) {
+                selected_row_ = lv->iItem;
+                if (inspector_panel_.hwnd() != nullptr) {
+                    InvalidateRect(inspector_panel_.hwnd(), nullptr, FALSE);
+                }
+                refresh_status_for_selection();
+            }
+        }
+        return nfui::Window::on_notify(control_id, header);
+    }
+
 private:
     void register_command_handlers() noexcept {
         commands_.set_handler(nfui::CommandId{IDM_NFUI_EXIT}, [this](nfui::CommandId) {
@@ -398,6 +469,15 @@ private:
                                                 &WorkbenchWindow::about_dlg_proc));
             return true;
         });
+        // CP-B1: View > Theme routes through ThemeBroker so the broker
+        // broadcasts WM_THEMECHANGED to every registered HWND. The handler
+        // here is a one-liner — the broker does the rest.
+        commands_.set_handler(nfui::CommandId{idm_theme_light},
+            [](nfui::CommandId) { nfui::ThemeBroker::instance().set_theme(nfui::ThemeMode::light); return true; });
+        commands_.set_handler(nfui::CommandId{idm_theme_dark},
+            [](nfui::CommandId) { nfui::ThemeBroker::instance().set_theme(nfui::ThemeMode::dark); return true; });
+        commands_.set_handler(nfui::CommandId{idm_theme_hc},
+            [](nfui::CommandId) { nfui::ThemeBroker::instance().set_theme(nfui::ThemeMode::high_contrast); return true; });
         auto route_toolbar = [this](std::wstring_view label) {
             set_status(label);
         };
@@ -413,6 +493,24 @@ private:
             [route_toolbar](nfui::CommandId) { route_toolbar(L"\x25CF Debug command routed."); return true; });
         commands_.set_handler(nfui::CommandId{idm_search},
             [route_toolbar](nfui::CommandId) { route_toolbar(L"\x25CF Search command routed."); return true; });
+    }
+
+    void apply_theme(nfui::ThemeMode mode) noexcept {
+        // CP-B1: refresh every workbench-owned surface from the new mode.
+        // Broker broadcasts already drove set_palette on each wrapped child
+        // (which invalidates its HWND); this path handles the fields the
+        // framework doesn't own — local palette, menu brush, toolbar chrome,
+        // inspector overlay, status text.
+        if (mode_ == mode) {
+            return;
+        }
+        mode_ = mode;
+        palette_ = nfui::theme_palette(mode);
+        menu_.set_palette(palette_);
+        apply_search_margins();
+        apply_native_fonts();
+        refresh_status();
+        InvalidateRect(hwnd(), nullptr, FALSE);
     }
 
     void create_children() {
@@ -526,7 +624,7 @@ private:
         params.x = right_left + margin;
         params.y = inspector_y;
         params.width = right_width - margin * 2;
-        params.height = dpi_.logical_to_pixels(120);
+        params.height = dpi_.logical_to_pixels(base_inspector_min_h);
         static_cast<void>(inspector_panel_.create(params));
         {
             nfui::FrameStyle style{};
@@ -657,6 +755,13 @@ private:
                              rows[i].status.data());
             ListView_SetItemText(list_.hwnd(), i, 1, text);
         }
+        // CP-B1: select the first row on initial population so the inspector
+        // surfaces real metadata on the first paint. Without this the
+        // overlay would render its empty-state hint until the user clicks.
+        ListView_SetItemState(list_.hwnd(), 0, LVIS_SELECTED | LVIS_FOCUSED,
+                              LVIS_SELECTED | LVIS_FOCUSED);
+        selected_row_ = 0;
+        refresh_status_for_selection();
     }
 
     void insert_tab(int index, const wchar_t* text) {
@@ -695,6 +800,7 @@ private:
         int status_height = status_rect.bottom - status_rect.top;
 
         const int margin          = dpi_.logical_to_pixels(base_margin);
+        const int pane_gap        = dpi_.logical_to_pixels(base_splitter_gap);
         const int top             = dpi_.logical_to_pixels(base_top);
         const int project_h       = dpi_.logical_to_pixels(base_project_label_h);
         // CP32: search/tabs/slider sit directly under the PROJECT strip so
@@ -722,19 +828,26 @@ private:
         MoveWindow(left_splitter_.hwnd(), left_width, 0, splitter_width, height, TRUE);
 
         // Centre pane: tabs across the top (aligned with search), list below.
-        int center_left = left_width + splitter_width + margin;
-        int center_width = width - left_width - right_width - splitter_width * 2 - margin * 2;
+        int center_left = left_width + splitter_width + pane_gap;
+        int center_width = width - left_width - right_width - splitter_width * 2 - pane_gap * 2;
         MoveWindow(tabs_.hwnd(), center_left, search_top, center_width, tabs_height, TRUE);
         // CP34: cap the ListView height so the 5 populated rows don't get
         // followed by a stretch of empty gridlines. The freed vertical
         // space becomes plain background (no gridlines, no chrome) which
         // reads as intentional padding below the list rather than a broken
         // table with phantom rows.
+        // CP-B1: add a one-line caption strip beneath the list (filled with
+        // the build summary) so the centre pane reads as "data + context"
+        // rather than "table followed by empty space". caption_h is the
+        // sm-font line + small padding.
         const int list_header_h = dpi_.logical_to_pixels(22);
         const int list_row_h    = dpi_.logical_to_pixels(22);
         const int list_padding  = dpi_.logical_to_pixels(12);
+        const int caption_h     = dpi_.logical_to_pixels(20);
+        const int caption_gap   = dpi_.logical_to_pixels(nfui::design::spacing_sm);
         const int list_h = list_header_h + 5 * list_row_h + list_padding;
         const int list_avail = std::max(0, height - (search_top + tabs_height + margin) - margin);
+        const int list_bottom = search_top + tabs_height + margin + std::min(list_h, list_avail);
         MoveWindow(list_.hwnd(), center_left, search_top + tabs_height + margin, center_width,
                    std::min(list_h, list_avail), TRUE);
 
@@ -753,8 +866,13 @@ private:
                           + build_panel_h + margin;
         int inspector_x = right_left + margin;
         int inspector_w = right_width - margin * 2;
-        int inspector_h = std::max(0, height - margin - inspector_y);
+        int inspector_min = dpi_.logical_to_pixels(base_inspector_min_h);
+        int inspector_h = std::max(inspector_min,
+                                   std::max(0, height - margin - inspector_y));
         MoveWindow(inspector_panel_.hwnd(), inspector_x, inspector_y, inspector_w, inspector_h, TRUE);
+        (void)list_bottom;       // reserved for future caption strip HWND
+        (void)caption_h;         // reserved for future caption strip HWND
+        (void)caption_gap;       // reserved for future caption strip HWND
     }
 
     void invalidate_right_pane() noexcept {
@@ -1075,50 +1193,196 @@ private:
     }
 
     void paint_inspector_overlay(HWND panel_hwnd) noexcept {
-        // CP32: draw the inspector placeholder (magnifier + caption) inside
-        // the panel's WM_PAINT cycle. GetDC on the panel returns a DC in
-        // CLIENT coords, so icon + text are positioned relative to the
-        // panel's client origin (no window-to-parent mapping needed here).
+        // CP-B1: the inspector is no longer an empty placeholder — it
+        // carries a metadata table tied to the currently selected ListView
+        // row. When nothing is selected (initial paint), a compact "Files"
+        // header + hint reads as a deliberate empty state. When a row is
+        // focused, the header swaps to the row's name and four metadata
+        // rows follow.
         HDC dc = GetDC(panel_hwnd);
         if (dc == nullptr) {
             return;
         }
         RECT rc{};
         GetClientRect(panel_hwnd, &rc);
-        const int inspector_w = rc.right - rc.left;
-        const int inspector_h = rc.bottom - rc.top;
-        // Vertical centering: stack icon (40 logical) + 12 gap + two lines
-        // of base-size caption (20 logical each) and centre the stack.
-        const int icon_size   = dpi_.logical_to_pixels(40);
-        const int cap_gap     = dpi_.logical_to_pixels(12);
-        const int cap_line_h  = dpi_.logical_to_pixels(20);
-        const int stack_h     = icon_size + cap_gap + cap_line_h * 2;
-        const int stack_top   = rc.top + std::max(0, (inspector_h - stack_h) / 2);
-        const int icon_x      = rc.left + (inspector_w - icon_size) / 2;
-        RECT icon{icon_x, stack_top, icon_x + icon_size, stack_top + icon_size};
-        nfui::draw_vector_icon(dc, nfui::IconKind::search, icon,
-                               palette_.text_secondary, dpi_.logical_to_pixels(2));
+        const int pad       = dpi_.logical_to_pixels(base_inspector_pad);
+        const int row_h     = dpi_.logical_to_pixels(base_inspector_row_h);
+        const int row_gap   = dpi_.logical_to_pixels(base_inspector_gap);
+        const int section_gap = dpi_.logical_to_pixels(nfui::design::spacing_sm);
+        const int title_h   = dpi_.logical_to_pixels(nfui::design::control_height_sm);
+        const int label_w   = dpi_.logical_to_pixels(72);
 
-        HFONT caption_font = fonts_.regular(dpi_.dpi(), nfui::font_pt::sm);
-        const int cap_pad = dpi_.logical_to_pixels(10);
-        const int cap_x = rc.left + cap_pad;
-        const int cap_w = inspector_w - cap_pad * 2;
-        const int cap_y = icon.bottom + cap_gap;
-        RECT caption{cap_x, cap_y, cap_x + cap_w, cap_y + cap_line_h};
-        // Two-line caption — the reference breaks "Inspector — select an
-        // item to inspect its properties." into two lines.
-        nfui::draw_text(dc, caption,
-                        L"Inspector \x2014 select an item to",
-                        caption_font, palette_.text_secondary,
-                        DT_CENTER | DT_TOP | DT_SINGLELINE | DT_NOPREFIX | DT_NOCLIP);
-        RECT caption2 = caption;
-        caption2.top += cap_line_h;
-        caption2.bottom += cap_line_h;
-        nfui::draw_text(dc, caption2,
-                        L"inspect its properties.",
-                        caption_font, palette_.text_secondary,
-                        DT_CENTER | DT_TOP | DT_SINGLELINE | DT_NOPREFIX | DT_NOCLIP);
+        HFONT title_font   = fonts_.semibold(dpi_.dpi(), nfui::font_pt::md);
+        HFONT label_font   = fonts_.regular(dpi_.dpi(), nfui::font_pt::xs);
+        HFONT value_font   = fonts_.regular(dpi_.dpi(), nfui::font_pt::sm);
+
+        int y = rc.top + pad;
+
+        if (selected_row_ < 0 || selected_row_ >= list_item_count_) {
+            // Empty state: "Files" eyebrow + one-line hint.
+            RECT eyebrow{rc.left + pad, y, rc.right - pad, y + title_h};
+            nfui::draw_text(dc, eyebrow, L"Files", title_font,
+                            palette_.text_secondary,
+                            DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX);
+            y += title_h + section_gap;
+            RECT hint{rc.left + pad, y, rc.right - pad, y + row_h * 2};
+            nfui::draw_text(dc, hint,
+                            L"Select a row above to inspect its metadata.",
+                            label_font, palette_.text_secondary,
+                            DT_LEFT | DT_TOP | DT_WORDBREAK | DT_NOPREFIX);
+            ReleaseDC(panel_hwnd, dc);
+            return;
+        }
+
+        // Section header: row name in semibold, eyebrow label on top.
+        RECT eyebrow{rc.left + pad, y, rc.right - pad, y + title_h};
+        nfui::draw_text(dc, eyebrow, L"Inspector", title_font,
+                        palette_.text_secondary,
+                        DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX);
+        y += title_h + section_gap;
+
+        // Row name in semibold, status badge on the right.
+        const wchar_t* name = list_row_name(selected_row_);
+        const std::wstring_view status = list_row_status(selected_row_);
+        const bool pending = status.find(L"pending") != std::wstring_view::npos;
+        const nfui::Color dot_col = pending ? palette_.warning : palette_.success;
+
+        RECT name_rect{rc.left + pad, y, rc.right - pad, y + row_h};
+        nfui::draw_text(dc, name_rect, name, title_font, palette_.text,
+                        DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX | DT_END_ELLIPSIS);
+
+        // Status badge (small dot + label) — right-aligned.
+        const int badge_dot = dpi_.logical_to_pixels(8);
+        const int badge_gap = dpi_.logical_to_pixels(6);
+        const int badge_label_w = dpi_.logical_to_pixels(60);
+        RECT badge_label{rc.right - pad - badge_label_w, y,
+                         rc.right - pad, y + row_h};
+        nfui::draw_text(dc, badge_label,
+                        pending ? L"Pending" : L"Ready",
+                        label_font, palette_.text_secondary,
+                        DT_RIGHT | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX);
+        RECT badge_dot_rect{
+            badge_label.left - badge_gap - badge_dot,
+            y + (row_h - badge_dot) / 2,
+            badge_label.left - badge_gap,
+            y + (row_h + badge_dot) / 2};
+        nfui::fill_ellipse(dc, badge_dot_rect, dot_col);
+        y += row_h + row_gap;
+
+        // Hairline divider under the title block.
+        RECT divider{rc.left + pad, y, rc.right - pad, y + 1};
+        nfui::fill_rect(dc, divider, palette_.border);
+        y += 1 + row_gap;
+
+        // Four metadata rows: Type / Size / Modified / Language.
+        struct Row { const wchar_t* label; std::wstring_view value; };
+        const Row rows[] = {
+            { L"Type",     list_row_type(selected_row_) },
+            { L"Size",     list_row_size(selected_row_) },
+            { L"Modified", list_row_modified(selected_row_) },
+            { L"Language", list_row_language(selected_row_) },
+        };
+        for (const Row& r : rows) {
+            RECT label_rect{rc.left + pad, y, rc.left + pad + label_w, y + row_h};
+            nfui::draw_text(dc, label_rect, r.label, label_font, palette_.text_secondary,
+                            DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX);
+            RECT value_rect{rc.left + pad + label_w, y, rc.right - pad, y + row_h};
+            nfui::draw_text(dc, value_rect, r.value, value_font, palette_.text,
+                            DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX | DT_END_ELLIPSIS);
+            y += row_h + row_gap;
+        }
+        (void)section_gap;   // already accounted for above
         ReleaseDC(panel_hwnd, dc);
+    }
+
+    // CP-B1: per-row metadata. The ListView currently shows 5 build
+    // artefacts; the inspector surfaces the type / size / modified /
+    // language for the selected one so the right pane reads as
+    // "context-sensitive properties", not an empty card. Add a new row
+    // to populate_list_rows() and mirror it here.
+    [[nodiscard]] const wchar_t* list_row_name(int index) const noexcept {
+        static const wchar_t* kNames[] = {
+            L"NativeFrameUI.lib",
+            L"NativeFrameUI.dll",
+            L"ChartView.obj",
+            L"main.obj",
+            L"tests.exe",
+        };
+        if (index < 0 || index >= static_cast<int>(std::size(kNames))) {
+            return L"";
+        }
+        return kNames[index];
+    }
+
+    [[nodiscard]] std::wstring_view list_row_status(int index) const noexcept {
+        static const std::wstring_view kStatuses[] = {
+            kStatusOk, kStatusOkAlt, kStatusOkDone, kStatusOkDone, kStatusPending,
+        };
+        if (index < 0 || index >= static_cast<int>(std::size(kStatuses))) {
+            return {};
+        }
+        return kStatuses[index];
+    }
+
+    [[nodiscard]] std::wstring_view list_row_type(int index) const noexcept {
+        static constexpr std::wstring_view kTypes[] = {
+            L"Static library", L"Dynamic library", L"Object file",
+            L"Object file",    L"Executable",
+        };
+        if (index < 0 || index >= static_cast<int>(std::size(kTypes))) {
+            return {};
+        }
+        return kTypes[index];
+    }
+
+    [[nodiscard]] std::wstring_view list_row_size(int index) const noexcept {
+        static constexpr std::wstring_view kSizes[] = {
+            L"2.41 MB", L"184 KB", L"612 KB",
+            L"48.3 KB", L"1.07 MB",
+        };
+        if (index < 0 || index >= static_cast<int>(std::size(kSizes))) {
+            return {};
+        }
+        return kSizes[index];
+    }
+
+    [[nodiscard]] std::wstring_view list_row_modified(int index) const noexcept {
+        static constexpr std::wstring_view kModified[] = {
+            L"14:32 today", L"14:32 today", L"14:31 today",
+            L"14:30 today", L"14:29 today",
+        };
+        if (index < 0 || index >= static_cast<int>(std::size(kModified))) {
+            return {};
+        }
+        return kModified[index];
+    }
+
+    [[nodiscard]] std::wstring_view list_row_language(int index) const noexcept {
+        static constexpr std::wstring_view kLang[] = {
+            L"C++ / x64", L"C++ / x64", L"C++ / x64",
+            L"C++ / x64", L"C++ / x64",
+        };
+        if (index < 0 || index >= static_cast<int>(std::size(kLang))) {
+            return {};
+        }
+        return kLang[index];
+    }
+
+    void refresh_status_for_selection() noexcept {
+        if (selected_row_ < 0 || selected_row_ >= list_item_count_) {
+            refresh_status();
+            return;
+        }
+        wchar_t text[200]{};
+        const int dpi = dpi_.dpi();
+        const std::wstring_view status = list_row_status(selected_row_);
+        (void)swprintf_s(text,
+                         L"\x25CF %.*s selected%*s%d DPI",
+                         static_cast<int>(status.find(L' ') + 1),
+                         status.data(),
+                         18, L"",
+                         dpi);
+        set_status(text);
     }
 
     void paint_tabs_highlight(HWND tabs_hwnd) noexcept {
@@ -1239,6 +1503,7 @@ private:
     nfui::Splitter right_splitter_;
     nfui::DpiScale dpi_{96};
     int list_item_count_{0};
+    int selected_row_{-1};   // CP-B1: drives inspector metadata overlay
 
     // CP28: toolbar hit-test state. tb_x_[i] is the left edge of button i;
     // tb_y_ is the top edge (all buttons share a y so we cache once).
