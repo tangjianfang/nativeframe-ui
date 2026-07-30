@@ -14,6 +14,7 @@ include("${NFUI_ROOT}/cmake/NativeFrameUIResources.cmake")
 
 add_executable(NativeFrameUIThemeDemo WIN32
     NativeFrameUIThemeDemo.cpp
+    StateMatrix.hpp
 )
 target_include_directories(NativeFrameUIThemeDemo PRIVATE
     "${NFUI_ROOT}/include"

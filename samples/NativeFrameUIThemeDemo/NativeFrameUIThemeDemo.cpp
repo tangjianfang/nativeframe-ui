@@ -1,34 +1,51 @@
 // NativeFrameUIThemeDemo
 //
-// V1.0 capability: live theme transition showcase. The window renders a row
-// of every supported control under the currently-selected ThemePalette. Three
-// buttons at the top-right of the toolbar (Light / Dark / High Contrast) rebuild
-// the demo rows in place so QA can compare palettes without restarting the
-// binary.
+// V1.0 capability: live theme-transition showcase. The window is the
+// framework's canonical "every control in every theme" surface. The three
+// header chips (Light / Dark / High Contrast) flip the entire shell via the
+// process-wide ThemeBroker; the same flip is reachable at startup via
+// `--theme dark` / `--theme high_contrast` so the visual audit can capture
+// each variant without GUI interaction.
 //
-// The toggle buttons are stable members of the window — only the demo controls
-// are recreated when the palette changes.
+// The window is a single page split into three columns:
+//   * Controls — a representative live control of every class the framework
+//     ships, each labelled and eyebrowed so the audit can scan it without
+//     reading the HWNDs.
+//   * State matrix — the 7 × 6 per-control interaction-state matrix from B3,
+//     repainted from `nfui::state_palette()` so a regression in the resolver
+//     shows up here in all three themes.
+//   * Chrome — live TabControl + Panel + Splitter so the dark / HC captures
+//     prove the chrome is themed, not native gray.
+//
+// All three columns share one `PageLayout` struct computed by
+// `compute_layout()`; the same struct drives both `layout_children()` (MoveWindow)
+// and `paint_background()` (cards + labels + hairline) so painted chrome can
+// never drift from the live HWNDs.
 
 #include <nfui/NativeFrameUI.hpp>
+#include <nfui/ThemeBroker.hpp>
+#include <nfui/design_tokens.hpp>
 
 #include "NativeFrameUIResource.h"
+#include "StateMatrix.hpp"
 
+#include <algorithm>
 #include <commctrl.h>
-#include <initializer_list>
-#include <memory>
-#include <string>
+#include <cstddef>
 #include <utility>
-#include <vector>
 #include <windows.h>
 #include <windowsx.h>
 
 namespace {
 
-constexpr int id_theme_light = 101;
-constexpr int id_theme_dark  = 102;
-constexpr int id_theme_hc    = 103;
+namespace tok = nfui::design;
 
-// Demonstrator control ids (distinct range so WM_COMMAND routing is obvious).
+constexpr int id_theme_light  = 130;
+constexpr int id_theme_dark   = 131;
+constexpr int id_theme_hc     = 132;
+
+// Demonstrator control IDs. Distinct from the chip IDs so WM_COMMAND routing
+// is unambiguous.
 constexpr int id_ok_button      = 201;
 constexpr int id_cancel_button  = 202;
 constexpr int id_check_a        = 203;
@@ -52,82 +69,69 @@ constexpr int id_tabs           = 220;
 constexpr int id_panel          = 221;
 constexpr int id_splitter       = 222;
 
-// CP37: tighter layout rhythm for the 940×700 compact window. The previous
-// 16 / 12 / 48 / 20 / 44 / 16 cadence summed to 812 logical px of chrome +
-// 736 of row content = 1548, far over the 700-tall viewport. New values
-// shave ~250 logical px so every section fits inside the window.
-constexpr int kOuterMargin         = 10;
-constexpr int kGap                 = 8;
-constexpr int kToolbarHeight       = 36;   // dedicated top row for title + toggles
-constexpr int kSectionHeaderHeight = 16;
-constexpr int kRowHeight           = 24;   // default row height for single-line controls
-constexpr int kLabelWidth          = 140;  // fixed label column width
-constexpr int kGroupGap            = 10;   // vertical space between sections
+// CP-B4: logical layout constants. All derived from the design tokens so a
+// token change re-flows the whole page. The matrix lives in the rightmost
+// (widest) column because 6 state cells + label gutter need ~560 logical px;
+// the controls and collections columns can be tighter.
+constexpr int col_controls_l = 304;   // fixed left column
+constexpr int col_collections_l = 320; // fixed middle column
+constexpr int col_matrix_l   = 560;   // fixed right column (6 state cells + label gutter)
+constexpr int col_min_mid_l  = 240;   // middle column floor before it starts clipping
+constexpr int header_band_l  = 56;    // title + subtitle band
+constexpr int eyebrow_h_l    = tok::spacing_md;      // 16
+constexpr int card_title_h_l = tok::control_height_sm; // 24
+constexpr int chip_w_l       = 72;
+constexpr int matrix_row_h_l = 44;
+constexpr int matrix_label_l = 104;
 
-// CP32: per-row heights so the ListView / TreeView / Tabs / Panel rows have
-// room for their multi-row content instead of clipping to the single-line
-// 44 logical px default. CP37: trim each row ~36% so the 13-row stack fits
-// inside the 700-tall compact window without the TreeView / Topbar section
-// peeking past the bottom edge.
-constexpr int kRowHeights[] = {
-    24,  // Button
-    24,  // CheckBox
-    24,  // RadioButton
-    24,  // Edit
-    24,  // StaticText
-    64,  // ListBox (5 rows × 13)
-    24,  // ComboBox
-    64,  // ListView (header + 3 rows × 13)
-    64,  // TreeView (root + 3 children × 13)
-    24,  // IconView
-    24,  // ProgressBar
-    48,  // TabControl (3 tabs visible band)
-    40,  // Panel + Splitter
+// Painted label + its rect. Collected during layout so WM_PAINT and
+// MoveWindow always agree on where a label sits.
+struct LabelSlot {
+    RECT rect{};
+    const wchar_t* text{nullptr};
 };
 
-// Section group captions.
-constexpr const wchar_t* kGroupButtons  = L"Buttons / Toggles";
-constexpr const wchar_t* kGroupInputs   = L"Inputs / Lists";
-constexpr const wchar_t* kGroupFeedback = L"Feedback";
+// Full page geometry in device pixels, computed once per layout / paint pass.
+struct PageLayout {
+    RECT title{};
+    RECT subtitle{};
+    RECT chip[3]{};
 
-// Per-row labels drawn to the left of each demonstrator control.
-constexpr const wchar_t* kSectionButton      = L"Button";
-constexpr const wchar_t* kSectionCheckBox    = L"CheckBox";
-constexpr const wchar_t* kSectionRadio       = L"RadioButton";
-constexpr const wchar_t* kSectionEdit        = L"Edit";
-constexpr const wchar_t* kSectionStatic      = L"StaticText";
-constexpr const wchar_t* kSectionListBox     = L"ListBox";
-constexpr const wchar_t* kSectionComboBox    = L"ComboBox";
-constexpr const wchar_t* kSectionListView    = L"ListView";
-constexpr const wchar_t* kSectionTreeView    = L"TreeView";
-constexpr const wchar_t* kSectionIconView    = L"IconView (app icon)";
-constexpr const wchar_t* kSectionProgressBar = L"ProgressBar 40%";
-constexpr const wchar_t* kSectionTabControl  = L"TabControl";
-constexpr const wchar_t* kSectionSplitter    = L"Panel + Splitter";
+    RECT card_rect[3]{};
+    LabelSlot card_title[3]{};
+    int  card_count{0};
 
-struct DemoControls {
-    std::unique_ptr<nfui::Button>      ok;
-    std::unique_ptr<nfui::Button>      cancel;
-    std::unique_ptr<nfui::CheckBox>    check_unchecked;
-    std::unique_ptr<nfui::CheckBox>    check_checked;
-    std::unique_ptr<nfui::CheckBox>    check_indeterminate;
-    std::unique_ptr<nfui::RadioButton> radio_first;
-    std::unique_ptr<nfui::RadioButton> radio_second;
-    std::unique_ptr<nfui::RadioButton> radio_third;
-    std::unique_ptr<nfui::Edit>        edit;
-    std::unique_ptr<nfui::StaticText>  static_left;
-    std::unique_ptr<nfui::StaticText>  static_center;
-    std::unique_ptr<nfui::StaticText>  static_right;
-    std::unique_ptr<nfui::ListBox>     listbox;
-    std::unique_ptr<nfui::ComboBox>    combobox;
-    std::unique_ptr<nfui::ListView>    listview;
-    std::unique_ptr<nfui::TreeView>    treeview;
-    std::unique_ptr<nfui::IconView>    iconview;
-    std::unique_ptr<nfui::ProgressBar> progress;
-    std::unique_ptr<nfui::StatusBar>   status;
-    std::unique_ptr<nfui::TabControl>  tabs;
-    std::unique_ptr<nfui::Panel>       panel;
-    std::unique_ptr<nfui::Splitter>    splitter;
+    LabelSlot eyebrow[16]{};
+    int  eyebrow_count{0};
+
+    RECT button[2]{};
+    RECT check[3]{};
+    RECT radio[3]{};
+    RECT statics[3]{};
+    RECT edit{};
+    RECT combo{};
+    RECT listbox{};
+    RECT listview{};
+    RECT treeview{};
+    RECT icon{};
+    RECT progress{};
+    RECT tabs{};
+    RECT panel{};
+    RECT splitter{};
+
+    RECT matrix_grid{};
+
+    void push_card(const RECT& r, const wchar_t* text, const RECT& title_rect) noexcept {
+        if (card_count >= 3) return;
+        card_rect[card_count]  = r;
+        card_title[card_count] = LabelSlot{title_rect, text};
+        ++card_count;
+    }
+    void push_eyebrow(const RECT& r, const wchar_t* text) noexcept {
+        if (eyebrow_count >= 16) return;
+        eyebrow[eyebrow_count] = LabelSlot{r, text};
+        ++eyebrow_count;
+    }
 };
 
 class ThemeDemoWindow final : public nfui::Window {
@@ -135,24 +139,20 @@ public:
     explicit ThemeDemoWindow(HINSTANCE instance)
         : instance_(instance),
           resources_(instance),
-          mode_(nfui::ThemeMode::light),
-          palette_(nfui::theme_palette(mode_)),
-          app_icon_(nullptr) {
+          palette_(nfui::theme_palette(mode_)) {
     }
 
     ~ThemeDemoWindow() noexcept override {
         destroy_icon();
-        clear_demo();
     }
 
-    // CP32: lets wWinMain seed the palette before create_main builds every
-    // demo control. Without this, --theme dark would first paint light,
-    // then a click on the Dark button would be required to see anything.
-    [[nodiscard]] bool set_initial_theme(nfui::ThemeMode mode) noexcept {
-        if (hwnd() != nullptr) return false;
+    // Seeds the palette (and the process-wide broker) before create_main
+    // wires the palette pointer into every wrapper, so `--theme dark` paints
+    // dark on the very first frame instead of flashing light.
+    void set_initial_theme(nfui::ThemeMode mode) noexcept {
         mode_ = mode;
         palette_ = nfui::theme_palette(mode);
-        return true;
+        nfui::ThemeBroker::instance().set_theme(mode);
     }
 
     [[nodiscard]] bool create_main(int show_command) noexcept {
@@ -164,9 +164,8 @@ public:
             0,
             CW_USEDEFAULT,
             CW_USEDEFAULT,
-            // CP36: shrink from 980×1080 → 940×700.
-            940,
-            700,
+            1240,
+            900,
         };
 
         if (!create(params)) {
@@ -175,13 +174,16 @@ public:
 
         apply_window_icon();
         dpi_ = nfui::DpiScale(nfui::dpi_of(hwnd()));
+        rescale_window();
 
-        if (!create_toggle_buttons()) {
+        nfui::ThemeBroker::instance().register_hwnd(
+            hwnd(), [this](nfui::ThemeMode mode) { apply_theme(mode); });
+
+        if (!create_children()) {
             return false;
         }
-
-        build_demo();
-        layout_demo();
+        apply_native_fonts();
+        layout_children();
 
         ShowWindow(hwnd(), show_command);
         UpdateWindow(hwnd());
@@ -189,10 +191,26 @@ public:
     }
 
 protected:
+    bool on_command(int command_id, HWND, UINT) override {
+        switch (command_id) {
+        case id_theme_light:
+            nfui::ThemeBroker::instance().set_theme(nfui::ThemeMode::light);
+            return true;
+        case id_theme_dark:
+            nfui::ThemeBroker::instance().set_theme(nfui::ThemeMode::dark);
+            return true;
+        case id_theme_hc:
+            nfui::ThemeBroker::instance().set_theme(nfui::ThemeMode::high_contrast);
+            return true;
+        default:
+            return false;
+        }
+    }
+
     LRESULT handle_message(UINT message, WPARAM wparam, LPARAM lparam) override {
         switch (message) {
         case WM_SIZE:
-            layout_demo();
+            layout_children();
             return 0;
         case WM_DPICHANGED: {
             auto* suggested = reinterpret_cast<RECT*>(lparam);
@@ -207,10 +225,16 @@ protected:
                              SWP_NOACTIVATE | SWP_NOZORDER);
             }
             apply_native_fonts();
-            layout_demo();
+            layout_children();
             InvalidateRect(hwnd(), nullptr, FALSE);
             return 0;
         }
+        // ThemeBroker broadcasts WM_THEMECHANGED to every registered HWND on
+        // set_theme(). The registered callback already ran apply_theme(); this
+        // arm keeps the window correct when an external broker targets it.
+        case WM_THEMECHANGED:
+            apply_theme(nfui::ThemeBroker::instance().current());
+            return 0;
         case WM_ERASEBKGND:
             return 1;
         case WM_PAINT: {
@@ -226,271 +250,153 @@ protected:
             EndPaint(hwnd(), &paint);
             return 0;
         }
+        case WM_NCDESTROY:
+            nfui::ThemeBroker::instance().unregister_hwnd(hwnd());
+            return nfui::Window::handle_message(message, wparam, lparam);
         case WM_DESTROY:
             destroy_icon();
-            clear_demo();
             PostQuitMessage(0);
             return 0;
         default:
             return nfui::Window::handle_message(message, wparam, lparam);
-        }
     }
-
-    bool on_command(int command_id, HWND, UINT notification_code) override {
-        switch (command_id) {
-        case id_theme_light:
-            if (notification_code == BN_CLICKED || notification_code == 0) {
-                switch_mode(nfui::ThemeMode::light);
-                return true;
-            }
-            break;
-        case id_theme_dark:
-            if (notification_code == BN_CLICKED || notification_code == 0) {
-                switch_mode(nfui::ThemeMode::dark);
-                return true;
-            }
-            break;
-        case id_theme_hc:
-            if (notification_code == BN_CLICKED || notification_code == 0) {
-                switch_mode(nfui::ThemeMode::high_contrast);
-                return true;
-            }
-            break;
-        default:
-            break;
-        }
-        return false;
     }
 
 private:
-    // DPI-scaled layout helpers. All constants above are logical pixels.
-    [[nodiscard]] int outer_margin() const noexcept { return dpi_.logical_to_pixels(kOuterMargin); }
-    [[nodiscard]] int gap() const noexcept { return dpi_.logical_to_pixels(kGap); }
-    [[nodiscard]] int toolbar_height() const noexcept { return dpi_.logical_to_pixels(kToolbarHeight); }
-    [[nodiscard]] int row_height() const noexcept { return dpi_.logical_to_pixels(kRowHeight); }
-    [[nodiscard]] int label_width() const noexcept { return dpi_.logical_to_pixels(kLabelWidth); }
-    [[nodiscard]] int section_header_height() const noexcept { return dpi_.logical_to_pixels(kSectionHeaderHeight); }
-    [[nodiscard]] int group_gap() const noexcept { return dpi_.logical_to_pixels(kGroupGap); }
+    [[nodiscard]] int px(int logical) const noexcept { return dpi_.logical_to_pixels(logical); }
 
-    [[nodiscard]] int section_top(const RECT& client) const noexcept {
-        return client.top + outer_margin() + toolbar_height() + gap();
+    // The create-time 1240x900 is expressed in logical units; re-apply it
+    // once the real per-window DPI is known so a 150% monitor gets a
+    // proportionally larger window instead of a cramped one.
+    void rescale_window() noexcept {
+        if (dpi_.dpi() == 96) {
+            return;
+        }
+        RECT frame{0, 0, px(1240), px(900)};
+        RECT current{};
+        if (!GetWindowRect(hwnd(), &current)) {
+            return;
+        }
+        SetWindowPos(hwnd(), nullptr, current.left, current.top,
+                     frame.right, frame.bottom,
+                     SWP_NOACTIVATE | SWP_NOZORDER);
     }
 
-    [[nodiscard]] int group_header_y(int group, const RECT& client) const noexcept {
-        const int h = section_header_height();
-        const int gg = group_gap();
-        const int st = section_top(client);
-        if (group == 0) return st;
-        if (group == 1) {
-            // Bottom of group 0 = st + (rows 0..2 heights)
-            int y = st;
-            for (int i = 0; i < 3; ++i) y += kRowHeights[i];
-            return y + gg;
+    template <typename Fn>
+    void for_each_control(Fn&& fn) noexcept {
+        nfui::Control* all[] = {
+            &chip_light_, &chip_dark_, &chip_hc_,
+            &ok_, &cancel_,
+            &check_unchecked_, &check_checked_, &check_indeterm_,
+            &radio_a_, &radio_b_, &radio_c_,
+            &edit_, &static_left_, &static_center_, &static_right_,
+            &listbox_, &combobox_, &listview_, &treeview_, &iconview_,
+            &status_, &tabs_, &progress_, &panel_, &splitter_,
+        };
+        for (nfui::Control* control : all) {
+            fn(control);
         }
-        // Bottom of group 1 = st + (rows 0..8 heights) + h + gg
-        int y = st + h + gg;
-        for (int i = 0; i < 9; ++i) y += kRowHeights[i];
-        return y + gg;
     }
 
-    [[nodiscard]] int row_y(int row, const RECT& client) const noexcept {
-        const int h = section_header_height();
-        const int gg = group_gap();
-        const int st = section_top(client);
-        int y = st;
-        int group_start = 0;
-        // CP32: walk per-row heights from kRowHeights so each row's own
-        // (taller) height contributes to the cumulative offset. Uniform
-        // kRowHeight * N was clipping ListView / TreeView against the
-        // single-line default.
-        if (row >= 3) {
-            y += h + gg;
-            for (int i = 0; i < 3; ++i) {
-                y += kRowHeights[i];
-            }
-            group_start = 3;
-        }
-        if (row >= 9) {
-            y += h + gg;
-            for (int i = 3; i < 9; ++i) {
-                y += kRowHeights[i];
-            }
-            group_start = 9;
-        }
-        for (int i = group_start; i < row; ++i) {
-            y += kRowHeights[i];
-        }
-        return y;
-    }
-
-    [[nodiscard]] bool create_toggle_buttons() noexcept {
+    template <typename ControlT>
+    [[nodiscard]] bool init(ControlT& control, int id, std::wstring_view text) noexcept {
         nfui::ControlCreateParams params{
             instance_,
             hwnd(),
-            id_theme_light,
-            L"Light",
-            0, 0, 120, 28,
+            id,
+            text,
+            0, 0, px(100), px(tok::control_height_md),
         };
-
-        theme_light_.inject_theme(&palette_, &fonts_);
-        if (!theme_light_.create(params)) {
-            return false;
-        }
-
-        params.control_id = id_theme_dark;
-        params.text       = L"Dark";
-        theme_dark_.inject_theme(&palette_, &fonts_);
-        if (!theme_dark_.create(params)) {
-            return false;
-        }
-
-        params.control_id = id_theme_hc;
-        params.text       = L"High Contrast";
-        theme_hc_.inject_theme(&palette_, &fonts_);
-        if (!theme_hc_.create(params)) {
-            return false;
-        }
-
-        apply_toggle_fonts();
-        return true;
+        control.inject_theme(&palette_, &fonts_);
+        return control.create(params);
     }
 
-    void apply_toggle_fonts() noexcept {
-        const int dpi_value = dpi_.dpi();
-        const HFONT ui_font = fonts_.semibold(dpi_value, 9);
-        SendMessageW(theme_light_.hwnd(), WM_SETFONT, reinterpret_cast<WPARAM>(ui_font), TRUE);
-        SendMessageW(theme_dark_.hwnd(),  WM_SETFONT, reinterpret_cast<WPARAM>(ui_font), TRUE);
-        SendMessageW(theme_hc_.hwnd(),    WM_SETFONT, reinterpret_cast<WPARAM>(ui_font), TRUE);
-    }
+    [[nodiscard]] bool create_children() noexcept {
+        // Header theme chips.
+        if (!init(chip_light_, id_theme_light, L"Light")) return false;
+        if (!init(chip_dark_,  id_theme_dark,  L"Dark"))  return false;
+        if (!init(chip_hc_,    id_theme_hc,    L"HC"))    return false;
 
-    void build_demo() {
-        clear_demo();
+        // Buttons — primary / secondary.
+        if (!init(ok_,     id_ok_button,     L"OK"))     return false;
+        if (!init(cancel_, id_cancel_button, L"Cancel")) return false;
+        nfui::ButtonStyle ok_style{};
+        ok_style.use_semibold = true;
+        ok_.set_style(ok_style);
+        nfui::ButtonStyle cancel_style{};
+        cancel_style.secondary = true;
+        cancel_.set_style(cancel_style);
 
-        // Buttons: OK is the primary action; Cancel uses a custom border to
-        // read as the secondary action. (A full ghost/outline fill would need
-        // a surface/text override on the Button wrapper; the current V1 API
-        // exposes border color as the secondary differentiator.)
-        g_demo.ok = std::make_unique<nfui::Button>();
-        g_demo.ok->set_style(nfui::ButtonStyle{.use_semibold = true});
-        g_demo.cancel = std::make_unique<nfui::Button>();
-        // Cancel reads as secondary via a subtle border accent. The wrapper
-        // does not have a dedicated secondary flag, so we override the border
-        // color to the theme accent and keep the transparent fill.
-        g_demo.cancel->set_style(nfui::ButtonStyle{.border_color = palette_.accent});
-        if (!create_child(*g_demo.ok,     id_ok_button,     L"OK"))     return;
-        if (!create_child(*g_demo.cancel, id_cancel_button, L"Cancel")) return;
-
-        // CheckBoxes — three states.
-        g_demo.check_unchecked    = std::make_unique<nfui::CheckBox>();
-        g_demo.check_checked      = std::make_unique<nfui::CheckBox>();
-        g_demo.check_indeterminate = std::make_unique<nfui::CheckBox>();
-        if (!create_child(*g_demo.check_unchecked,     id_check_a, L"Unchecked"))     return;
-        if (!create_child(*g_demo.check_checked,       id_check_b, L"Checked"))       return;
-        if (!create_child(*g_demo.check_indeterminate, id_check_c, L"Indeterminate")) return;
-        SendMessageW(g_demo.check_checked->hwnd(),       BM_SETCHECK, BST_CHECKED,       0);
-        SendMessageW(g_demo.check_indeterminate->hwnd(), BM_SETCHECK, BST_INDETERMINATE, 0);
+        // CheckBoxes — three states, all themed via CP-A2 chrome.
+        if (!init(check_unchecked_, id_check_a, L"Unchecked"))      return false;
+        if (!init(check_checked_,   id_check_b, L"Checked"))        return false;
+        if (!init(check_indeterm_,  id_check_c, L"Indeterminate")) return false;
+        SendMessageW(check_checked_.hwnd(),  BM_SETCHECK, BST_CHECKED,       0);
+        SendMessageW(check_indeterm_.hwnd(), BM_SETCHECK, BST_INDETERMINATE, 0);
 
         // RadioButtons — first pre-selected.
-        g_demo.radio_first  = std::make_unique<nfui::RadioButton>();
-        g_demo.radio_second = std::make_unique<nfui::RadioButton>();
-        g_demo.radio_third  = std::make_unique<nfui::RadioButton>();
-        if (!create_child(*g_demo.radio_first,  id_radio_a, L"First"))  return;
-        if (!create_child(*g_demo.radio_second, id_radio_b, L"Second")) return;
-        if (!create_child(*g_demo.radio_third,  id_radio_c, L"Third"))  return;
-        SendMessageW(g_demo.radio_first->hwnd(), BM_SETCHECK, BST_CHECKED, 0);
+        if (!init(radio_a_, id_radio_a, L"First"))  return false;
+        if (!init(radio_b_, id_radio_b, L"Second")) return false;
+        if (!init(radio_c_, id_radio_c, L"Third"))  return false;
+        SendMessageW(radio_a_.hwnd(), BM_SETCHECK, BST_CHECKED, 0);
 
-        // Edit.
-        g_demo.edit = std::make_unique<nfui::Edit>();
-        if (!create_child(*g_demo.edit, id_edit, L"editable sample")) return;
+        if (!init(edit_, id_edit, L"editable sample")) return false;
 
-        // StaticText — three alignments. CP8 wired up TextStyle::align_h so
-        // the labels actually match the rendered layout (pre-CP8 every cell
-        // rendered left-aligned regardless of the caption).
-        g_demo.static_left   = std::make_unique<nfui::StaticText>();
-        g_demo.static_center = std::make_unique<nfui::StaticText>();
-        g_demo.static_right  = std::make_unique<nfui::StaticText>();
-        if (!create_child(*g_demo.static_left,   id_static_left,   L"Left aligned"))   return;
-        if (!create_child(*g_demo.static_center, id_static_center, L"Center aligned")) return;
-        if (!create_child(*g_demo.static_right,  id_static_right,  L"Right aligned"))  return;
+        // StaticText — three alignments.
+        if (!init(static_left_,   id_static_left,   L"Left aligned"))   return false;
+        if (!init(static_center_, id_static_center, L"Center aligned")) return false;
+        if (!init(static_right_,  id_static_right,  L"Right aligned"))  return false;
         nfui::TextStyle center_style{};
         center_style.align_h = nfui::StaticTextAlignH::center;
-        g_demo.static_center->set_style(center_style);
+        static_center_.set_style(center_style);
         nfui::TextStyle right_style{};
         right_style.align_h = nfui::StaticTextAlignH::right;
-        g_demo.static_right->set_style(right_style);
+        static_right_.set_style(right_style);
 
         // ListBox.
-        g_demo.listbox = std::make_unique<nfui::ListBox>();
-        g_demo.listbox->set_style(nfui::ListStyle{
-            .selected_background = palette_.selection,
-            .selected_foreground = palette_.selection_text,
-        });
-        if (!create_child(*g_demo.listbox, id_listbox, L"")) return;
-        ListBox_AddString(g_demo.listbox->hwnd(), L"Alpha");
-        ListBox_AddString(g_demo.listbox->hwnd(), L"Bravo");
-        ListBox_AddString(g_demo.listbox->hwnd(), L"Charlie");
-        ListBox_AddString(g_demo.listbox->hwnd(), L"Delta");
-        ListBox_AddString(g_demo.listbox->hwnd(), L"Echo");
-        // CP35: drop the LB_SETCURSEL 1 default that pre-highlighted
-        // "Bravo" — the orange fill on a non-focused row read as a
-        // stuck/ghost selection rather than a usable demo of the
-        // selection palette. The list now shows its rows in a neutral
-        // state until the user actually clicks one.
+        if (!init(listbox_, id_listbox, L"")) return false;
+        ListBox_AddString(listbox_.hwnd(), L"Alpha");
+        ListBox_AddString(listbox_.hwnd(), L"Bravo");
+        ListBox_AddString(listbox_.hwnd(), L"Charlie");
+        ListBox_AddString(listbox_.hwnd(), L"Delta");
+        ListBox_AddString(listbox_.hwnd(), L"Echo");
 
         // ComboBox.
-        g_demo.combobox = std::make_unique<nfui::ComboBox>();
-        if (!create_child(*g_demo.combobox, id_combobox, L"")) return;
-        ComboBox_AddString(g_demo.combobox->hwnd(), L"Red");
-        ComboBox_AddString(g_demo.combobox->hwnd(), L"Green");
-        ComboBox_AddString(g_demo.combobox->hwnd(), L"Blue");
-        ComboBox_AddString(g_demo.combobox->hwnd(), L"Yellow");
-        ComboBox_AddString(g_demo.combobox->hwnd(), L"Purple");
-        SendMessageW(g_demo.combobox->hwnd(), CB_SETCURSEL, 0, 0);
+        if (!init(combobox_, id_combobox, L"")) return false;
+        ComboBox_AddString(combobox_.hwnd(), L"Red");
+        ComboBox_AddString(combobox_.hwnd(), L"Green");
+        ComboBox_AddString(combobox_.hwnd(), L"Blue");
+        ComboBox_AddString(combobox_.hwnd(), L"Yellow");
+        ComboBox_AddString(combobox_.hwnd(), L"Purple");
+        SendMessageW(combobox_.hwnd(), CB_SETCURSEL, 0, 0);
 
-        // ListView (3 cols x 4 rows).
-        g_demo.listview = std::make_unique<nfui::ListView>();
-        g_demo.listview->set_style(nfui::ListViewStyle{
-            .row_background      = palette_.surface,
-            .row_foreground      = palette_.text,
-            .selected_background = palette_.selection,
-            .selected_foreground = palette_.selection_text,
-            .header_caption      = palette_.text,
-            .header_background   = palette_.surface,
-        });
-        if (!create_child(*g_demo.listview, id_listview, L"")) return;
-        ListView_SetExtendedListViewStyle(g_demo.listview->hwnd(),
+        // ListView — CP-A3 chrome fills the empty area and the header in
+        // all three themes. Rows paint at the full control height so the
+        // first-paint text is never clipped.
+        if (!init(listview_, id_listview, L"")) return false;
+        ListView_SetExtendedListViewStyle(listview_.hwnd(),
                                           LVS_EX_FULLROWSELECT | LVS_EX_GRIDLINES);
-        insert_listview_column(g_demo.listview->hwnd(), 0, L"Name",  140);
-        insert_listview_column(g_demo.listview->hwnd(), 1, L"Type",  120);
-        insert_listview_column(g_demo.listview->hwnd(), 2, L"Owner", 120);
-        insert_listview_row(g_demo.listview->hwnd(), 0, L"Button",   L"Control", L"nfui_button");
-        insert_listview_row(g_demo.listview->hwnd(), 1, L"ListBox",  L"Control", L"nfui_listbox");
-        insert_listview_row(g_demo.listview->hwnd(), 2, L"ListView", L"Control", L"nfui_listview");
-        insert_listview_row(g_demo.listview->hwnd(), 3, L"TreeView", L"Control", L"nfui_treeview");
+        insert_listview_column(listview_.hwnd(), 0, L"Name",  px(104));
+        insert_listview_column(listview_.hwnd(), 1, L"Type",  px(72));
+        insert_listview_column(listview_.hwnd(), 2, L"Owner", px(72));
+        insert_listview_row(listview_.hwnd(), 0, L"Button",    L"Control", L"nfui_button");
+        insert_listview_row(listview_.hwnd(), 1, L"ListBox",   L"Control", L"nfui_listbox");
+        insert_listview_row(listview_.hwnd(), 2, L"ListView",  L"Control", L"nfui_listview");
+        insert_listview_row(listview_.hwnd(), 3, L"TreeView",  L"Control", L"nfui_treeview");
+        ListView_SetItemState(listview_.hwnd(), 0,
+                              LVIS_SELECTED | LVIS_FOCUSED,
+                              LVIS_SELECTED | LVIS_FOCUSED);
 
-        // TreeView — 2 levels, root expanded.
-        g_demo.treeview = std::make_unique<nfui::TreeView>();
-        g_demo.treeview->set_style(nfui::TreeViewStyle{
-            .row_background      = palette_.surface,
-            .row_foreground      = palette_.text,
-            .line_color          = palette_.border,
-            .selected_background = palette_.selection,
-            .selected_foreground = palette_.selection_text,
-        });
-        if (!create_child(*g_demo.treeview, id_treeview, L"")) return;
-        HTREEITEM root = tree_item_insert(g_demo.treeview->hwnd(), TVI_ROOT, TVI_LAST, L"Project");
-        tree_item_insert(g_demo.treeview->hwnd(), root, TVI_LAST, L"Source");
-        tree_item_insert(g_demo.treeview->hwnd(), root, TVI_LAST, L"Resources");
-        tree_item_insert(g_demo.treeview->hwnd(), root, TVI_LAST, L"Tests");
-        TreeView_Expand(g_demo.treeview->hwnd(), root, TVE_EXPAND);
+        // TreeView — root + 3 children, expanded so the chrome shows lines + dots.
+        if (!init(treeview_, id_treeview, L"")) return false;
+        HTREEITEM root = tree_item_insert(treeview_.hwnd(), TVI_ROOT, TVI_LAST, L"Project");
+        tree_item_insert(treeview_.hwnd(), root, TVI_LAST, L"Source");
+        tree_item_insert(treeview_.hwnd(), root, TVI_LAST, L"Resources");
+        tree_item_insert(treeview_.hwnd(), root, TVI_LAST, L"Tests");
+        TreeView_Expand(treeview_.hwnd(), root, TVE_EXPAND);
 
         // IconView.
-        g_demo.iconview = std::make_unique<nfui::IconView>();
-        g_demo.iconview->set_style(nfui::IconViewStyle{
-            .pixel_size  = 32,
-            .padding     = 4,
-        });
-        if (!create_child(*g_demo.iconview, id_iconview, L"")) return;
+        if (!init(iconview_, id_iconview, L"")) return false;
         if (app_icon_ == nullptr) {
             app_icon_ = nfui::load_scaled_icon(instance_,
                                                MAKEINTRESOURCEW(IDI_NFUI_APP),
@@ -498,340 +404,475 @@ private:
                                                dpi_.dpi());
         }
         if (app_icon_ != nullptr) {
-            g_demo.iconview->set_icon(app_icon_);
+            iconview_.set_icon(app_icon_);
         }
+
+        // StatusBar — docked, themed via CP-A4.
+        if (!init(status_, id_status, L"")) return false;
+        set_status_text();
 
         // ProgressBar.
-        g_demo.progress = std::make_unique<nfui::ProgressBar>();
-        g_demo.progress->set_style(nfui::FrameStyle{
-            .surface_brush = palette_.surface,
-            .bar_color     = palette_.accent,
-        });
-        if (!create_child(*g_demo.progress, id_progress, L"")) return;
-        SendMessageW(g_demo.progress->hwnd(), PBM_SETRANGE, 0, MAKELPARAM(0, 100));
-        SendMessageW(g_demo.progress->hwnd(), PBM_SETPOS, 40, 0);
+        if (!init(progress_, id_progress, L"")) return false;
+        SendMessageW(progress_.hwnd(), PBM_SETRANGE, 0, MAKELPARAM(0, 100));
+        SendMessageW(progress_.hwnd(), PBM_SETPOS, 40, 0);
 
-        // StatusBar.
-        g_demo.status = std::make_unique<nfui::StatusBar>();
-        g_demo.status->set_style(nfui::FrameStyle{.surface_brush = palette_.surface});
-        if (!create_child(*g_demo.status, id_status, L"")) return;
-        SendMessageW(g_demo.status->hwnd(),
-                     SB_SETTEXTW,
-                     0,
-                     reinterpret_cast<LPARAM>(L"ThemeDemo: ready"));
+        // TabControl — 3 tabs.
+        if (!init(tabs_, id_tabs, L"")) return false;
+        static_cast<void>(tabs_.set_padding(px(tok::spacing_md), px(tok::spacing_xs)));
+        insert_tab(tabs_.hwnd(), 0, L"General");
+        insert_tab(tabs_.hwnd(), 1, L"Layout");
+        insert_tab(tabs_.hwnd(), 2, L"Output");
 
-        // TabControl (3 tabs).
-        g_demo.tabs = std::make_unique<nfui::TabControl>();
-        if (!create_child(*g_demo.tabs, id_tabs, L"")) return;
-        static_cast<void>(g_demo.tabs->set_padding(dpi_.logical_to_pixels(12), dpi_.logical_to_pixels(4)));
-        insert_tab(g_demo.tabs->hwnd(), 0, L"General");
-        insert_tab(g_demo.tabs->hwnd(), 1, L"Layout");
-        insert_tab(g_demo.tabs->hwnd(), 2, L"Output");
+        // Panel + Splitter.
+        if (!init(panel_, id_panel, L"")) return false;
+        nfui::FrameStyle panel_style{};
+        panel_style.elevation = 2;
+        panel_.set_style(panel_style);
+        if (!init(splitter_, id_splitter, L"")) return false;
 
-        // Panel + Splitter (V1.4 chrome demonstration).
-        g_demo.panel     = std::make_unique<nfui::Panel>();
-        g_demo.splitter  = std::make_unique<nfui::Splitter>();
-        g_demo.panel->set_style(nfui::FrameStyle{
-            .accent        = palette_.border,
-            .surface_brush = palette_.surface,
-        });
-        if (!create_child(*g_demo.panel,    id_panel,    L"")) return;
-        if (!create_child(*g_demo.splitter, id_splitter, L"")) return;
-
-        apply_native_fonts();
+        refresh_chip_styles();
+        return true;
     }
 
-    void layout_demo() {
-        if (hwnd() == nullptr || g_demo.status == nullptr) {
-            return;
-        }
+    void set_status_text() noexcept {
+        if (status_.hwnd() == nullptr) return;
+        const wchar_t* text = L"ThemeDemo  \x2022  7 control classes  \x2022  7 \x00D7 6 interaction-state matrix";
+        SendMessageW(status_.hwnd(), SB_SETTEXTW, 0, reinterpret_cast<LPARAM>(text));
+    }
 
-        dpi_ = nfui::DpiScale(nfui::dpi_of(hwnd()));
-        RECT client{};
-        GetClientRect(hwnd(), &client);
-        SendMessageW(g_demo.status->hwnd(), WM_SIZE, 0, 0);
-
-        const int outer = outer_margin();
-        const int gap_v = gap();
-        const int toolbar_h = toolbar_height();
-        const int row_h = row_height();
-        const int label_w = label_width();
-
-        // Theme toggles live on the right side of the top toolbar.
-        const int right = client.right - outer;
-        const int hc_w = dpi_.logical_to_pixels(160);
-        const int btn_w = dpi_.logical_to_pixels(120);
-        const int hc_x = right - hc_w;
-        const int dark_x = hc_x - gap_v - btn_w;
-        const int light_x = dark_x - gap_v - btn_w;
-        const int toolbar_top = client.top + outer;
-
-        MoveWindow(theme_light_.hwnd(),
-                   light_x,
-                   toolbar_top,
-                   btn_w,
-                   toolbar_h,
-                   TRUE);
-        MoveWindow(theme_dark_.hwnd(),
-                   dark_x,
-                   toolbar_top,
-                   btn_w,
-                   toolbar_h,
-                   TRUE);
-        MoveWindow(theme_hc_.hwnd(),
-                   hc_x,
-                   toolbar_top,
-                   hc_w,
-                   toolbar_h,
-                   TRUE);
-
-        auto place_row = [&](int index,
-                             std::initializer_list<std::pair<int, int>> sizes) {
-            const int y = row_y(index, client);
-            const int h = dpi_.logical_to_pixels(kRowHeights[index]);
-            int x = client.left + outer + label_w;
-            for (auto [id, w] : sizes) {
-                HWND child = GetDlgItem(hwnd(), id);
-                if (child != nullptr) {
-                    MoveWindow(child, x, y, dpi_.logical_to_pixels(w), h, TRUE);
-                    x += dpi_.logical_to_pixels(w) + gap_v;
-                }
+    // Active chip = primary accent face; the other two = secondary face.
+    // Re-applied on every theme change so the header always reflects the
+    // broker's mode.
+    void refresh_chip_styles() noexcept {
+        auto apply = [](nfui::Button& chip, bool active) noexcept {
+            nfui::ButtonStyle style{};
+            style.corner_radius = tok::radius_sm;
+            style.secondary     = !active;
+            style.use_semibold  = active;
+            chip.set_style(style);
+            if (chip.hwnd() != nullptr) {
+                InvalidateRect(chip.hwnd(), nullptr, FALSE);
             }
         };
+        apply(chip_light_, mode_ == nfui::ThemeMode::light);
+        apply(chip_dark_,  mode_ == nfui::ThemeMode::dark);
+        apply(chip_hc_,    mode_ == nfui::ThemeMode::high_contrast);
+    }
 
-        place_row(0, {{id_ok_button, 90}, {id_cancel_button, 90}});
-        place_row(1, {{id_check_a, 110}, {id_check_b, 110}, {id_check_c, 130}});
-        place_row(2, {{id_radio_a, 80}, {id_radio_b, 90}, {id_radio_c, 90}});
-        place_row(3, {{id_edit, 320}});
-        place_row(4, {{id_static_left, 120}, {id_static_center, 120}, {id_static_right, 120}});
-        place_row(5, {{id_listbox, 200}});
-        place_row(6, {{id_combobox, 200}});
-        place_row(7, {{id_listview, 380}});
-        place_row(8, {{id_treeview, 200}});
-        place_row(9, {{id_iconview, 32}});
-        place_row(10, {{id_progress, 380}});
-        place_row(11, {{id_tabs, 380}});
-
-        // Panel + Splitter share the last row.
-        const int y = row_y(12, client);
-        const int h = dpi_.logical_to_pixels(kRowHeights[12]);
-        int x = client.left + outer + label_w;
-        HWND panel_h    = GetDlgItem(hwnd(), id_panel);
-        HWND splitter_h = GetDlgItem(hwnd(), id_splitter);
-        if (panel_h != nullptr) {
-            MoveWindow(panel_h,
-                       x,
-                       y,
-                       dpi_.logical_to_pixels(380),
-                       h,
-                       TRUE);
+    void apply_theme(nfui::ThemeMode mode) noexcept {
+        if (mode_ == mode) {
+            return;
         }
-        if (splitter_h != nullptr) {
-            MoveWindow(splitter_h,
-                       x + dpi_.logical_to_pixels(380) + gap_v,
-                       y,
-                       dpi_.logical_to_pixels(6),
-                       h,
-                       TRUE);
-        }
+        mode_ = mode;
+        palette_ = nfui::theme_palette(mode);
+        // The palette pointer handed to each wrapper is stable (&palette_), so
+        // re-injecting is what triggers each control's on_palette_changed +
+        // InvalidateRect. Without this the wrappers would keep painting the
+        // stale colours they cached at create time.
+        for_each_control([this](nfui::Control* control) noexcept {
+            control->set_palette(&palette_);
+        });
+        refresh_chip_styles();
+        apply_native_fonts();
+        set_status_text();
+        InvalidateRect(hwnd(), nullptr, FALSE);
     }
 
     void apply_native_fonts() noexcept {
         const int dpi_value = dpi_.dpi();
-        const HFONT ui_font = fonts_.regular(dpi_value, 9);
-        if (g_demo.ok != nullptr) {
-            SendMessageW(g_demo.ok->hwnd(),      WM_SETFONT, reinterpret_cast<WPARAM>(ui_font), TRUE);
-        }
-        if (g_demo.cancel != nullptr) {
-            SendMessageW(g_demo.cancel->hwnd(),  WM_SETFONT, reinterpret_cast<WPARAM>(ui_font), TRUE);
-        }
-        if (g_demo.check_unchecked != nullptr) {
-            SendMessageW(g_demo.check_unchecked->hwnd(), WM_SETFONT, reinterpret_cast<WPARAM>(ui_font), TRUE);
-        }
-        if (g_demo.check_checked != nullptr) {
-            SendMessageW(g_demo.check_checked->hwnd(),   WM_SETFONT, reinterpret_cast<WPARAM>(ui_font), TRUE);
-        }
-        if (g_demo.check_indeterminate != nullptr) {
-            SendMessageW(g_demo.check_indeterminate->hwnd(), WM_SETFONT, reinterpret_cast<WPARAM>(ui_font), TRUE);
-        }
-        if (g_demo.radio_first != nullptr) {
-            SendMessageW(g_demo.radio_first->hwnd(),  WM_SETFONT, reinterpret_cast<WPARAM>(ui_font), TRUE);
-        }
-        if (g_demo.radio_second != nullptr) {
-            SendMessageW(g_demo.radio_second->hwnd(), WM_SETFONT, reinterpret_cast<WPARAM>(ui_font), TRUE);
-        }
-        if (g_demo.radio_third != nullptr) {
-            SendMessageW(g_demo.radio_third->hwnd(),  WM_SETFONT, reinterpret_cast<WPARAM>(ui_font), TRUE);
-        }
-        if (g_demo.listbox != nullptr) {
-            SendMessageW(g_demo.listbox->hwnd(),    WM_SETFONT, reinterpret_cast<WPARAM>(ui_font), TRUE);
-        }
-        if (g_demo.combobox != nullptr) {
-            SendMessageW(g_demo.combobox->hwnd(),   WM_SETFONT, reinterpret_cast<WPARAM>(ui_font), TRUE);
-        }
-        if (g_demo.edit != nullptr) {
-            SendMessageW(g_demo.edit->hwnd(),       WM_SETFONT, reinterpret_cast<WPARAM>(ui_font), TRUE);
-        }
-        if (g_demo.listview != nullptr) {
-            SendMessageW(g_demo.listview->hwnd(),   WM_SETFONT, reinterpret_cast<WPARAM>(ui_font), TRUE);
-        }
-        if (g_demo.treeview != nullptr) {
-            SendMessageW(g_demo.treeview->hwnd(),   WM_SETFONT, reinterpret_cast<WPARAM>(ui_font), TRUE);
-        }
-        if (g_demo.tabs != nullptr) {
-            SendMessageW(g_demo.tabs->hwnd(),       WM_SETFONT, reinterpret_cast<WPARAM>(ui_font), TRUE);
-        }
-        if (g_demo.status != nullptr) {
-            SendMessageW(g_demo.status->hwnd(),     WM_SETFONT, reinterpret_cast<WPARAM>(ui_font), TRUE);
-        }
-        apply_toggle_fonts();
+        const HFONT ui_font = fonts_.regular(dpi_value, nfui::font_pt::ui);
+        const HFONT body_font = fonts_.regular(dpi_value, nfui::font_pt::sm);
+        SendMessageW(ok_.hwnd(),          WM_SETFONT, reinterpret_cast<WPARAM>(body_font), TRUE);
+        SendMessageW(cancel_.hwnd(),      WM_SETFONT, reinterpret_cast<WPARAM>(body_font), TRUE);
+        SendMessageW(check_unchecked_.hwnd(), WM_SETFONT, reinterpret_cast<WPARAM>(body_font), TRUE);
+        SendMessageW(check_checked_.hwnd(),   WM_SETFONT, reinterpret_cast<WPARAM>(body_font), TRUE);
+        SendMessageW(check_indeterm_.hwnd(),  WM_SETFONT, reinterpret_cast<WPARAM>(body_font), TRUE);
+        SendMessageW(radio_a_.hwnd(),         WM_SETFONT, reinterpret_cast<WPARAM>(body_font), TRUE);
+        SendMessageW(radio_b_.hwnd(),         WM_SETFONT, reinterpret_cast<WPARAM>(body_font), TRUE);
+        SendMessageW(radio_c_.hwnd(),         WM_SETFONT, reinterpret_cast<WPARAM>(body_font), TRUE);
+        SendMessageW(edit_.hwnd(),            WM_SETFONT, reinterpret_cast<WPARAM>(ui_font),   TRUE);
+        SendMessageW(listbox_.hwnd(),         WM_SETFONT, reinterpret_cast<WPARAM>(ui_font),   TRUE);
+        SendMessageW(combobox_.hwnd(),        WM_SETFONT, reinterpret_cast<WPARAM>(ui_font),   TRUE);
+        SendMessageW(listview_.hwnd(),        WM_SETFONT, reinterpret_cast<WPARAM>(ui_font),   TRUE);
+        SendMessageW(treeview_.hwnd(),        WM_SETFONT, reinterpret_cast<WPARAM>(ui_font),   TRUE);
+        SendMessageW(iconview_.hwnd(),        WM_SETFONT, reinterpret_cast<WPARAM>(ui_font),   TRUE);
+        SendMessageW(tabs_.hwnd(),            WM_SETFONT, reinterpret_cast<WPARAM>(ui_font),   TRUE);
+        SendMessageW(status_.hwnd(),          WM_SETFONT, reinterpret_cast<WPARAM>(ui_font),   TRUE);
     }
 
-    void paint_background(HDC target, const RECT& client) {
+    [[nodiscard]] int status_height() const noexcept {
+        RECT status_rect{};
+        if (status_.hwnd() != nullptr && GetWindowRect(status_.hwnd(), &status_rect)) {
+            return status_rect.bottom - status_rect.top;
+        }
+        return px(tok::control_height_sm);
+    }
+
+    // Single source of truth for the page geometry. Called by both
+    // layout_children() (MoveWindow) and paint_background() (cards + labels),
+    // so painted chrome can never drift from the live HWNDs.
+    [[nodiscard]] PageLayout compute_layout(const RECT& client) noexcept {
+        PageLayout out{};
+
+        const int outer    = px(tok::spacing_md);   // 16
+        const int col_gap  = px(tok::spacing_lg);   // 24
+        const int pad      = px(tok::spacing_md);   // 16
+        const int gap_card = px(tok::spacing_md);   // 16
+        const int gap_grp  = px(tok::spacing_md);   // 16
+        const int gap_row  = px(tok::spacing_sm);   // 8
+        const int gap_tiny = px(tok::spacing_xs);   // 4
+
+        const int eyebrow_h = px(eyebrow_h_l);
+        const int title_h   = px(card_title_h_l);
+        const int row_md    = px(tok::control_height_md);
+        const int row_sm    = px(tok::control_height_sm);
+
+        const int left  = client.left + outer;
+        const int right = client.right - outer;
+
+        // ---- header band -------------------------------------------------
+        const int band_top = client.top + outer;
+        const int band_h   = px(header_band_l);
+        out.title    = RECT{left, band_top, right, band_top + px(32)};
+        out.subtitle = RECT{left, out.title.bottom + px(tok::spacing_xs) / 2,
+                            right, band_top + band_h};
+
+        const int chip_w = px(chip_w_l);
+        const int chip_h = px(tok::control_height_sm);
+        const int chip_y = band_top + (band_h - chip_h) / 2;
+        for (int i = 0; i < 3; ++i) {
+            const int x = right - (3 - i) * chip_w - (2 - i) * gap_row;
+            out.chip[i] = RECT{x, chip_y, x + chip_w, chip_y + chip_h};
+        }
+
+        // ---- content band --------------------------------------------------
+        const int content_top    = band_top + band_h + px(tok::spacing_md);
+        const int content_bottom = client.bottom - status_height() - outer;
+
+        int col1_w = px(col_controls_l);
+        int col2_w = px(col_collections_l);
+        int col3_w = (right - left) - col1_w - col2_w - col_gap * 2;
+        // The matrix column gets the floor. If the matrix floor is not
+        // reachable, the collections column gives up width first (it has the
+        // least minimum-viable width).
+        const int col_matrix_min = px(col_matrix_l) - px(col_collections_l) + px(col_min_mid_l);
+        if (col3_w < px(col_matrix_l)) {
+            const int deficit = px(col_matrix_l) - col3_w;
+            col2_w = (std::max)(px(col_min_mid_l), col2_w - deficit);
+            col3_w = (right - left) - col1_w - col2_w - col_gap * 2;
+        }
+        (void)col_matrix_min;
+        if (col3_w < 0) col3_w = 0;
+
+        const int col1_x = left;
+        const int col2_x = col1_x + col1_w + col_gap;
+        const int col3_x = col2_x + col2_w + col_gap;
+
+        // ---- column 1: Controls ------------------------------------------
+        {
+            const int inner_x = col1_x + pad;
+            const int inner_w = col1_w - pad * 2;
+            int y = content_top + pad;
+            const int card_top = content_top;
+
+            RECT ct{inner_x, y, inner_x + inner_w, y + title_h};
+            y += title_h + gap_row;
+
+            // BUTTON
+            out.push_eyebrow(RECT{inner_x, y, inner_x + inner_w, y + eyebrow_h}, L"BUTTON");
+            y += eyebrow_h + gap_tiny;
+            {
+                const int bw = (inner_w - gap_row) / 2;
+                out.button[0] = RECT{inner_x, y, inner_x + bw, y + row_md};
+                out.button[1] = RECT{inner_x + bw + gap_row, y, inner_x + inner_w, y + row_md};
+            }
+            y += row_md + gap_grp;
+
+            // CHECKBOX — both fit on one row in the wider column.
+            out.push_eyebrow(RECT{inner_x, y, inner_x + inner_w, y + eyebrow_h}, L"CHECKBOX");
+            y += eyebrow_h + gap_tiny;
+            {
+                const int cw = (inner_w - gap_row * 2) / 3;
+                for (int i = 0; i < 3; ++i) {
+                    const int x = inner_x + i * (cw + gap_row);
+                    out.check[i] = RECT{x, y, x + cw, y + row_sm};
+                }
+            }
+            y += row_sm + gap_grp;
+
+            // RADIOBUTTON
+            out.push_eyebrow(RECT{inner_x, y, inner_x + inner_w, y + eyebrow_h}, L"RADIOBUTTON");
+            y += eyebrow_h + gap_tiny;
+            {
+                const int cw = (inner_w - gap_row * 2) / 3;
+                for (int i = 0; i < 3; ++i) {
+                    const int x = inner_x + i * (cw + gap_row);
+                    out.radio[i] = RECT{x, y, x + cw, y + row_sm};
+                }
+            }
+            y += row_sm + gap_grp;
+
+            // EDIT / COMBOBOX
+            out.push_eyebrow(RECT{inner_x, y, inner_x + inner_w, y + eyebrow_h}, L"EDIT / COMBOBOX");
+            y += eyebrow_h + gap_tiny;
+            out.edit = RECT{inner_x, y, inner_x + inner_w, y + row_md};
+            y += row_md + gap_row;
+            out.combo = RECT{inner_x, y, inner_x + inner_w, y + row_md};
+            y += row_md + gap_grp;
+
+            // STATICTEXT
+            out.push_eyebrow(RECT{inner_x, y, inner_x + inner_w, y + eyebrow_h}, L"STATICTEXT");
+            y += eyebrow_h + gap_tiny;
+            for (int i = 0; i < 3; ++i) {
+                out.statics[i] = RECT{inner_x, y + i * row_sm, inner_x + inner_w, y + (i + 1) * row_sm};
+            }
+            y += row_sm * 3;
+
+            const int card_bottom = y + pad;
+            out.push_card(RECT{col1_x, card_top, col1_x + col1_w, card_bottom}, L"Controls", ct);
+        }
+
+        // ---- column 2: Collections + Chrome -----------------------------
+        {
+            const int inner_x = col2_x + pad;
+            const int inner_w = col2_w - pad * 2;
+            const int card_top = content_top;
+            int y = card_top + pad;
+
+            RECT ct{inner_x, y, inner_x + inner_w, y + title_h};
+            y += title_h + gap_row;
+
+            // LISTBOX + LISTVIEW + TREEVIEW on a tight stack so the page
+            // reads as one content band, not three orphan sections.
+            const int listbox_h = px(72);
+            out.listbox = RECT{inner_x, y, inner_x + inner_w, y + listbox_h};
+            y += listbox_h + gap_grp;
+
+            const int listview_h = px(124);
+            out.listview = RECT{inner_x, y, inner_x + inner_w, y + listview_h};
+            y += listview_h + gap_grp;
+
+            const int treeview_h = px(124);
+            out.treeview = RECT{inner_x, y, inner_x + inner_w, y + treeview_h};
+            y += treeview_h + gap_grp;
+
+            // ICONVIEW + PROGRESS inline so the column carries a
+            // Feedback-ish band instead of a giant empty rectangle.
+            out.icon = RECT{inner_x, y, inner_x + px(32), y + px(32)};
+            out.progress = RECT{inner_x + px(40), y + row_sm / 2,
+                               inner_x + inner_w, y + row_sm / 2 + px(8)};
+            y += px(32);
+
+            const int card_bottom = y + pad;
+            out.push_card(RECT{col2_x, card_top, col2_x + col2_w, card_bottom},
+                          L"Collections", ct);
+
+            // TABCONTROL + PANEL+SPLITTER on the remaining vertical space.
+            const int tb_top = card_bottom + gap_card;
+            int ty = tb_top + pad;
+            RECT tct{inner_x, ty, inner_x + inner_w, ty + title_h};
+            ty += title_h + gap_row;
+
+            out.push_eyebrow(RECT{inner_x, ty, inner_x + inner_w, ty + eyebrow_h}, L"TABCONTROL");
+            ty += eyebrow_h + gap_tiny;
+            // CP-B4: the TabControl body is given exactly the height the
+            // remaining card space allows. CP-A3 chrome fills the empty area
+            // so the dark / HC captures do not regress back to the white
+            // island the audit originally flagged.
+            const int tabs_h = px(tok::control_height_lg) + px(48);
+            out.tabs = RECT{inner_x, ty, inner_x + inner_w, ty + tabs_h};
+            ty += tabs_h + gap_grp;
+
+            out.push_eyebrow(RECT{inner_x, ty, inner_x + inner_w, ty + eyebrow_h}, L"PANEL + SPLITTER");
+            ty += eyebrow_h + gap_tiny;
+            {
+                const int split_w = px(tok::spacing_sm) - px(2);
+                int body_h = (std::max)(px(40), content_bottom - pad - ty);
+                out.splitter = RECT{inner_x + inner_w - split_w, ty,
+                                    inner_x + inner_w, ty + body_h};
+                out.panel = RECT{inner_x, ty, out.splitter.left - gap_row, ty + body_h};
+                ty += body_h;
+            }
+            out.push_card(RECT{col2_x, tb_top, col2_x + col2_w, (std::min)(ty + pad, content_bottom)},
+                          L"Chrome", tct);
+        }
+
+        // ---- column 3: State matrix -------------------------------------
+        {
+            const int inner_x = col3_x + pad;
+            const int inner_w = col3_w - pad * 2;
+            const int card_top = content_top;
+            int y = card_top + pad;
+
+            RECT ct{inner_x, y, inner_x + inner_w, y + title_h};
+            y += title_h + gap_row;
+
+            const int grid_h = px(tok::spacing_md) + gap_row +
+                               static_cast<int>(gallery::matrix_control_count) * px(matrix_row_h_l) +
+                               (static_cast<int>(gallery::matrix_control_count) - 1) * gap_row;
+            out.matrix_grid = RECT{inner_x, y, inner_x + inner_w, y + grid_h};
+            y += grid_h;
+
+            const int card_bottom = y + pad;
+            out.push_card(RECT{col3_x, card_top, col3_x + col3_w, card_bottom},
+                          L"Interaction states", ct);
+        }
+
+        return out;
+    }
+
+    static void move_to(HWND h, const RECT& r) noexcept {
+        if (h == nullptr) return;
+        MoveWindow(h, r.left, r.top,
+                   (std::max)(0, static_cast<int>(r.right - r.left)),
+                   (std::max)(0, static_cast<int>(r.bottom - r.top)),
+                   TRUE);
+    }
+
+    void layout_children() noexcept {
+        if (hwnd() == nullptr || status_.hwnd() == nullptr) {
+            return;
+        }
+
+        dpi_ = nfui::DpiScale(nfui::dpi_of(hwnd()));
+        // The StatusBar docks itself to the bottom edge of the client area at
+        // full width when it is handed a WM_SIZE — the product-UI placement
+        // the audit asked for. Do this first so status_height() is accurate
+        // for the content band below.
+        SendMessageW(status_.hwnd(), WM_SIZE, 0, 0);
+
+        RECT client{};
+        GetClientRect(hwnd(), &client);
+        const PageLayout page = compute_layout(client);
+
+        move_to(chip_light_.hwnd(), page.chip[0]);
+        move_to(chip_dark_.hwnd(),  page.chip[1]);
+        move_to(chip_hc_.hwnd(),    page.chip[2]);
+
+        move_to(ok_.hwnd(),      page.button[0]);
+        move_to(cancel_.hwnd(),  page.button[1]);
+
+        move_to(check_unchecked_.hwnd(), page.check[0]);
+        move_to(check_checked_.hwnd(),   page.check[1]);
+        move_to(check_indeterm_.hwnd(),  page.check[2]);
+
+        move_to(radio_a_.hwnd(), page.radio[0]);
+        move_to(radio_b_.hwnd(), page.radio[1]);
+        move_to(radio_c_.hwnd(), page.radio[2]);
+
+        move_to(edit_.hwnd(),  page.edit);
+        move_to(combobox_.hwnd(), page.combo);
+
+        move_to(static_left_.hwnd(),   page.statics[0]);
+        move_to(static_center_.hwnd(), page.statics[1]);
+        move_to(static_right_.hwnd(),  page.statics[2]);
+
+        move_to(listbox_.hwnd(),  page.listbox);
+        move_to(listview_.hwnd(), page.listview);
+        move_to(treeview_.hwnd(), page.treeview);
+
+        move_to(iconview_.hwnd(),  page.icon);
+        move_to(progress_.hwnd(),  page.progress);
+
+        move_to(panel_.hwnd(),    page.panel);
+        move_to(splitter_.hwnd(), page.splitter);
+        move_to(tabs_.hwnd(),     page.tabs);
+
+        InvalidateRect(hwnd(), nullptr, FALSE);
+    }
+
+    void paint_card(HDC dc, const RECT& r) const noexcept {
+        if (r.right <= r.left || r.bottom <= r.top) return;
+        nfui::fill_rounded_rect(dc, r, px(tok::radius_lg), palette_.surface, palette_.border);
+    }
+
+    void paint_matrix(HDC dc, const RECT& grid) noexcept {
+        if (grid.right <= grid.left || grid.bottom <= grid.top) return;
+
+        const int gap        = px(tok::spacing_sm);
+        const int label_w    = px(matrix_label_l);
+        const int header_h   = px(tok::spacing_md);
+        const int row_h      = px(matrix_row_h_l);
+        const int states     = static_cast<int>(gallery::matrix_state_count);
+        const int cells_left = grid.left + label_w;
+        const int cells_w    = grid.right - cells_left;
+        if (cells_w <= states) return;
+        const int cell_w = (cells_w - gap * (states - 1)) / states;
+        if (cell_w <= 0) return;
+
+        HFONT head_font = fonts_.semibold(dpi_.dpi(), nfui::font_pt::xs);
+        HFONT row_font  = fonts_.semibold(dpi_.dpi(), nfui::font_pt::sm);
+
+        for (int s = 0; s < states; ++s) {
+            const int x = cells_left + s * (cell_w + gap);
+            RECT head{x, grid.top, x + cell_w, grid.top + header_h};
+            nfui::draw_text(dc, head, gallery::matrix_state_labels[s], head_font,
+                            palette_.text_secondary,
+                            DT_CENTER | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX);
+        }
+
+        int y = grid.top + header_h + gap;
+        for (std::size_t r = 0; r < gallery::matrix_control_count; ++r) {
+            RECT label{grid.left, y, cells_left - gap, y + row_h};
+            nfui::draw_text(dc, label, gallery::matrix_control_labels[r], row_font,
+                            palette_.text,
+                            DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX);
+            for (int s = 0; s < states; ++s) {
+                const int x = cells_left + s * (cell_w + gap);
+                const RECT cell{x, y, x + cell_w, y + row_h};
+                gallery::paint_matrix_cell(dc, cell,
+                                           gallery::matrix_controls[r],
+                                           gallery::matrix_states[static_cast<std::size_t>(s)],
+                                           palette_,
+                                           dpi_);
+            }
+            y += row_h + gap;
+        }
+    }
+
+    void paint_background(HDC target, const RECT& client) noexcept {
         nfui::fill_rect(target, client, palette_.background);
 
         const int dpi_value = dpi_.dpi();
-        const int outer = outer_margin();
-        const int gap_v = gap();
-        const int toolbar_h = toolbar_height();
-        const int row_h = row_height();
-        const int label_w = label_width();
-        const int header_h = section_header_height();
+        HFONT hero_font    = fonts_.bold(dpi_value, nfui::font_pt::xl);
+        HFONT card_font    = fonts_.semibold(dpi_value, nfui::font_pt::lg);
+        HFONT eyebrow_font = fonts_.semibold(dpi_value, nfui::font_pt::xs);
+        HFONT body_font    = fonts_.regular(dpi_value, nfui::font_pt::sm);
 
-        HFONT title_font   = fonts_.semibold(dpi_value, 18);
-        HFONT section_font = fonts_.semibold(dpi_value, 9);
-        HFONT body_font    = fonts_.regular(dpi_value, 9);
+        const PageLayout page = compute_layout(client);
 
-        // Title on the left of the toolbar, toggles on the right.
-        const int right = client.right - outer;
-        const int hc_w = dpi_.logical_to_pixels(160);
-        const int btn_w = dpi_.logical_to_pixels(120);
-        const int hc_x = right - hc_w;
-        const int dark_x = hc_x - gap_v - btn_w;
-        const int light_x = dark_x - gap_v - btn_w;
-        const int toolbar_top = client.top + outer;
-
-        RECT title{client.left + outer,
-                   toolbar_top,
-                   light_x - gap_v,
-                   toolbar_top + toolbar_h};
-        // CP35: shorten the painted headline from "NativeFrame UI
-        // ThemeDemo" to "Theme Demo" so it matches the "Component
-        // Gallery" / "Resource Gallery" / "Settings" surface vocabulary
-        // and stops crowding the Light/Dark/HC toggle trio on the 980
-        // default width. The window title bar still carries the full
-        // "NativeFrame UI — Theme Demo" so the framework context is
-        // preserved.
-        nfui::draw_text(target,
-                        title,
-                        L"Theme Demo",
-                        title_font,
-                        palette_.text,
-                        DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX);
-
-        // Subtle hairline under the toolbar to separate it from the content.
-        nfui::draw_line(target,
-                        POINT{client.left + outer, toolbar_top + toolbar_h},
-                        POINT{client.right - outer, toolbar_top + toolbar_h},
-                        palette_.border,
-                        1);
-
-        // Section group headers.
-        auto draw_section_header = [&](int group, const wchar_t* text) {
-            const int y = group_header_y(group, client);
-            RECT header{client.left + outer,
-                        y,
-                        client.left + outer + label_w,
-                        y + header_h};
-            nfui::draw_text(target,
-                            header,
-                            text,
-                            section_font,
-                            palette_.text,
-                            DT_LEFT | DT_BOTTOM | DT_SINGLELINE | DT_NOPREFIX);
-        };
-
-        draw_section_header(0, kGroupButtons);
-        draw_section_header(1, kGroupInputs);
-        draw_section_header(2, kGroupFeedback);
-
-        // Per-row labels to the left of each demonstrator control.
-        auto draw_label = [&](int row, const wchar_t* text) {
-            const int y = row_y(row, client);
-            const int h = dpi_.logical_to_pixels(kRowHeights[row]);
-            RECT label{client.left + outer,
-                       y,
-                       client.left + outer + label_w - gap_v,
-                       y + h};
-            nfui::draw_text(target,
-                            label,
-                            text,
-                            section_font,
-                            palette_.text_secondary,
-                            DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX);
-        };
-
-        draw_label(0,  kSectionButton);
-        draw_label(1,  kSectionCheckBox);
-        draw_label(2,  kSectionRadio);
-        draw_label(3,  kSectionEdit);
-        draw_label(4,  kSectionStatic);
-        draw_label(5,  kSectionListBox);
-        draw_label(6,  kSectionComboBox);
-        draw_label(7,  kSectionListView);
-        draw_label(8,  kSectionTreeView);
-        draw_label(9,  kSectionIconView);
-        draw_label(10, kSectionProgressBar);
-        draw_label(11, kSectionTabControl);
-        draw_label(12, kSectionSplitter);
-
-        // Active mode footer anchored to the bottom-right, above the status bar.
-        int status_height = 0;
-        if (g_demo.status != nullptr) {
-            RECT status_rect{};
-            GetWindowRect(g_demo.status->hwnd(), &status_rect);
-            status_height = status_rect.bottom - status_rect.top;
+        for (int i = 0; i < page.card_count; ++i) {
+            paint_card(target, page.card_rect[i]);
         }
-        RECT footer{client.left + label_w + outer,
-                    client.bottom - status_height - outer - row_h,
-                    client.right - outer,
-                    client.bottom - status_height - outer};
-        const wchar_t* mode_text =
-            (mode_ == nfui::ThemeMode::high_contrast) ? L"Active mode: High Contrast"
-            : (mode_ == nfui::ThemeMode::dark)       ? L"Active mode: Dark"
-                                                      : L"Active mode: Light";
-        nfui::draw_text(target,
-                        footer,
-                        mode_text,
-                        body_font,
-                        palette_.text_secondary,
-                        DT_RIGHT | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX);
-    }
 
-    void switch_mode(nfui::ThemeMode new_mode) noexcept {
-        if (new_mode == mode_) {
-            return;
+        nfui::draw_text(target, page.title, L"Theme Demo", hero_font, palette_.text,
+                        DT_LEFT | DT_TOP | DT_SINGLELINE | DT_END_ELLIPSIS | DT_NOPREFIX);
+        nfui::draw_text(target, page.subtitle,
+                        L"Live controls, the per-class interaction-state matrix, and themed chrome \x2014 "
+                        L"switch themes to verify every state in light, dark, and high contrast.",
+                        body_font, palette_.text_secondary,
+                        DT_LEFT | DT_TOP | DT_SINGLELINE | DT_END_ELLIPSIS | DT_NOPREFIX);
+
+        for (int i = 0; i < page.card_count; ++i) {
+            const LabelSlot& slot = page.card_title[i];
+            if (slot.text == nullptr) continue;
+            nfui::draw_text(target, slot.rect, slot.text, card_font, palette_.text,
+                            DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS | DT_NOPREFIX);
         }
-        mode_ = new_mode;
-        palette_ = nfui::theme_palette(mode_);
+        for (int i = 0; i < page.eyebrow_count; ++i) {
+            const LabelSlot& slot = page.eyebrow[i];
+            if (slot.text == nullptr) continue;
+            nfui::draw_text(target, slot.rect, slot.text, eyebrow_font, palette_.text_secondary,
+                            DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS | DT_NOPREFIX);
+        }
 
-        // Refresh palette/font on the persistent toggle buttons so they match
-        // the new theme before the demo rebuilds.
-        theme_light_.set_palette(&palette_);
-        theme_dark_.set_palette(&palette_);
-        theme_hc_.set_palette(&palette_);
-
-        build_demo();
-        layout_demo();
-        apply_native_fonts();
-        InvalidateRect(hwnd(), nullptr, FALSE);
+        paint_matrix(target, page.matrix_grid);
     }
 
     void apply_window_icon() noexcept {
         if (!resources_.has_icon(IDI_NFUI_APP)) {
             return;
         }
-
         HICON big = static_cast<HICON>(LoadImageW(instance_,
                                                   MAKEINTRESOURCEW(IDI_NFUI_APP),
                                                   IMAGE_ICON,
@@ -857,30 +898,6 @@ private:
             DestroyIcon(app_icon_);
             app_icon_ = nullptr;
         }
-    }
-
-    void clear_demo() noexcept {
-        // OwnedHwnd handles DestroyWindow on destruction; just drop the
-        // unique_ptrs and the demo controls release their HWNDs.
-        g_demo = DemoControls{};
-    }
-
-    template <typename ControlT>
-    [[nodiscard]] bool create_child(ControlT& control,
-                                    int id,
-                                    std::wstring_view text) noexcept {
-        nfui::ControlCreateParams params{
-            instance_,
-            hwnd(),
-            id,
-            text,
-            0,
-            0,
-            100,
-            28,
-        };
-        control.inject_theme(&palette_, &fonts_);
-        return control.create(params);
     }
 
     static void insert_listview_column(HWND listview, int index, const wchar_t* text, int width) noexcept {
@@ -932,15 +949,37 @@ private:
 
     HINSTANCE instance_{};
     nfui::ResourceContext resources_;
-    nfui::Button theme_light_;
-    nfui::Button theme_dark_;
-    nfui::Button theme_hc_;
-    nfui::ThemeMode mode_;
+    nfui::ThemeMode mode_{nfui::ThemeMode::light};
     nfui::ThemePalette palette_;
     nfui::FontCache fonts_;
     nfui::DpiScale dpi_{96};
     HICON app_icon_{};
-    DemoControls g_demo{};
+
+    nfui::Button      chip_light_;
+    nfui::Button      chip_dark_;
+    nfui::Button      chip_hc_;
+    nfui::Button      ok_;
+    nfui::Button      cancel_;
+    nfui::CheckBox    check_unchecked_;
+    nfui::CheckBox    check_checked_;
+    nfui::CheckBox    check_indeterm_;
+    nfui::RadioButton radio_a_;
+    nfui::RadioButton radio_b_;
+    nfui::RadioButton radio_c_;
+    nfui::Edit        edit_;
+    nfui::StaticText  static_left_;
+    nfui::StaticText  static_center_;
+    nfui::StaticText  static_right_;
+    nfui::ListBox     listbox_;
+    nfui::ComboBox    combobox_;
+    nfui::ListView    listview_;
+    nfui::TreeView    treeview_;
+    nfui::IconView    iconview_;
+    nfui::StatusBar   status_;
+    nfui::TabControl  tabs_;
+    nfui::ProgressBar progress_;
+    nfui::Panel       panel_;
+    nfui::Splitter    splitter_;
 };
 
 } // namespace
@@ -952,16 +991,14 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR cmd_line, int show_comm
         return 1;
     }
 
-    // CP32: --theme seeds the mode before create_main so the first paint
-    // already shows the requested palette.
+    // --theme <light|dark|high_contrast> lets the visual audit capture each
+    // variant without restarting the binary. Defaults to light.
     auto parse_theme = [](PCWSTR cl) noexcept {
         if (cl == nullptr) return nfui::ThemeMode::light;
         const wchar_t* tag = wcsstr(cl, L"--theme");
         if (tag == nullptr) return nfui::ThemeMode::light;
         tag += 7;
         while (*tag == L' ' || *tag == L'\t') ++tag;
-        // CP32: visual audit's quoteArgument wraps the value as "--theme \"dark\"";
-        // skip the leading quote so the comparison sees 'dark', not '"dark'.
         if (*tag == L'"') ++tag;
         if (wcsncmp(tag, L"dark", 4) == 0 && (tag[4] == L' ' || tag[4] == 0 || tag[4] == L'"')) return nfui::ThemeMode::dark;
         if (wcsncmp(tag, L"high_contrast", 13) == 0) return nfui::ThemeMode::high_contrast;
@@ -970,7 +1007,8 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR cmd_line, int show_comm
     const nfui::ThemeMode initial_mode = parse_theme(cmd_line);
 
     ThemeDemoWindow window(instance);
-    if (!window.set_initial_theme(initial_mode) || !window.create_main(show_command)) {
+    window.set_initial_theme(initial_mode);
+    if (!window.create_main(show_command)) {
         return 2;
     }
 
