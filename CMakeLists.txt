@@ -1,6 +1,6 @@
 cmake_minimum_required(VERSION 3.25)
 
-project(NativeFrameUI VERSION 0.1.0 LANGUAGES CXX RC)
+project(NativeFrameUI VERSION 1.1.0 LANGUAGES CXX RC)
 
 include(CTest)
 include(cmake/NativeFrameUICompilerOptions.cmake)
