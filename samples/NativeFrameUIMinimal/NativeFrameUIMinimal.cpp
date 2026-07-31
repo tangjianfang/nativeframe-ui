@@ -19,6 +19,7 @@
 #include <nfui/Font.hpp>
 #include <nfui/Paint.hpp>
 #include <nfui/Theme.hpp>
+#include <nfui/ThemeBroker.hpp>
 
 #include <windows.h>
 #include <windowsx.h>
@@ -159,6 +160,12 @@ LRESULT CALLBACK wnd_proc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam) {
         }
         return 0;
     }
+    if (msg == WM_THEMECHANGED) {
+        // CP-B13: ThemeBroker broadcasts here after a runtime switch.
+        g_theme_mode = nfui::ThemeBroker::instance().current();
+        InvalidateRect(hwnd, nullptr, FALSE);
+        return 0;
+    }
     if (msg == WM_PAINT) {
         PAINTSTRUCT paint{};
         HDC hdc = BeginPaint(hwnd, &paint);
@@ -265,6 +272,10 @@ LRESULT CALLBACK wnd_proc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam) {
         PostQuitMessage(0);
         return 0;
     }
+    if (msg == WM_NCDESTROY) {
+        nfui::ThemeBroker::instance().unregister_hwnd(hwnd);
+        return DefWindowProcW(hwnd, msg, wparam, lparam);
+    }
     return DefWindowProcW(hwnd, msg, wparam, lparam);
 }
 
@@ -277,6 +288,7 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, LPWSTR, int) {
     }
 
     g_theme_mode = parse_theme_mode();
+    nfui::ThemeBroker::instance().set_theme(g_theme_mode);
 
     WNDCLASSEXW wc{};
     wc.cbSize = sizeof(wc);
@@ -302,6 +314,11 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, LPWSTR, int) {
                                 wx, wy, kWinWidthLogical, kWinHeightLogical,
                                 nullptr, nullptr, instance, nullptr);
     if (hwnd == nullptr) return 3;
+    // CP-B13: register with ThemeBroker so runtime switches from other
+    // registered samples reach this window. No-op handler — the WM_PAINT
+    // path re-reads g_theme_mode from the broker each frame.
+    nfui::ThemeBroker::instance().register_hwnd(hwnd,
+        [](nfui::ThemeMode) { /* nothing; WM_THEMECHANGED resyncs g_theme_mode */ });
 
     MSG msg{};
     while (GetMessageW(&msg, nullptr, 0, 0) > 0) {

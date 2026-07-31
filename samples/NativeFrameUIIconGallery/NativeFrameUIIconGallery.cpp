@@ -15,6 +15,7 @@
 // fill_ellipse, draw_text, draw_vector_icon). No public APIs change.
 
 #include <nfui/NativeFrameUI.hpp>
+#include <nfui/ThemeBroker.hpp>
 #include <nfui/VectorIcon.hpp>
 
 #include "NativeFrameUIResource.h"
@@ -92,6 +93,14 @@ public:
 
     ~IconGalleryWindow() noexcept override { destroy_icons(); }
 
+    [[nodiscard]] bool set_initial_theme(nfui::ThemeMode mode) noexcept {
+        if (hwnd() != nullptr) return false;
+        mode_ = mode;
+        palette_ = nfui::theme_palette(mode);
+        nfui::ThemeBroker::instance().set_theme(mode);
+        return true;
+    }
+
     [[nodiscard]] bool create_main(int show_command) noexcept {
         nfui::WindowCreateParams params{
             instance_,
@@ -107,6 +116,12 @@ public:
 
         if (!build_controls()) return false;
         layout();
+
+        // CP-B12: register with ThemeBroker so a runtime switch (e.g.
+        // another registered sample) reaches this window. Unregister in
+        // WM_NCDESTROY.
+        nfui::ThemeBroker::instance().register_hwnd(hwnd(),
+            [this](nfui::ThemeMode mode) { apply_theme(mode); });
 
         ShowWindow(hwnd(), show_command);
         UpdateWindow(hwnd());
@@ -198,6 +213,13 @@ protected:
             destroy_icons();
             PostQuitMessage(0);
             return 0;
+        case WM_THEMECHANGED:
+            // CP-B12: ThemeBroker broadcasts here after a runtime switch.
+            apply_theme(nfui::ThemeBroker::instance().current());
+            return 0;
+        case WM_NCDESTROY:
+            nfui::ThemeBroker::instance().unregister_hwnd(hwnd());
+            return nfui::Window::handle_message(message, wparam, lparam);
         default:
             return nfui::Window::handle_message(message, wparam, lparam);
         }
@@ -237,6 +259,22 @@ private:
     }
 
     void set_theme(nfui::ThemeMode mode) noexcept {
+        // CP-B12: route through apply_theme() and broadcast via ThemeBroker
+        // so every registered window (including this one) resyncs in lockstep.
+        if (mode_ == mode) return;
+        mode_ = mode;
+        palette_ = nfui::theme_palette(mode);
+        for (nfui::Control* c : all_controls()) {
+            if (c != nullptr) c->set_palette(&palette_);
+        }
+        nfui::ThemeBroker::instance().set_theme(mode);
+        InvalidateRect(hwnd(), nullptr, FALSE);
+    }
+
+    // CP-B12: ThemeBroker entry point. Updates palette and re-injects into
+    // every self-painted control, then invalidates the window.
+    void apply_theme(nfui::ThemeMode mode) noexcept {
+        if (mode_ == mode) return;
         mode_ = mode;
         palette_ = nfui::theme_palette(mode);
         for (nfui::Control* c : all_controls()) {
@@ -584,13 +622,29 @@ private:
 
 } // namespace
 
-int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int show_command) {
+int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR cmd_line, int show_command) {
     nfui::Application app({instance, show_command});
     if (!nfui::Application::initialize_process_dpi() ||
         !nfui::Application::initialize_common_controls()) {
         return 1;
     }
+
+    // CP-B12: parse --theme so the audit can capture light / dark / HC.
+    auto parse_theme = [](PCWSTR cl) noexcept {
+        if (cl == nullptr) return nfui::ThemeMode::light;
+        const wchar_t* tag = wcsstr(cl, L"--theme");
+        if (tag == nullptr) return nfui::ThemeMode::light;
+        tag += 7;
+        while (*tag == L' ' || *tag == L'\t') ++tag;
+        if (*tag == L'"') ++tag;
+        if (wcsncmp(tag, L"light", 5) == 0) return nfui::ThemeMode::light;
+        if (wcsncmp(tag, L"dark", 4) == 0) return nfui::ThemeMode::dark;
+        if (wcsncmp(tag, L"high_contrast", 13) == 0) return nfui::ThemeMode::high_contrast;
+        return nfui::ThemeMode::light;
+    };
+
     IconGalleryWindow window(instance);
+    (void)window.set_initial_theme(parse_theme(cmd_line));
     if (!window.create_main(show_command)) return 2;
     return app.run();
 }
