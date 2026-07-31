@@ -6,6 +6,7 @@
 #include <nfui/Paint.hpp>
 #include <nfui/ResourceContext.hpp>
 #include <nfui/Theme.hpp>
+#include <nfui/design_tokens.hpp>
 
 #include "NativeFrameUIResource.h"
 
@@ -18,6 +19,8 @@
 #include <windowsx.h>
 
 namespace {
+
+namespace tok = nfui::design;
 
 // CP30: chart-series name strings. The ChartSeries::name field is borrowed
 // (std::wstring_view); the underlying storage MUST outlive the chart view
@@ -136,6 +139,7 @@ public:
           resources_(instance),
           light_palette_(nfui::theme_palette(nfui::ThemeMode::light)),
           dark_palette_(nfui::theme_palette(nfui::ThemeMode::dark)),
+          hc_palette_(nfui::theme_palette(nfui::ThemeMode::high_contrast)),
           palette_(&light_palette_) {
     }
 
@@ -299,9 +303,19 @@ private:
     // Rebuild series palettes from the live theme + push the palette pointer
     // through every chart view. Called on create + on theme toggle.
     void apply_theme() noexcept {
-        palette_ = (theme_mode_ == nfui::ThemeMode::dark)
-                       ? static_cast<const nfui::ThemePalette*>(&dark_palette_)
-                       : static_cast<const nfui::ThemePalette*>(&light_palette_);
+        // CP-B8: support all three themes. HC uses the framework's high-contrast
+        // palette so axis/tick labels and legend dots read with WCAG contrast.
+        switch (theme_mode_) {
+        case nfui::ThemeMode::dark:
+            palette_ = &dark_palette_;
+            break;
+        case nfui::ThemeMode::high_contrast:
+            palette_ = &hc_palette_;
+            break;
+        default:
+            palette_ = &light_palette_;
+            break;
+        }
         bar_.set_palette(palette_);
         hbar_.set_palette(palette_);
         line_.set_palette(palette_);
@@ -471,21 +485,21 @@ private:
         // grid (3 rows) instead of a single vertical stack — the previous
         // chart_h 220 px per card × 5 = 1100 px in a 700-tall window left
         // ~70% of the content below the fold.
-        const int outer = dpi.logical_to_pixels(12);
-        const int gap = dpi.logical_to_pixels(12);
-        const int header_h = dpi.logical_to_pixels(56);
+        const int outer = dpi.logical_to_pixels(tok::spacing_md);
+        const int gap = dpi.logical_to_pixels(tok::spacing_md);
+        const int header_h = dpi.logical_to_pixels(tok::control_height_lg + tok::spacing_lg);
 
         // Title row sits inside the header band so it shares the brand line
         // with the theme toggle. The toggle rect is reused by hover + click
         // dispatchers so the click test always sees the live coordinates.
         const int header_band_top = client.top + outer;
         const int header_band_h = header_h;
-        const int logo_size = dpi.logical_to_pixels(32);
+        const int logo_size = dpi.logical_to_pixels(tok::control_height_lg);
         brand_rect_ = make_rect(client.left + outer,
                                 header_band_top + (header_band_h - logo_size) / 2,
                                 logo_size, logo_size);
-        const int toggle_w = dpi.logical_to_pixels(200);
-        const int toggle_h = dpi.logical_to_pixels(32);
+        const int toggle_w = dpi.logical_to_pixels(tok::spacing_xl * 6 + tok::spacing_md);  // 200 logical px
+        const int toggle_h = dpi.logical_to_pixels(tok::control_height_md);
         theme_toggle_rect_ = make_rect(client.right - outer - toggle_w,
                                        header_band_top + (header_band_h - toggle_h) / 2,
                                        toggle_w, toggle_h);
@@ -498,10 +512,10 @@ private:
         // Per-card reserved vertical space: title strip + legend strip +
         // inner padding. The chart HWND sits between them inside the card
         // chrome (rounded rect + border + drop shadow painted by the parent).
-        const int card_padding = dpi.logical_to_pixels(8);
-        const int card_title_h = dpi.logical_to_pixels(16);
-        const int card_legend_h = dpi.logical_to_pixels(16);
-        const int card_gap = dpi.logical_to_pixels(6);
+        const int card_padding = dpi.logical_to_pixels(tok::spacing_sm);
+        const int card_title_h = dpi.logical_to_pixels(tok::control_height_sm - tok::spacing_xs);
+        const int card_legend_h = dpi.logical_to_pixels(tok::control_height_sm - tok::spacing_xs);
+        const int card_gap = dpi.logical_to_pixels(tok::spacing_xs + tok::spacing_xs);
 
         // CP37: 2-column grid (3 rows) instead of a single vertical stack.
         // 5 charts split across 2 columns: cards 0/2/4 in column 1 and
@@ -510,18 +524,18 @@ private:
         // inside the 700-tall compact viewport with breathing room, while
         // keeping enough vertical room for the bar / hbar geometry to
         // render with proper height.
-        const int grid_gap = dpi.logical_to_pixels(12);
+        const int grid_gap = dpi.logical_to_pixels(tok::spacing_md);
         const int card_w = std::max((area_right - area_left - grid_gap) / 2,
-                                    dpi.logical_to_pixels(360));
+                                    dpi.logical_to_pixels(tok::spacing_xl * 45));  // 360 logical px
         const int card_inner_w = std::max(card_w - card_padding * 2,
-                                          dpi.logical_to_pixels(340));
-        const int chart_h = dpi.logical_to_pixels(140);
+                                          dpi.logical_to_pixels(tok::spacing_xl * 42));  // 336 logical px
+        const int chart_h = dpi.logical_to_pixels(tok::control_height_lg * 3 + tok::spacing_lg);  // 140 logical px
         const int card_h = card_padding + card_title_h + card_gap
                             + chart_h + card_gap + card_legend_h + card_padding;
 
         const int card_count = 5;
         const int rows = (card_count + 1) / 2;  // 5 → 3 rows
-        const int row_gap = dpi.logical_to_pixels(8);
+        const int row_gap = dpi.logical_to_pixels(tok::spacing_sm);
         const int col_gap = grid_gap;
         const int stack_top = area_top;
 
@@ -619,7 +633,7 @@ private:
     void paint_brand_square(HDC target) noexcept {
         const nfui::ThemePalette& p = *palette_;
         const nfui::DpiScale dpi(GetDpiForWindow(hwnd()));
-        const int radius = dpi.logical_to_pixels(8);
+        const int radius = dpi.logical_to_pixels(tok::radius_md);
         nfui::fill_rounded_rect(target, brand_rect_, radius, p.accent, p.accent);
         // White "N" mark, semibold at font_pt::md (16pt). The accent_text
         // colour is reserved for text drawn ON accent (per palette docs),
@@ -637,8 +651,8 @@ private:
     void paint_page_title(HDC target) noexcept {
         const nfui::ThemePalette& p = *palette_;
         const nfui::DpiScale dpi(GetDpiForWindow(hwnd()));
-        const int gap = dpi.logical_to_pixels(12);
-        const int title_h = dpi.logical_to_pixels(28);
+        const int gap = dpi.logical_to_pixels(tok::spacing_md);
+        const int title_h = dpi.logical_to_pixels(tok::font_hero + tok::spacing_sm);
         RECT title = brand_rect_;
         title.left = brand_rect_.right + gap;
         title.top = brand_rect_.top + (rect_height(brand_rect_) - title_h) / 2;
@@ -655,7 +669,7 @@ private:
     void paint_theme_toggle(HDC target) noexcept {
         const nfui::ThemePalette& p = *palette_;
         const nfui::DpiScale dpi(GetDpiForWindow(hwnd()));
-        const int radius = dpi.logical_to_pixels(16);
+        const int radius = dpi.logical_to_pixels(tok::radius_lg);
 
         // Hover face: lift the surface toward the accent so the click
         // affordance reads. When the user is already on dark mode the
@@ -667,12 +681,15 @@ private:
             : p.surface;
         nfui::fill_rounded_rect(target, theme_toggle_rect_, radius, face, p.border);
 
-        // Label shows the ACTION ("Switch to dark") plus a chevron. The
-        // brief says "shows current mode + arrow" — we go with action+arrow
-        // because it reads as the same affordance ShowcaseView uses.
-        const std::wstring_view label = (theme_mode_ == nfui::ThemeMode::dark)
-            ? L"Switch to light ▾"
-            : L"Switch to dark ▾";
+        // CP-B8: label shows the ACTION for the NEXT mode in a 3-way cycle
+        // (light → dark → high_contrast → light). The chevron hints at a
+        // dropdown-like affordance even though this is a cyclic toggle.
+        const std::wstring_view label =
+            (theme_mode_ == nfui::ThemeMode::dark)
+                ? L"Switch to high contrast ▾"
+            : (theme_mode_ == nfui::ThemeMode::high_contrast)
+                ? L"Switch to light ▾"
+                : L"Switch to dark ▾";
         RECT text_rc = inset_rect(theme_toggle_rect_, dpi.logical_to_pixels(12));
         nfui::draw_text(target,
                         text_rc,
@@ -696,8 +713,8 @@ private:
     void paint_card_legend(HDC target, const CardLayout& layout) noexcept {
         const nfui::ThemePalette& p = *palette_;
         const nfui::DpiScale dpi(GetDpiForWindow(hwnd()));
-        const int dot_size = dpi.logical_to_pixels(8);
-        const int gap = dpi.logical_to_pixels(8);
+        const int dot_size = dpi.logical_to_pixels(tok::spacing_sm);
+        const int gap = dpi.logical_to_pixels(tok::spacing_sm);
 
         const HFONT font = fonts_.regular(dpi.dpi(), nfui::font_pt::sm);
         HGDIOBJ prev_font = SelectObject(target, font);
@@ -809,9 +826,14 @@ private:
         if (PtInRect(&theme_toggle_rect_, pt) == FALSE) {
             return false;
         }
-        theme_mode_ = (theme_mode_ == nfui::ThemeMode::dark)
-                          ? nfui::ThemeMode::light
-                          : nfui::ThemeMode::dark;
+        // CP-B8: cycle through light → dark → high_contrast → light.
+        if (theme_mode_ == nfui::ThemeMode::light) {
+            theme_mode_ = nfui::ThemeMode::dark;
+        } else if (theme_mode_ == nfui::ThemeMode::dark) {
+            theme_mode_ = nfui::ThemeMode::high_contrast;
+        } else {
+            theme_mode_ = nfui::ThemeMode::light;
+        }
         apply_theme();
         return true;
     }
@@ -820,6 +842,7 @@ private:
     nfui::ResourceContext resources_;
     nfui::ThemePalette light_palette_;
     nfui::ThemePalette dark_palette_;
+    nfui::ThemePalette hc_palette_;
     const nfui::ThemePalette* palette_{};
     nfui::FontCache fonts_;
     nfui::BarChartView bar_;
