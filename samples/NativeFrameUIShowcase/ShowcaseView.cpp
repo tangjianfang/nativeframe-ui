@@ -3,12 +3,15 @@
 #include <nfui/Font.hpp>
 #include <nfui/Paint.hpp>
 #include <nfui/VectorIcon.hpp>
+#include <nfui/design_tokens.hpp>
 
 #include <algorithm>
 #include <array>
 #include <string_view>
 
 namespace {
+
+namespace tok = nfui::design;
 
 enum class FontWeight { regular, semibold, bold };
 
@@ -157,34 +160,42 @@ constexpr std::array<std::wstring_view, 3> inspector_values{
 [[nodiscard]] ShowcasePalette palette_for(nfui::ThemeMode mode) noexcept {
     const nfui::ThemePalette p = nfui::theme_palette(mode);
     const bool dark = mode == nfui::ThemeMode::dark;
+    const bool hc   = mode == nfui::ThemeMode::high_contrast;
 
     ShowcasePalette palette{};
     palette.window = p.background;
     // CP32: sidebar gets a subtle tint away from the window base so the
     // selected row's surface fill can read as "lighter" against the rail.
-    palette.sidebar = dark ? nfui::darken(p.background, 0.04f)
-                           : nfui::alpha_blend(p.border, p.background, 0.30f);
-    palette.command_bar = dark ? p.surface
-                               : p.surface;
+    // CP-B9: HC keeps the system background for the rail so it respects
+    // user contrast settings; do not alpha-blend in HC.
+    palette.sidebar = hc ? p.background
+                   : dark ? nfui::darken(p.background, 0.04f)
+                          : nfui::alpha_blend(p.border, p.background, 0.30f);
+    palette.command_bar = p.surface;
     palette.surface = p.surface;
     // CP32: surface_alt lifts slightly more than surface so workspace panels
     // ("Showcase-only visuals") stay distinct from KPI cards.
-    palette.surface_alt = dark ? nfui::lighten(p.surface, 0.04f)
-                               : nfui::alpha_blend(p.border, p.surface, 0.10f);
+    palette.surface_alt = hc ? p.surface
+                   : dark ? nfui::lighten(p.surface, 0.04f)
+                          : nfui::alpha_blend(p.border, p.surface, 0.10f);
     // CP32: selected-nav fill — lighter than sidebar base in dark mode, light
     // surface in light mode. Reads as the row that owns focus.
-    palette.surface_tint = dark ? p.surface_hover
-                                : nfui::alpha_blend(p.surface, p.background, 0.55f);
+    palette.surface_tint = hc ? p.surface_hover
+                   : dark ? p.surface_hover
+                          : nfui::alpha_blend(p.surface, p.background, 0.55f);
     palette.border = p.border;
     palette.accent = p.accent;
-    palette.accent_soft = nfui::alpha_blend(p.background, p.accent, dark ? 0.70f : 0.80f);
+    palette.accent_soft = hc ? p.accent
+                             : nfui::alpha_blend(p.background, p.accent, dark ? 0.70f : 0.80f);
     palette.accent_text = p.accent_text;
     palette.text = p.text;
     palette.muted_text = p.text_secondary;
     palette.success = p.success;
     palette.warning = p.warning;
     palette.info = p.info;
-    palette.shadow  = p.shadow;
+    // CP-B9: HC suppresses decorative shadows; the elevation is drawn with
+    // border only in HC.
+    palette.shadow  = hc ? nfui::Color{} : p.shadow;
     return palette;
 }
 
@@ -287,6 +298,7 @@ void draw_nav_glyph(HDC hdc, std::size_t index, const RECT& cell, nfui::Color co
 }
 
 [[nodiscard]] ShowcaseLayout build_layout(const RECT& client_rect, const nfui::DpiScale& dpi) noexcept {
+    const auto px = [&](int logical) noexcept { return dpi.logical_to_pixels(logical); };
     ShowcaseLayout layout{};
     // CP37: rebalance the three columns so the inspector has enough room
     // for its body paragraphs but stays inside the 940-px window. Previous
@@ -296,21 +308,21 @@ void draw_nav_glyph(HDC hdc, std::size_t index, const RECT& cell, nfui::Color co
     // by 136 px and clipping the brand title ("NativeFrame…") and the
     // Inspector header / row labels. Drop the std::max floor on workspace
     // so the inspector naturally lands inside client_width.
-    const int outer = dpi.logical_to_pixels(12);
-    const int gap = dpi.logical_to_pixels(12);
-    const int sidebar_width = dpi.logical_to_pixels(220);
-    const int inspector_width = dpi.logical_to_pixels(240);
-    const int command_height = dpi.logical_to_pixels(116);
-    const int nav_height = dpi.logical_to_pixels(40);
-    const int nav_gap = dpi.logical_to_pixels(4);
-    const int card_height = dpi.logical_to_pixels(180);
+    const int outer = px(tok::spacing_md);
+    const int gap = px(tok::spacing_md);
+    const int sidebar_width = px(tok::spacing_xl * 27 + tok::spacing_sm);  // 220 logical px
+    const int inspector_width = px(tok::spacing_xl * 30);  // 240 logical px
+    const int command_height = px(tok::font_hero * 4 + tok::spacing_xl - tok::spacing_sm);  // 116 logical px
+    const int nav_height = px(tok::control_height_lg);
+    const int nav_gap = px(tok::spacing_xs);
+    const int card_height = px(tok::control_height_lg * 5 + tok::spacing_lg);  // 180 logical px
     // CP37: inspector_row_height 140 → 160 so the body paragraph's last
     // line ("WM_DPICHANGED." / "nfui_add_resources.") fits without being
     // clipped by the row's bottom padding. Previous height left only ~76
     // px for body text after the label band; the third inspector row's
     // 4-line wrap got cut off after "framework resources through".
-    const int inspector_row_height = dpi.logical_to_pixels(160);
-    const int note_height = dpi.logical_to_pixels(140);
+    const int inspector_row_height = px(tok::control_height_lg * 5);
+    const int note_height = px(tok::control_height_lg * 3 + tok::spacing_lg);  // 140 logical px
 
     const int client_width = rect_width(client_rect);
     const int client_height = rect_height(client_rect);
@@ -342,20 +354,20 @@ void draw_nav_glyph(HDC hdc, std::size_t index, const RECT& cell, nfui::Color co
     layout.divider_right = make_rect(layout.workspace.right + gap / 2, content_top, 1, layout.sidebar.bottom - content_top);
 
     // Brand area occupies the top of the sidebar.
-    const int brand_pad = dpi.logical_to_pixels(8);
+    const int brand_pad = px(tok::spacing_sm);
     layout.brand_title = make_rect(layout.sidebar.left + gap + brand_pad,
-                                   layout.sidebar.top + dpi.logical_to_pixels(20),
+                                   layout.sidebar.top + px(tok::font_hero - tok::spacing_xs),
                                    rect_width(layout.sidebar) - (gap + brand_pad) * 2,
-                                   dpi.logical_to_pixels(36));
+                                   px(tok::font_hero + tok::spacing_xl));
     layout.brand_tagline = make_rect(layout.sidebar.left + gap + brand_pad,
-                                     layout.brand_title.bottom + dpi.logical_to_pixels(2),
+                                     layout.brand_title.bottom + px(tok::spacing_xs),
                                      rect_width(layout.sidebar) - (gap + brand_pad) * 2,
-                                     dpi.logical_to_pixels(40));
+                                     px(tok::font_hero + tok::spacing_lg));
 
     // Nav rows begin below the brand block (after tagline + breathing room).
-    const int nav_left = layout.sidebar.left + dpi.logical_to_pixels(12);
-    const int nav_width = sidebar_width - dpi.logical_to_pixels(24);
-    const int nav_top_start = layout.brand_tagline.bottom + dpi.logical_to_pixels(40);
+    const int nav_left = layout.sidebar.left + px(tok::spacing_md);
+    const int nav_width = sidebar_width - px(tok::spacing_xl);
+    const int nav_top_start = layout.brand_tagline.bottom + px(tok::spacing_xl + tok::spacing_lg);
     for (std::size_t index = 0; index < layout.navigation.size(); ++index) {
         const int y = nav_top_start + static_cast<int>(index) * (nav_height + nav_gap);
         layout.navigation[index] = make_rect(nav_left, y, nav_width, nav_height);
@@ -363,9 +375,9 @@ void draw_nav_glyph(HDC hdc, std::size_t index, const RECT& cell, nfui::Color co
 
     // Theme toggle — pinned top-right of the command bar with a more prominent
     // footprint than the previous build.
-    const int toggle_width = dpi.logical_to_pixels(160);
-    const int toggle_height = dpi.logical_to_pixels(40);
-    const int toggle_pad = dpi.logical_to_pixels(16);
+    const int toggle_width = px(tok::spacing_xl * 5 + tok::spacing_md);  // 160 logical px
+    const int toggle_height = px(tok::control_height_lg);
+    const int toggle_pad = px(tok::spacing_md);
     layout.theme_toggle = make_rect(layout.command_bar.right - toggle_width - toggle_pad,
                                     layout.command_bar.top + toggle_pad,
                                     toggle_width,
@@ -382,7 +394,7 @@ void draw_nav_glyph(HDC hdc, std::size_t index, const RECT& cell, nfui::Color co
     }
 
     // Inspector rows — title (with tag pill) on top, body paragraph below.
-    const int inspector_row_top = layout.inspector.top + dpi.logical_to_pixels(118);
+    const int inspector_row_top = layout.inspector.top + px(tok::font_hero * 4 + tok::spacing_sm);  // 118 logical px
     const int inspector_row_width = inspector_width - gap * 2;
     for (std::size_t index = 0; index < layout.inspector_rows.size(); ++index) {
         const int y = inspector_row_top + static_cast<int>(index) * (inspector_row_height + gap);
@@ -399,12 +411,12 @@ void draw_nav_glyph(HDC hdc, std::size_t index, const RECT& cell, nfui::Color co
 
     // CP32: bottom of the sidebar hosts a small version pill (left) + an
     // avatar with status dot (right).
-    const int bottom_band_h = dpi.logical_to_pixels(56);
-    const int version_w = dpi.logical_to_pixels(72);
-    const int version_h = dpi.logical_to_pixels(28);
-    const int avatar_d = dpi.logical_to_pixels(36);
-    const int side_pad = dpi.logical_to_pixels(20);
-    const int bottom_y = layout.sidebar.bottom - dpi.logical_to_pixels(20) - bottom_band_h;
+    const int bottom_band_h = px(tok::control_height_lg + tok::spacing_lg);
+    const int version_w = px(tok::spacing_xl * 9);
+    const int version_h = px(tok::control_height_md - tok::spacing_xs);
+    const int avatar_d = px(tok::control_height_lg + tok::spacing_xs);
+    const int side_pad = px(tok::spacing_lg);
+    const int bottom_y = layout.sidebar.bottom - px(tok::spacing_lg) - bottom_band_h;
     layout.version_badge = make_rect(layout.sidebar.left + side_pad,
                                      bottom_y + (bottom_band_h - version_h) / 2,
                                      version_w,
@@ -413,9 +425,9 @@ void draw_nav_glyph(HDC hdc, std::size_t index, const RECT& cell, nfui::Color co
                              bottom_y + (bottom_band_h - avatar_d) / 2,
                              avatar_d,
                              avatar_d);
-    const int dot_size = dpi.logical_to_pixels(11);
-    layout.avatar_dot = make_rect(layout.avatar.right - dot_size + dpi.logical_to_pixels(2),
-                                  layout.avatar.bottom - dot_size + dpi.logical_to_pixels(2),
+    const int dot_size = px(tok::spacing_md - tok::spacing_xs);  // 12 logical px
+    layout.avatar_dot = make_rect(layout.avatar.right - dot_size + px(tok::spacing_xs / 2),
+                                  layout.avatar.bottom - dot_size + px(tok::spacing_xs / 2),
                                   dot_size,
                                   dot_size);
 
@@ -425,7 +437,10 @@ void draw_nav_glyph(HDC hdc, std::size_t index, const RECT& cell, nfui::Color co
 } // namespace
 
 void ShowcaseView::set_theme_mode(nfui::ThemeMode mode) noexcept {
-    if (mode == nfui::ThemeMode::high_contrast || mode == nfui::ThemeMode::system) {
+    // CP-B9: support high_contrast directly. `system` still resolves to light
+    // because this sample owns its own palette derivation and does not hook
+    // the system registry watcher.
+    if (mode == nfui::ThemeMode::system) {
         theme_mode_ = nfui::ThemeMode::light;
         return;
     }
@@ -437,7 +452,14 @@ nfui::ThemeMode ShowcaseView::theme_mode() const noexcept {
 }
 
 void ShowcaseView::toggle_theme() noexcept {
-    theme_mode_ = theme_mode_ == nfui::ThemeMode::dark ? nfui::ThemeMode::light : nfui::ThemeMode::dark;
+    // CP-B9: cycle light → dark → high_contrast → light.
+    if (theme_mode_ == nfui::ThemeMode::light) {
+        theme_mode_ = nfui::ThemeMode::dark;
+    } else if (theme_mode_ == nfui::ThemeMode::dark) {
+        theme_mode_ = nfui::ThemeMode::high_contrast;
+    } else {
+        theme_mode_ = nfui::ThemeMode::light;
+    }
 }
 
 void ShowcaseView::set_dpi(int dpi) noexcept {
@@ -568,14 +590,15 @@ RECT ShowcaseView::focused_rect() const noexcept {
 }
 
 void ShowcaseView::paint(HDC hdc, nfui::FontCache& fonts) const noexcept {
+    const auto px = [&](int logical) noexcept { return dpi_scale_.logical_to_pixels(logical); };
     const ShowcasePalette palette = palette_for(theme_mode_);
     const ShowcaseLayout layout = build_layout(client_rect_, dpi_scale_);
     const bool dark = theme_mode_ == nfui::ThemeMode::dark;
-    const int gap = dpi_scale_.logical_to_pixels(16);
-    const int toggle_pad = dpi_scale_.logical_to_pixels(16);
-    const int indicator_inset = dpi_scale_.logical_to_pixels(4);
-    const int radius = dpi_scale_.logical_to_pixels(10);
-    const int small_radius = dpi_scale_.logical_to_pixels(8);
+    const int gap = dpi_scale_.logical_to_pixels(tok::spacing_lg);
+    const int toggle_pad = dpi_scale_.logical_to_pixels(tok::spacing_md);
+    const int indicator_inset = dpi_scale_.logical_to_pixels(tok::spacing_xs);
+    const int radius = dpi_scale_.logical_to_pixels(tok::radius_md + tok::spacing_xs);  // 10 logical px
+    const int small_radius = dpi_scale_.logical_to_pixels(tok::radius_md);
     const int pill_radius = dpi_scale_.logical_to_pixels(999);
 
     // Backdrop + sidebar.
@@ -621,8 +644,8 @@ void ShowcaseView::paint(HDC hdc, nfui::FontCache& fonts) const noexcept {
             fill_rect_color(hdc, indicator, palette.accent);
         }
 
-        const int glyph_pad = dpi_scale_.logical_to_pixels(12);
-        const int glyph_box = rect_height(layout.navigation[index]) - dpi_scale_.logical_to_pixels(10);
+        const int glyph_pad = dpi_scale_.logical_to_pixels(tok::spacing_md);
+        const int glyph_box = rect_height(layout.navigation[index]) - px(tok::spacing_sm + tok::spacing_xs);
         RECT glyph = make_rect(layout.navigation[index].left + glyph_pad,
                                layout.navigation[index].top + (rect_height(layout.navigation[index]) - glyph_box) / 2,
                                glyph_box,
@@ -630,9 +653,9 @@ void ShowcaseView::paint(HDC hdc, nfui::FontCache& fonts) const noexcept {
         const nfui::Color glyph_color = selected ? palette.accent : palette.muted_text;
         draw_nav_glyph(hdc, index, glyph, glyph_color, std::max(1, dpi_scale_.logical_to_pixels(1)));
 
-        RECT label_rect = make_rect(glyph.right + dpi_scale_.logical_to_pixels(10),
+        RECT label_rect = make_rect(glyph.right + px(tok::spacing_md - tok::spacing_xs),
                                     layout.navigation[index].top,
-                                    layout.navigation[index].right - (glyph.right + dpi_scale_.logical_to_pixels(10)),
+                                    layout.navigation[index].right - (glyph.right + px(tok::spacing_md - tok::spacing_xs)),
                                     rect_height(layout.navigation[index]));
         nfui::draw_text(hdc,
                         label_rect,
@@ -646,7 +669,7 @@ void ShowcaseView::paint(HDC hdc, nfui::FontCache& fonts) const noexcept {
     // and avatar (coral circle with JD + green status dot).
     nfui::fill_rounded_rect(hdc, layout.version_badge, pill_radius, palette.accent_soft, palette.accent_soft);
     {
-        RECT badge_text = inset_rect(layout.version_badge, dpi_scale_.logical_to_pixels(8));
+        RECT badge_text = inset_rect(layout.version_badge, px(tok::spacing_sm));
         nfui::draw_text(hdc,
                         badge_text,
                         L"v1.4.0",
@@ -683,10 +706,11 @@ void ShowcaseView::paint(HDC hdc, nfui::FontCache& fonts) const noexcept {
     // Workspace — hero card "Product Growth Showcase" + description; the
     // description text reads as body copy, not as muted subtitle.
     {
+        // CP-B9: reserve space for a three-mode toggle label (~180 logical px).
         RECT hero_title = make_rect(layout.command_bar.left + gap,
                                     layout.command_bar.top + gap,
-                                    layout.command_bar.right - layout.command_bar.left - toggle_pad - dpi_scale_.logical_to_pixels(180) - gap * 2,
-                                    dpi_scale_.logical_to_pixels(32));
+                                    layout.command_bar.right - layout.command_bar.left - toggle_pad - px(tok::spacing_xl * 11 + tok::spacing_md) - gap * 2,
+                                    px(tok::font_subtitle + tok::spacing_md));
         nfui::draw_text(hdc,
                         hero_title,
                         L"Product Growth Showcase",
@@ -695,9 +719,9 @@ void ShowcaseView::paint(HDC hdc, nfui::FontCache& fonts) const noexcept {
                         DT_LEFT | DT_TOP | DT_SINGLELINE | DT_END_ELLIPSIS | DT_NOPREFIX);
 
         RECT hero_body = make_rect(layout.command_bar.left + gap,
-                                    hero_title.bottom + dpi_scale_.logical_to_pixels(6),
+                                    hero_title.bottom + px(tok::spacing_xs + tok::spacing_xs),
                                     rect_width(hero_title),
-                                    dpi_scale_.logical_to_pixels(56));
+                                    px(tok::font_hero * 2));
         nfui::draw_text(hdc,
                         hero_body,
                         L"Focused on evaluation-ready light and dark shells, explicit resources, and DPI-aware composition.",
@@ -712,9 +736,14 @@ void ShowcaseView::paint(HDC hdc, nfui::FontCache& fonts) const noexcept {
     {
         const nfui::Color toggle_border = dark ? palette.accent : palette.border;
         nfui::fill_rounded_rect(hdc, layout.theme_toggle, small_radius, palette.surface, toggle_border);
+        // CP-B9: cyclic toggle label exposes all three modes.
         const std::wstring_view toggle_text =
-            theme_mode_ == nfui::ThemeMode::dark ? L"Switch to light" : L"Switch to dark";
-        RECT toggle_label = inset_rect(layout.theme_toggle, dpi_scale_.logical_to_pixels(10));
+            theme_mode_ == nfui::ThemeMode::dark
+                ? L"Switch to high contrast"
+            : theme_mode_ == nfui::ThemeMode::high_contrast
+                ? L"Switch to light"
+                : L"Switch to dark";
+        RECT toggle_label = inset_rect(layout.theme_toggle, px(tok::spacing_md - tok::spacing_xs));
         nfui::draw_text(hdc,
                         toggle_label,
                         toggle_text,
@@ -730,9 +759,14 @@ void ShowcaseView::paint(HDC hdc, nfui::FontCache& fonts) const noexcept {
                                      ? nfui::alpha_blend(palette.accent, palette.surface, 0.12f)
                                      : palette.surface;
         const nfui::Color border = hovered ? palette.accent : palette.border;
-        const int card_elevation = 2;
-        nfui::paint_drop_shadow(hdc, layout.cards[index], radius,
-                                card_elevation, palette.shadow);
+        // CP-B9: first KPI card is flat (no raised shadow); remaining cards
+        // share a quiet elevation-1 shadow. Decorative shadows are suppressed
+        // in HC because palette.shadow is transparent there.
+        const int card_elevation = (index == 0) ? 0 : 1;
+        if (card_elevation > 0) {
+            nfui::paint_drop_shadow(hdc, layout.cards[index], radius,
+                                    card_elevation, palette.shadow);
+        }
         nfui::fill_rounded_rect(hdc, layout.cards[index], radius, fill, border);
 
         // CP37: label_pad 16 → 12 so "RESOURCE FLOW" (13 chars at sm semibold)
@@ -740,11 +774,11 @@ void ShowcaseView::paint(HDC hdc, nfui::FontCache& fonts) const noexcept {
 // viewport. With sidebar=200, inspector=220, card width ≈ 148 px and
 // 16+16 padding left only 116 px for text — barely below the natural
 // width of the longest label.
-        const int label_pad = dpi_scale_.logical_to_pixels(12);
+        const int label_pad = px(tok::spacing_md - tok::spacing_xs);  // 12 logical px
         RECT card_label = make_rect(layout.cards[index].left + label_pad,
                                     layout.cards[index].top + label_pad,
                                     rect_width(layout.cards[index]) - label_pad * 2,
-                                    dpi_scale_.logical_to_pixels(20));
+                                    px(tok::font_caption + tok::spacing_xs));
         nfui::draw_text(hdc,
                         card_label,
                         card_titles[index],
@@ -755,9 +789,9 @@ void ShowcaseView::paint(HDC hdc, nfui::FontCache& fonts) const noexcept {
         // Middle: large bold value. Anchored to the card center vertically so
         // the title and pill stay balanced.
         RECT card_value = make_rect(layout.cards[index].left + label_pad,
-                                    layout.cards[index].top + dpi_scale_.logical_to_pixels(46),
+                                    layout.cards[index].top + px(tok::spacing_xl * 5 + tok::spacing_sm),
                                     rect_width(layout.cards[index]) - label_pad * 2,
-                                    dpi_scale_.logical_to_pixels(48));
+                                    px(tok::font_title + tok::spacing_lg));
         nfui::draw_text(hdc,
                         card_value,
                         card_values[index],
@@ -809,17 +843,17 @@ void ShowcaseView::paint(HDC hdc, nfui::FontCache& fonts) const noexcept {
                               static_cast<int>(card_badges[index].size()), &text_size);
         SelectObject(measure_hdc, old_font);
         DeleteDC(measure_hdc);
-        const int pill_h = dpi_scale_.logical_to_pixels(24);
+        const int pill_h = px(tok::control_height_sm);
         // CP33: bump padding 20 -> 24 (10 -> 12 logical px per side) for the
         // same reason as the inspector tag pill — "Release Ready" in xs font
         // visually pressed the right border at 20-px device padding.
-        const int pill_w = text_size.cx + dpi_scale_.logical_to_pixels(24);
-        const int pill_pad_x = dpi_scale_.logical_to_pixels(16);
-        const int pill_y = layout.cards[index].bottom - dpi_scale_.logical_to_pixels(20) - pill_h;
+        const int pill_w = text_size.cx + px(tok::spacing_lg * 3);
+        const int pill_pad_x = px(tok::spacing_md);
+        const int pill_y = layout.cards[index].bottom - px(tok::spacing_lg + tok::spacing_xs) - pill_h;
         RECT pill_rect = make_rect(layout.cards[index].left + pill_pad_x, pill_y, pill_w, pill_h);
         nfui::fill_rounded_rect(hdc, pill_rect, pill_radius, pill_fill, pill_border);
-        RECT pill_text_rect = inset_rect(pill_rect, dpi_scale_.logical_to_pixels(12), 0,
-                                        dpi_scale_.logical_to_pixels(12), 0);
+        RECT pill_text_rect = inset_rect(pill_rect, px(tok::spacing_md - tok::spacing_xs), 0,
+                                        px(tok::spacing_md - tok::spacing_xs), 0);
         nfui::draw_text(hdc,
                         pill_text_rect,
                         card_badges[index],
@@ -836,7 +870,7 @@ void ShowcaseView::paint(HDC hdc, nfui::FontCache& fonts) const noexcept {
         RECT note_title = make_rect(layout.workspace_note.left + note_pad,
                                     layout.workspace_note.top + note_pad,
                                     rect_width(layout.workspace_note) - note_pad * 2,
-                                    dpi_scale_.logical_to_pixels(28));
+                                    px(tok::font_subtitle + tok::spacing_xs));
         nfui::draw_text(hdc,
                         note_title,
                         L"Showcase-only visuals",
@@ -845,9 +879,9 @@ void ShowcaseView::paint(HDC hdc, nfui::FontCache& fonts) const noexcept {
                         DT_LEFT | DT_TOP | DT_SINGLELINE | DT_NOPREFIX);
 
         RECT note_body = make_rect(layout.workspace_note.left + note_pad,
-                                    note_title.bottom + dpi_scale_.logical_to_pixels(8),
+                                    note_title.bottom + px(tok::spacing_sm),
                                     rect_width(layout.workspace_note) - note_pad * 2,
-                                    layout.workspace_note.bottom - (note_title.bottom + dpi_scale_.logical_to_pixels(8)));
+                                    layout.workspace_note.bottom - (note_title.bottom + px(tok::spacing_sm)));
         nfui::draw_text(hdc,
                         note_body,
                         L"These visuals are for demonstration purposes, highlighting the capabilities of the NativeFrame UI system in a product context. They are not representative of the final product's full data or functionality.",
@@ -861,7 +895,7 @@ void ShowcaseView::paint(HDC hdc, nfui::FontCache& fonts) const noexcept {
         RECT inspector_header = make_rect(layout.inspector.left + gap,
                                           layout.inspector.top + gap,
                                           rect_width(layout.inspector) - gap * 2,
-                                          dpi_scale_.logical_to_pixels(36));
+                                          px(tok::font_subtitle + tok::spacing_md));
         nfui::draw_text(hdc,
                         inspector_header,
                         L"Inspector",
@@ -870,9 +904,9 @@ void ShowcaseView::paint(HDC hdc, nfui::FontCache& fonts) const noexcept {
                         DT_LEFT | DT_TOP | DT_SINGLELINE | DT_NOPREFIX);
 
         RECT inspector_intro = make_rect(layout.inspector.left + gap,
-                                         inspector_header.bottom + dpi_scale_.logical_to_pixels(6),
+                                         inspector_header.bottom + px(tok::spacing_xs + tok::spacing_xs),
                                          rect_width(layout.inspector) - gap * 2,
-                                         dpi_scale_.logical_to_pixels(60));
+                                         px(tok::font_hero * 2 + tok::spacing_sm));
         nfui::draw_text(hdc,
                         inspector_intro,
                         L"Readable implementation notes for reviewers and release screenshots.",
@@ -899,15 +933,15 @@ void ShowcaseView::paint(HDC hdc, nfui::FontCache& fonts) const noexcept {
             DeleteObject(brush);
         }
 
-        const int row_pad = dpi_scale_.logical_to_pixels(16);
+        const int row_pad = px(tok::spacing_md);
         // CP37: pill reservation 60 → 76 so "Framework boundary" (19 chars
         // at base font) fits without ellipsising to "Framework bou…" when
         // the row width is only 216 px after sidebar padding. The pill on
         // the right needs ~70 px (text + 24-px logical padding).
         RECT label_rect = make_rect(layout.inspector_rows[index].left + row_pad,
                                     layout.inspector_rows[index].top + row_pad,
-                                    rect_width(layout.inspector_rows[index]) - row_pad * 2 - dpi_scale_.logical_to_pixels(76),
-                                    dpi_scale_.logical_to_pixels(24));
+                                    rect_width(layout.inspector_rows[index]) - row_pad * 2 - px(tok::spacing_xl * 9 + tok::spacing_sm),
+                                    px(tok::control_height_sm));
         nfui::draw_text(hdc,
                         label_rect,
                         inspector_labels[index],
@@ -924,13 +958,13 @@ void ShowcaseView::paint(HDC hdc, nfui::FontCache& fonts) const noexcept {
                               static_cast<int>(inspector_tags[index].size()), &text_size);
         SelectObject(measure_hdc, old_font);
         DeleteDC(measure_hdc);
-        const int tag_h = dpi_scale_.logical_to_pixels(24);
+        const int tag_h = px(tok::control_height_sm);
         // CP33: bump padding 20 -> 24 so "12px" / "dpi-aware" don't visually
         // touch the pill border. GetTextExtentPoint32W excludes side-bearings
         // for some glyphs (notably 'p'), so 10-px logical padding (20 device
         // px) under-measures the right edge; 12 px (24 device px) leaves a
         // comfortable 4-px gap on each side at 96/100 % DPI.
-        const int tag_pad = dpi_scale_.logical_to_pixels(24);
+        const int tag_pad = px(tok::spacing_md * 2 + tok::spacing_xs * 2);
         const int tag_w = text_size.cx + tag_pad;
         RECT tag_rect = make_rect(layout.inspector_rows[index].right - row_pad - tag_w,
                                   layout.inspector_rows[index].top + row_pad,
@@ -944,17 +978,17 @@ void ShowcaseView::paint(HDC hdc, nfui::FontCache& fonts) const noexcept {
                                             : palette.border;
         nfui::fill_rounded_rect(hdc, tag_rect, pill_radius, tag_fill, tag_border);
         nfui::draw_text(hdc,
-                        inset_rect(tag_rect, dpi_scale_.logical_to_pixels(12), 0,
-                                   dpi_scale_.logical_to_pixels(12), 0),
+                        inset_rect(tag_rect, px(tok::spacing_md), 0,
+                                   px(tok::spacing_md), 0),
                         inspector_tags[index],
                         tag_font,
                         dark ? palette.text : palette.muted_text,
                         DT_CENTER | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX);
 
         RECT body_rect = make_rect(layout.inspector_rows[index].left + row_pad,
-                                   label_rect.bottom + dpi_scale_.logical_to_pixels(8),
+                                   label_rect.bottom + px(tok::spacing_sm),
                                    rect_width(layout.inspector_rows[index]) - row_pad * 2,
-                                   layout.inspector_rows[index].bottom - (label_rect.bottom + dpi_scale_.logical_to_pixels(8)) - row_pad);
+                                   layout.inspector_rows[index].bottom - (label_rect.bottom + px(tok::spacing_sm)) - row_pad);
         nfui::draw_text(hdc,
                         body_rect,
                         inspector_values[index],
