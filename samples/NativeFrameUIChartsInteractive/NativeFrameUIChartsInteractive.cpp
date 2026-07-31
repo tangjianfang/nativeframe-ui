@@ -33,6 +33,8 @@
 #include <nfui/NativeFrameUI.hpp>
 #include <nfui/Paint.hpp>
 #include <nfui/Theme.hpp>
+#include <nfui/ThemeBroker.hpp>
+#include <nfui/design_tokens.hpp>
 
 #include "NativeFrameUIResource.h"
 
@@ -48,6 +50,7 @@
 namespace {
 
 using namespace nfui;
+namespace tok = nfui::design;
 
 constexpr int kWindowWidth = 1180;
 constexpr int kWindowHeight = 900;
@@ -887,6 +890,17 @@ private:
 
 class MainWindow : public nfui::Window {
 public:
+    // CP-B11: seed the requested mode before create_main so the first paint
+    // is already in the right theme (light/dark/HC). Returns false if the
+    // window is already created.
+    [[nodiscard]] bool set_initial_theme(nfui::ThemeMode mode) noexcept {
+        if (hwnd() != nullptr) return false;
+        app_theme_mode_ = mode;
+        chart_theme_mode_ = app_to_chart_mode(mode);
+        nfui::ThemeBroker::instance().set_theme(mode);
+        return true;
+    }
+
     [[nodiscard]] bool create_main(int show_cmd) noexcept {
         nfui::WindowCreateParams params{
             instance_,
@@ -907,6 +921,11 @@ public:
         create_charts();      // creates primary_chart_ first so apply_theme() can read its theme
         create_kpi_tiles();
         create_info_panel();
+        // CP-B11: register with ThemeBroker so a runtime theme switch
+        // (clicking the title-strip pill or any other registered window)
+        // reaches this dashboard. Unregister in WM_NCDESTROY.
+        nfui::ThemeBroker::instance().register_hwnd(hwnd(),
+            [this](nfui::ThemeMode mode) { apply_theme(mode); });
         SetWindowTextW(hwnd(), L"Interactive Charts \x2014 NativeFrame UI");
         ShowWindow(hwnd(), show_cmd);
         UpdateWindow(hwnd());
@@ -930,23 +949,56 @@ protected:
         }
         case WM_ERASEBKGND:
             return 1;
+        case WM_MOUSEMOVE: {
+            track_mouse_leave();
+            const POINT pt{LOWORD(lparam), HIWORD(lparam)};
+            const ToolbarHit hit = hit_test_toolbar(pt);
+            if (hit != hovered_toolbar_) {
+                hovered_toolbar_ = hit;
+                InvalidateRect(hwnd(), nullptr, FALSE);
+            }
+            return 0;
+        }
+        case WM_MOUSELEAVE:
+            tracking_mouse_ = false;
+            if (hovered_toolbar_ != ToolbarHit::none) {
+                hovered_toolbar_ = ToolbarHit::none;
+                InvalidateRect(hwnd(), nullptr, FALSE);
+            }
+            return 0;
         case WM_LBUTTONDOWN: {
             const POINT pt{LOWORD(lparam), HIWORD(lparam)};
             const ToolbarHit hit = hit_test_toolbar(pt);
-            switch (hit) {
-            case ToolbarHit::export_png:
-                export_primary_to_png();
-                return 0;
-            case ToolbarHit::reset:
-                reset_views();
-                return 0;
-            case ToolbarHit::settings:
-                open_settings_dialog();
-                return 0;
-            case ToolbarHit::none:
-            default:
-                return 0;
+            pressed_toolbar_ = hit;
+            InvalidateRect(hwnd(), nullptr, FALSE);
+            return 0;
+        }
+        case WM_LBUTTONUP: {
+            const POINT pt{LOWORD(lparam), HIWORD(lparam)};
+            const ToolbarHit hit = hit_test_toolbar(pt);
+            const ToolbarHit prior = pressed_toolbar_;
+            pressed_toolbar_ = ToolbarHit::none;
+            InvalidateRect(hwnd(), nullptr, FALSE);
+            if (hit != ToolbarHit::none && hit == prior) {
+                switch (hit) {
+                case ToolbarHit::theme:
+                    cycle_theme();
+                    return 0;
+                case ToolbarHit::export_png:
+                    export_primary_to_png();
+                    return 0;
+                case ToolbarHit::reset:
+                    reset_views();
+                    return 0;
+                case ToolbarHit::settings:
+                    open_settings_dialog();
+                    return 0;
+                case ToolbarHit::none:
+                default:
+                    return 0;
+                }
             }
+            return 0;
         }
         case WM_COMMAND: {
             const int id = LOWORD(wparam);
@@ -974,6 +1026,13 @@ protected:
         case WM_DESTROY:
             PostQuitMessage(0);
             return 0;
+        case WM_THEMECHANGED:
+            // CP-B11: ThemeBroker broadcasts runtime theme switches here.
+            apply_theme(nfui::ThemeBroker::instance().current());
+            return 0;
+        case WM_NCDESTROY:
+            nfui::ThemeBroker::instance().unregister_hwnd(hwnd());
+            return Window::handle_message(message, wparam, lparam);
         default:
             break;
         }
@@ -981,30 +1040,90 @@ protected:
     }
 
 private:
-    enum class ToolbarHit { none, export_png, reset, settings };
+    enum class ToolbarHit { none, theme, export_png, reset, settings };
 
     static constexpr int kSeriesCheckboxBase = 8000;
 
-    // CP40: the host's chosen theme. Persists across create_main calls and
-    // is the source of truth for apply_theme() — do NOT derive it from
-    // primary_chart_.settings(), which only exists after create_charts().
-    nfui::ChartSettings::ThemeMode theme_mode_{
+    // CP-B11: app-level theme is a full nfui::ThemeMode so the dashboard can
+    // render light, dark, and high_contrast. The chart settings struct only
+    // knows light/dark, so high_contrast maps to dark for chart internals
+    // (series colours, renderer defaults) while the host chrome uses the HC
+    // palette.
+    nfui::ThemeMode app_theme_mode_{nfui::ThemeMode::dark};
+    nfui::ChartSettings::ThemeMode chart_theme_mode_{
         nfui::ChartSettings::ThemeMode::dark};
+
+    [[nodiscard]] static nfui::ChartSettings::ThemeMode app_to_chart_mode(
+        nfui::ThemeMode mode) noexcept {
+        return (mode == nfui::ThemeMode::light)
+            ? nfui::ChartSettings::ThemeMode::light
+            : nfui::ChartSettings::ThemeMode::dark;
+    }
+
+    [[nodiscard]] static nfui::ThemeMode chart_to_app_mode(
+        nfui::ChartSettings::ThemeMode mode) noexcept {
+        return (mode == nfui::ChartSettings::ThemeMode::light)
+            ? nfui::ThemeMode::light
+            : nfui::ThemeMode::dark;
+    }
 
     std::unique_ptr<SettingsDialog> settings_dialog_{};
 
+    // CP-B11: full theme switch. Updates the app palette, chart settings,
+    // series colours, and re-injects the palette into every child surface.
+    void apply_theme(nfui::ThemeMode mode) noexcept {
+        if (app_theme_mode_ == mode && palette_.background.rgb != 0) return;
+        app_theme_mode_ = mode;
+        chart_theme_mode_ = app_to_chart_mode(mode);
+        palette_ = nfui::theme_palette(app_theme_mode_);
+
+        if (primary_chart_.hwnd() != nullptr) {
+            nfui::ChartSettings ps = primary_chart_.settings();
+            ps.theme = chart_theme_mode_;
+            primary_chart_.apply_settings(ps);
+        }
+        if (comparison_chart_.hwnd() != nullptr) {
+            nfui::ChartSettings cs = comparison_chart_.settings();
+            cs.theme = chart_theme_mode_;
+            comparison_chart_.apply_settings(cs);
+        }
+
+        apply_series_colors();
+        primary_chart_.inject_theme(&palette_, &fonts_);
+        comparison_chart_.inject_theme(&palette_, &fonts_);
+        if (info_.hwnd() != nullptr) info_.set_theme(palette_);
+        if (temperature_kpi_.hwnd() != nullptr) {
+            temperature_kpi_.inject_theme(&palette_, &fonts_);
+            humidity_kpi_.inject_theme(&palette_, &fonts_);
+            light_kpi_.inject_theme(&palette_, &fonts_);
+        }
+        if (hwnd() != nullptr) InvalidateRect(hwnd(), nullptr, FALSE);
+    }
+
     void apply_theme() noexcept {
-        // CP40: read the host's chosen theme from our own member, NOT from
-        // primary_chart_.settings(). apply_theme() runs before the chart
-        // exists on first launch, so reading the chart would always yield
-        // the default ChartSettings{} (theme=light) and the dashboard
-        // would boot into a white surface. The Settings dialog writes
-        // theme_mode_ directly when the user toggles dark/light.
-        const nfui::ThemeMode mode = (theme_mode_ ==
-                                      nfui::ChartSettings::ThemeMode::dark)
-                                      ? nfui::ThemeMode::dark
-                                      : nfui::ThemeMode::light;
-        palette_ = nfui::theme_palette(mode);
+        apply_theme(app_theme_mode_);
+    }
+
+    void cycle_theme() noexcept {
+        // CP-B11: cycle light -> dark -> high_contrast -> light.
+        nfui::ThemeMode next = nfui::ThemeMode::dark;
+        if (app_theme_mode_ == nfui::ThemeMode::light) {
+            next = nfui::ThemeMode::dark;
+        } else if (app_theme_mode_ == nfui::ThemeMode::dark) {
+            next = nfui::ThemeMode::high_contrast;
+        } else {
+            next = nfui::ThemeMode::light;
+        }
+        nfui::ThemeBroker::instance().set_theme(next);
+    }
+
+    void track_mouse_leave() noexcept {
+        if (tracking_mouse_) return;
+        TRACKMOUSEEVENT event{};
+        event.cbSize = sizeof(event);
+        event.dwFlags = TME_LEAVE;
+        event.hwndTrack = hwnd();
+        tracking_mouse_ = TrackMouseEvent(&event) != FALSE;
     }
 
     [[nodiscard]] ToolbarHit hit_test_toolbar(POINT pt) const noexcept {
@@ -1015,13 +1134,28 @@ private:
         const int settings_x = rc.right - kOuterPadding - button_size;
         const int reset_x = settings_x - 8 - button_size;
         const int export_x = reset_x - 8 - button_size;
+        const RECT theme_btn = theme_toggle_rect();
         const RECT export_btn{export_x, y, export_x + button_size, y + button_size};
         const RECT reset_btn{reset_x, y, reset_x + button_size, y + button_size};
         const RECT settings_btn{settings_x, y, settings_x + button_size, y + button_size};
+        if (PtInRect(&theme_btn, pt)) return ToolbarHit::theme;
         if (PtInRect(&export_btn, pt)) return ToolbarHit::export_png;
         if (PtInRect(&reset_btn, pt)) return ToolbarHit::reset;
         if (PtInRect(&settings_btn, pt)) return ToolbarHit::settings;
         return ToolbarHit::none;
+    }
+
+    [[nodiscard]] RECT theme_toggle_rect() const noexcept {
+        RECT rc{};
+        GetClientRect(hwnd(), &rc);
+        const int button_h = 22;
+        const int y = (kTitleStripHeight - button_h) / 2;
+        const int settings_x = rc.right - kOuterPadding - button_h;
+        const int reset_x = settings_x - 8 - button_h;
+        const int export_x = reset_x - 8 - button_h;
+        const int theme_w = 72;
+        const int theme_x = export_x - 12 - theme_w;
+        return RECT{theme_x, y, theme_x + theme_w, y + button_h};
     }
 
     [[nodiscard]] RECT toolbar_button_rect(ToolbarHit hit) const noexcept {
@@ -1033,6 +1167,8 @@ private:
         const int reset_x = settings_x - 8 - button_size;
         const int export_x = reset_x - 8 - button_size;
         switch (hit) {
+        case ToolbarHit::theme:
+            return theme_toggle_rect();
         case ToolbarHit::export_png:
             return RECT{export_x, y, export_x + button_size, y + button_size};
         case ToolbarHit::reset:
@@ -1083,12 +1219,16 @@ private:
 
     void open_settings_dialog() noexcept {
         settings_dialog_ = std::make_unique<SettingsDialog>();
-        settings_dialog_->open(hwnd(), primary_chart_.settings(), theme_mode_,
+        settings_dialog_->open(hwnd(), primary_chart_.settings(), chart_theme_mode_,
             [this](nfui::ChartSettings s) {
-                theme_mode_ = s.theme;
+                chart_theme_mode_ = s.theme;
+                app_theme_mode_ = chart_to_app_mode(s.theme);
                 primary_chart_.apply_settings(s);
                 comparison_chart_.apply_settings(s);
                 apply_theme();
+                // Re-seed series colours to match the new app theme so KPI
+                // tiles and chart glyphs stay coherent with the shell.
+                apply_series_colors();
                 primary_chart_.inject_theme(&palette_, &fonts_);
                 comparison_chart_.inject_theme(&palette_, &fonts_);
                 info_.set_theme(palette_);
@@ -1113,9 +1253,7 @@ private:
 
     void create_kpi_tiles() {
         const auto tile_color = [this](int idx) {
-            return nfui::chart_series_color(
-                primary_chart_.settings().theme == nfui::ChartSettings::ThemeMode::dark
-                    ? nfui::ThemeMode::dark : nfui::ThemeMode::light, idx);
+            return nfui::chart_series_color(app_theme_mode_, idx);
         };
 
         auto make_tile = [&](nfui::KpiTile& tile, std::wstring label,
@@ -1189,12 +1327,12 @@ private:
         // would render the comparison pane as a white surface.
         primary_chart_.inject_theme(&palette_, &fonts_);
         primary_chart_.set_kind(nfui::ChartKind::line);
-        // CP40 demo polish: default to dark theme so the dashboard
-        // opens with the originally-curated dark surface. The Settings
-        // dialog toggles between dark/light at runtime.
+        // CP-B11: seed the chart with the requested light/dark mode (high
+        // contrast is rendered by the host chrome; the chart internals map
+        // HC to dark because ChartSettings only supports light/dark).
         {
             nfui::ChartSettings init_s = primary_chart_.settings();
-            init_s.theme = nfui::ChartSettings::ThemeMode::dark;
+            init_s.theme = chart_theme_mode_;
             init_s.kind_id = 2;  // line
             primary_chart_.apply_settings(init_s);
         }
@@ -1204,7 +1342,7 @@ private:
                                std::vector<nfui::ChartPoint> pts) {
             nfui::ChartSeries s;
             s.name = name;
-            s.color = nfui::chart_series_color(nfui::ThemeMode::dark, color_idx);
+            s.color = nfui::chart_series_color(app_theme_mode_, color_idx);
             s.points = std::move(pts);
             series.push_back(std::move(s));
         };
@@ -1244,18 +1382,17 @@ private:
         // Same rule as primary: bind theme AFTER create().
         comparison_chart_.inject_theme(&palette_, &fonts_);
         comparison_chart_.set_kind(nfui::ChartKind::spline);
-        // Mirror the primary's theme so refresh_fallback_palette() also
-        // caches a dark fallback — if the host later clears palette_ the
-        // comparison chart still paints dark, matching the dashboard.
+        // Mirror the primary's chart theme so the fallback palette matches
+        // the dashboard even if the host later clears palette_.
         {
             nfui::ChartSettings cmp_init = comparison_chart_.settings();
-            cmp_init.theme = nfui::ChartSettings::ThemeMode::dark;
+            cmp_init.theme = chart_theme_mode_;
             comparison_chart_.apply_settings(cmp_init);
         }
         std::vector<nfui::ChartSeries> cmp_series;
         nfui::ChartSeries cmp;
         cmp.name = L"Temperature (zoomed)";
-        cmp.color = nfui::chart_series_color(nfui::ThemeMode::dark, 0);
+        cmp.color = nfui::chart_series_color(app_theme_mode_, 0);
         cmp.points = temperature_;
         cmp_series.push_back(std::move(cmp));
         comparison_chart_.set_series(std::move(cmp_series));
@@ -1370,11 +1507,38 @@ private:
         for (std::size_t i = 0; i < series_data.size(); ++i) {
             nfui::ChartSeries s;
             s.name = names[i];
-            s.color = nfui::chart_series_color(nfui::ThemeMode::dark, static_cast<int>(i));
+            s.color = nfui::chart_series_color(app_theme_mode_, static_cast<int>(i));
             s.points = series_data[i];
             out.push_back(std::move(s));
         }
         return out;
+    }
+
+    // CP-B11: recolour every data-driven surface when the app theme changes.
+    // Preserves the current visibility state of the primary chart series.
+    void apply_series_colors() noexcept {
+        auto series = get_chart_series();
+        for (std::size_t i = 0; i < series.size(); ++i) {
+            series[i].visible = primary_chart_.is_series_visible(i);
+        }
+        primary_chart_.set_series(std::move(series));
+
+        std::vector<nfui::ChartSeries> cmp_series;
+        nfui::ChartSeries cmp;
+        cmp.name = L"Temperature (zoomed)";
+        cmp.color = nfui::chart_series_color(app_theme_mode_, 0);
+        cmp.points = temperature_;
+        cmp_series.push_back(std::move(cmp));
+        comparison_chart_.set_series(std::move(cmp_series));
+
+        temperature_kpi_.set_sparkline(temperature_,
+            nfui::chart_series_color(app_theme_mode_, 0));
+        humidity_kpi_.set_sparkline(humidity_,
+            nfui::chart_series_color(app_theme_mode_, 1));
+        light_kpi_.set_sparkline(light_,
+            nfui::chart_series_color(app_theme_mode_, 2));
+
+        info_.set_series_overview(build_overview(get_chart_series()));
     }
 
     // Compute the dashboard body geometry. Returns the rectangle for the
@@ -1580,10 +1744,7 @@ private:
         // don't overlap into noise at this scale.
         auto draw_series = [&](int series_idx, int dy_a, int dy_b, int dy_c) {
             const nfui::Color color = nfui::chart_series_color(
-                theme_mode_ == nfui::ChartSettings::ThemeMode::dark
-                    ? nfui::ThemeMode::dark
-                    : nfui::ThemeMode::light,
-                series_idx);
+                app_theme_mode_, series_idx);
             HPEN pen = CreatePen(PS_SOLID, 2, color.rgb);
             HPEN old = static_cast<HPEN>(SelectObject(hdc, pen));
             POINT pts[3]{
@@ -1603,24 +1764,37 @@ private:
     }
 
     void draw_toolbar_buttons(HDC hdc) noexcept {
-        const int button_size = 22;
-        (void)button_size;
+        const int dpi = (hwnd() != nullptr) ? dpi_of(hwnd()) : 96;
+        HFONT label_font = fonts_.regular(dpi, nfui::font_pt::xs);
 
-        auto draw_round_button = [&](RECT btn) {
-            const POINT probe{btn.left + 2, btn.top + 2};
-            const ToolbarHit probe_hit = hit_test_toolbar(probe);
-            const nfui::Color bg = (probe_hit != ToolbarHit::none)
-                ? nfui::Color{palette_.surface_hover.rgb}
-                : nfui::Color{palette_.surface.rgb};
-            fill_rounded_rect(hdc, btn, 4, bg, palette_.border);
+        auto button_bg = [this](ToolbarHit hit) noexcept {
+            if (hovered_toolbar_ == hit)
+                return nfui::Color{palette_.surface_hover.rgb};
+            return nfui::Color{palette_.surface.rgb};
         };
 
+        auto draw_round_button = [&](RECT btn, ToolbarHit hit) {
+            fill_rounded_rect(hdc, btn, 4, button_bg(hit), palette_.border);
+        };
+
+        const RECT theme_btn = toolbar_button_rect(ToolbarHit::theme);
         const RECT export_btn = toolbar_button_rect(ToolbarHit::export_png);
         const RECT reset_btn = toolbar_button_rect(ToolbarHit::reset);
         const RECT settings_btn = toolbar_button_rect(ToolbarHit::settings);
-        draw_round_button(export_btn);
-        draw_round_button(reset_btn);
-        draw_round_button(settings_btn);
+
+        // Theme pill: shows the current mode and cycles on click.
+        draw_round_button(theme_btn, ToolbarHit::theme);
+        const wchar_t* theme_label =
+            (app_theme_mode_ == nfui::ThemeMode::light) ? L"Light" :
+            (app_theme_mode_ == nfui::ThemeMode::dark)  ? L"Dark"  : L"HC";
+        RECT text_rc{theme_btn.left + 2, theme_btn.top + 1,
+                     theme_btn.right - 2, theme_btn.bottom - 1};
+        draw_text(hdc, text_rc, theme_label, label_font, palette_.text,
+                  DT_CENTER | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX);
+
+        draw_round_button(export_btn, ToolbarHit::export_png);
+        draw_round_button(reset_btn, ToolbarHit::reset);
+        draw_round_button(settings_btn, ToolbarHit::settings);
 
         // Export glyph: downward arrow into a tray.
         {
@@ -1704,6 +1878,12 @@ private:
     nfui::FontCache fonts_{};
     std::wstring status_text_{};
 
+    // CP-B11: toolbar hover/press state so the title-strip buttons get
+    // the same interactive feedback as the framework's self-painted controls.
+    ToolbarHit hovered_toolbar_{ToolbarHit::none};
+    ToolbarHit pressed_toolbar_{ToolbarHit::none};
+    bool tracking_mouse_{};
+
     // CP40: KPI tiles (row 1) -> primary chart (row 2) -> comparison
     // chart (row 3) -> group. Reverse destruction drops the group
     // first so its observer hooks detach from the still-living charts.
@@ -1723,7 +1903,7 @@ private:
 
 } // namespace
 
-int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, LPWSTR, int show_cmd) {
+int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR cmd_line, int show_cmd) {
     nfui::Application app({instance, show_cmd});
     if (!nfui::Application::initialize_process_dpi() ||
         !nfui::Application::initialize_common_controls() ||
@@ -1731,7 +1911,22 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, LPWSTR, int show_cmd) {
         return 1;
     }
 
+    // CP-B11: parse --theme so the audit can capture light / dark / HC.
+    auto parse_theme = [](PCWSTR cl) noexcept {
+        if (cl == nullptr) return nfui::ThemeMode::dark;
+        const wchar_t* tag = wcsstr(cl, L"--theme");
+        if (tag == nullptr) return nfui::ThemeMode::dark;
+        tag += 7;
+        while (*tag == L' ' || *tag == L'\t') ++tag;
+        if (*tag == L'"') ++tag;
+        if (wcsncmp(tag, L"light", 5) == 0) return nfui::ThemeMode::light;
+        if (wcsncmp(tag, L"dark", 4) == 0) return nfui::ThemeMode::dark;
+        if (wcsncmp(tag, L"high_contrast", 13) == 0) return nfui::ThemeMode::high_contrast;
+        return nfui::ThemeMode::dark;
+    };
+
     MainWindow window{};
+    (void)window.set_initial_theme(parse_theme(cmd_line));
     if (!window.create_main(show_cmd)) {
         nfui::shutdown_chart_aa();
         return 1;
