@@ -219,7 +219,11 @@ LRESULT CALLBACK TabControl::visual_subclass_proc(HWND hwnd, UINT message,
             const ThemePalette& p = detail::effective_palette(tc->palette());
             RECT rc{};
             GetClientRect(hwnd, &rc);
-            fill_rect(dc, rc, p.surface);
+            // CP-B17: tab page fills read surface_variant so the page reads
+            // as a recessed layer beneath the tab strip (which itself sits
+            // on palette.surface). The token is distinct from surface per
+            // theme, so this is a real colour shift rather than a copy.
+            fill_rect(dc, rc, p.surface_variant);
             return 1;
         }
         return DefSubclassProc(hwnd, message, wparam, lparam);

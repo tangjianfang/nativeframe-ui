@@ -384,10 +384,12 @@ bool test_treeview_self_paint_renders() {
     return empty_pixel == expected;
 }
 
-// CP-A3: self-painted TabControl paints tab chrome via state_palette(), so
-// the tab strip background must match palette.surface (no white island in
-// dark mode). We create a tab control with one tab, force a paint, and
-// assert a body pixel below the tab strip matches the palette surface.
+// CP-A3 + CP-B17: self-painted TabControl paints tab chrome via
+// state_palette(), so the tab strip background matches palette.surface and
+// the page area reads palette.surface_variant (the elevated / nested
+// surface token added by CP-B17). We create a tab control with one tab,
+// force a paint, and assert a body pixel below the tab strip matches the
+// expected variant — no white island in dark mode.
 bool test_tabcontrol_self_paint_renders() {
     HWND parent = CreateWindowExW(0, L"STATIC", L"", WS_OVERLAPPED,
                                   CW_USEDEFAULT, CW_USEDEFAULT, 320, 220,
@@ -427,14 +429,14 @@ bool test_tabcontrol_self_paint_renders() {
         return false;
     }
     // Sample the body region — well below the tab strip (which is ~24 px).
-    // The CP-A3 WM_ERASEBKGND fills the whole client with palette.surface,
-    // so the body pixel must match dark.surface exactly.
+    // CP-B17: the page area now fills with palette.surface_variant so the
+    // page reads as a recessed layer beneath the strip.
     RECT client{};
     GetClientRect(tc.hwnd(), &client);
     const int sample_x = client.right / 2;
     const int sample_y = client.bottom - 8;
     const COLORREF body_pixel = GetPixel(dc, sample_x, sample_y);
-    const COLORREF expected   = dark.surface.rgb;
+    const COLORREF expected   = dark.surface_variant.rgb;
     ReleaseDC(tc.hwnd(), dc);
 
     ShowWindow(parent, SW_HIDE);
@@ -1821,7 +1823,7 @@ int wmain() {
     // CP-A3: TabControl WM_DRAWITEM paints the body region with palette
     // surface; a regression that leaves the body native-themed fails.
     ok = expect(test_tabcontrol_self_paint_renders(),
-                L"TabControl self-paint paints body region with palette surface (no white island)") && ok;
+                L"TabControl self-paint paints page area with palette surface_variant (no white island)") && ok;
     // CP-A4: StatusBar chrome subclass + theme_disable_window_theme()
     // must keep the bar surface at palette.surface (no uxtheme white
     // bleed-through).

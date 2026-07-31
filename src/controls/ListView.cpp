@@ -274,6 +274,10 @@ LRESULT ListView::on_custom_draw_item(NMLVCUSTOMDRAW* cd) noexcept {
     const bool selected = (cd->nmcd.uItemState & CDIS_SELECTED) != 0;
     const bool hot = (cd->nmcd.uItemState & CDIS_HOT) != 0;
     const bool focused = (cd->nmcd.uItemState & CDIS_FOCUS) != 0;
+    // CP-B17: even-indexed rows in the rest state read surface_variant
+    // (the "elevated / nested" surface) so adjacent rows register as
+    // distinct chrome bands without a hard rule line.
+    const bool alt_row = (cd->nmcd.dwItemSpec % 2) != 0;
     // CP-A3: row chrome is fully driven by clrText / clrTextBk at PREPAINT —
     // the system honours them in normal LVS_REPORT + LVS_EX_FULLROWSELECT
     // usage. We deliberately do NOT add CDRF_NOTIFYPOSTPAINT here: a
@@ -294,7 +298,15 @@ LRESULT ListView::on_custom_draw_item(NMLVCUSTOMDRAW* cd) noexcept {
     } else {
         const ControlState state = hot ? ControlState::hover : ControlState::rest;
         cd->clrText   = row_foreground_for(p, state, style_).rgb;
-        cd->clrTextBk = row_background_for(p, state, style_).rgb;
+        // CP-B17: alt rows in the rest state read palette.surface_variant
+        // (the elevated / nested surface) so adjacent rows register as
+        // distinct chrome bands. Hover / pressed / disabled keep their
+        // per-state fills regardless of row parity.
+        if (alt_row && state == ControlState::rest && !style_.row_background.has_value()) {
+            cd->clrTextBk = p.surface_variant.rgb;
+        } else {
+            cd->clrTextBk = row_background_for(p, state, style_).rgb;
+        }
     }
     // CP-A3: ask for ITEMPOSTPAINT only when a focus ring is actually
     // needed (selected + focused). Other items return CDRF_DODEFAULT so
