@@ -20,6 +20,8 @@
 //   * Native status bar at the bottom showing a green dot + "Ready".
 
 #include <nfui/NativeFrameUI.hpp>
+#include <nfui/ThemeBroker.hpp>
+#include <nfui/design_tokens.hpp>
 
 #include "NativeFrameUIResource.h"
 
@@ -33,6 +35,8 @@
 #include <windowsx.h>
 
 namespace {
+
+namespace tok = nfui::design;
 
 [[nodiscard]] int rect_width(const RECT& rect) noexcept {
     return rect.right - rect.left;
@@ -316,11 +320,23 @@ public:
     explicit DarkStudioWindow(HINSTANCE instance)
         : instance_(instance),
           resources_(instance),
+          mode_(nfui::ThemeMode::dark),
           palette_(nfui::theme_palette(nfui::ThemeMode::dark)) {
     }
 
     ~DarkStudioWindow() noexcept override {
         destroy_icons();
+    }
+
+    // CP-B10: seed the requested mode before create_main so the first paint
+    // already shows the right palette. Also seeds ThemeBroker so a runtime
+    // toggle has a stable baseline.
+    [[nodiscard]] bool set_initial_theme(nfui::ThemeMode mode) noexcept {
+        if (hwnd() != nullptr) return false;
+        mode_ = mode;
+        palette_ = nfui::theme_palette(mode);
+        nfui::ThemeBroker::instance().set_theme(mode);
+        return true;
     }
 
     [[nodiscard]] bool create_main(int show_command) noexcept {
@@ -349,6 +365,11 @@ public:
             return false;
         }
 
+        // CP-B10: register with ThemeBroker so runtime switches broadcast
+        // back to this window. Unregister in WM_NCDESTROY.
+        nfui::ThemeBroker::instance().register_hwnd(hwnd(),
+            [this](nfui::ThemeMode mode) { apply_theme(mode); });
+
         refresh_layout();
         update_status();
 
@@ -364,12 +385,30 @@ protected:
             refresh_layout();
             InvalidateRect(hwnd(), nullptr, FALSE);
             return 0;
-        case WM_LBUTTONDOWN:
-            if (select_navigation({GET_X_LPARAM(lparam), GET_Y_LPARAM(lparam)})) {
+        case WM_LBUTTONDOWN: {
+            const POINT pt{GET_X_LPARAM(lparam), GET_Y_LPARAM(lparam)};
+            bool redraw = false;
+            if (select_navigation(pt)) {
                 update_status();
+                redraw = true;
+            }
+            if (hit_theme_toggle(pt)) {
+                cycle_theme();
+                redraw = true;
+            }
+            if (redraw) {
                 InvalidateRect(hwnd(), nullptr, FALSE);
             }
             return 0;
+        }
+        case WM_THEMECHANGED:
+            // CP-B10: ThemeBroker broadcasts here after a runtime switch.
+            apply_theme(nfui::ThemeBroker::instance().current());
+            return 0;
+        case WM_NCDESTROY:
+            nfui::ThemeBroker::instance().unregister_hwnd(hwnd());
+            destroy_icons();
+            return nfui::Window::handle_message(message, wparam, lparam);
         case WM_DPICHANGED: {
             auto* suggested = reinterpret_cast<RECT*>(lparam);
             dpi_ = nfui::DpiScale(HIWORD(wparam));
@@ -547,13 +586,14 @@ private:
 
     [[nodiscard]] RECT navigation_rect(std::size_t index) const noexcept {
         const RECT content = content_rect();
-        const int outer = dpi_.logical_to_pixels(20);
-        const int rail_width = dpi_.logical_to_pixels(240);
-        const int nav_height = dpi_.logical_to_pixels(48);
-        const int nav_gap = dpi_.logical_to_pixels(8);
-        const int brand_height = dpi_.logical_to_pixels(132);
-        const int brand_gap = dpi_.logical_to_pixels(16);
-        const int nav_inset = dpi_.logical_to_pixels(8);
+        const auto px = [&](int logical) noexcept { return dpi_.logical_to_pixels(logical); };
+        const int outer = px(tok::spacing_lg);
+        const int rail_width = px(tok::spacing_xl * 7 + tok::spacing_md);
+        const int nav_height = px(tok::control_height_lg + tok::spacing_sm);
+        const int nav_gap = px(tok::spacing_xs);
+        const int brand_height = px(tok::font_hero * 4 + tok::spacing_sm + tok::spacing_xs);
+        const int brand_gap = px(tok::spacing_md);
+        const int nav_inset = px(tok::spacing_xs);
         const int nav_left = content.left + outer + nav_inset;
         const int nav_width = rail_width - nav_inset * 2;
         const int nav_top = content.top + outer + brand_height + brand_gap
@@ -572,6 +612,53 @@ private:
         return false;
     }
 
+    [[nodiscard]] RECT theme_toggle_rect() const noexcept {
+        const RECT content = content_rect();
+        const auto px = [&](int logical) noexcept { return dpi_.logical_to_pixels(logical); };
+        const int outer = px(tok::spacing_lg);
+        const int sidebar_w = px(tok::spacing_xl * 7 + tok::spacing_md);
+        const int brand_h = px(tok::font_hero * 4 + tok::spacing_sm + tok::spacing_xs);
+        const int toggle_w = px(tok::spacing_xl * 2 + tok::spacing_md);
+        const int toggle_h = px(tok::control_height_sm);
+        RECT brand_area = make_rect(content.left + outer,
+                                    content.top + outer,
+                                    sidebar_w, brand_h);
+        return make_rect(brand_area.right - outer - toggle_w,
+                         brand_area.top + px(tok::font_hero * 3 + tok::spacing_sm),
+                         toggle_w, toggle_h);
+    }
+
+    [[nodiscard]] bool hit_theme_toggle(POINT point) const noexcept {
+        RECT toggle = theme_toggle_rect();
+        return PtInRect(&toggle, point) != FALSE;
+    }
+
+    void cycle_theme() noexcept {
+        // CP-B10: cycle light -> dark -> high_contrast -> light.
+        if (mode_ == nfui::ThemeMode::light) {
+            mode_ = nfui::ThemeMode::dark;
+        } else if (mode_ == nfui::ThemeMode::dark) {
+            mode_ = nfui::ThemeMode::high_contrast;
+        } else {
+            mode_ = nfui::ThemeMode::light;
+        }
+        nfui::ThemeBroker::instance().set_theme(mode_);
+    }
+
+    void apply_theme(nfui::ThemeMode mode) noexcept {
+        if (mode_ == mode) return;
+        mode_ = mode;
+        palette_ = nfui::theme_palette(mode);
+        // Re-inject the new palette into the status bar so its chrome and our
+        // dot subclass repaint with the new semantic colours.
+        if (status_.hwnd() != nullptr) {
+            status_.inject_theme(&palette_, &fonts_);
+            apply_native_fonts();
+            update_status();
+        }
+        InvalidateRect(hwnd(), nullptr, FALSE);
+    }
+
     void update_status() noexcept {
         if (status_.hwnd() != nullptr) {
             // Static "Ready" indicator regardless of selected nav — the
@@ -588,12 +675,14 @@ private:
 
     void paint_shell(HDC hdc) noexcept {
         const nfui::ThemePalette& p = palette_;
+        const bool hc = nfui::is_high_contrast(p);
         const RECT content = content_rect();
-        const int outer = dpi_.logical_to_pixels(20);
-        const int gap = dpi_.logical_to_pixels(16);
-        const int sidebar_w = dpi_.logical_to_pixels(240);
-        const int card_radius = dpi_.logical_to_pixels(nfui::theme_metrics().corner_radius_card);
-        const int pill_radius = dpi_.logical_to_pixels(nfui::theme_metrics().corner_radius_control);
+        const auto px = [&](int logical) noexcept { return dpi_.logical_to_pixels(logical); };
+        const int outer = px(tok::spacing_lg);
+        const int gap = px(tok::spacing_md);
+        const int sidebar_w = px(tok::spacing_xl * 7 + tok::spacing_md);
+        const int card_radius = px(nfui::theme_metrics().corner_radius_card);
+        const int pill_radius = px(nfui::theme_metrics().corner_radius_control);
         const int dpi_value = dpi_.dpi();
 
         // Flicker-free offscreen buffer scoped to the content area (above the
@@ -610,32 +699,26 @@ private:
                                  sidebar_w,
                                  rect_height(content) - outer * 2);
 
-        // Brand area is 132 logical px tall so the toggle pill can sit on its
-        // own row beneath the subtitle, leaving the title and subtitle at
-        // full sidebar width (240 logical px is too narrow to host both the
-        // italic serif title at xl=28 and the toggle side-by-side).
-        const int brand_h = dpi_.logical_to_pixels(132);
+        // Brand area height hosts the italic title, subtitle, and a functional
+        // theme-toggle pill on its own row beneath them.
+        const int brand_h = px(tok::font_hero * 4 + tok::spacing_sm + tok::spacing_xs);
         RECT brand_area = make_rect(sidebar.left, sidebar.top,
                                     sidebar.right - sidebar.left, brand_h);
 
-        // Theme toggle pill — right-aligned, on its own row beneath the
-        // subtitle. Visual only (the sample is dark-only by design — see
-        // README); it doesn't drive any theme switch.
-        const int toggle_w = dpi_.logical_to_pixels(76);
-        const int toggle_h = dpi_.logical_to_pixels(24);
-        RECT theme_toggle = make_rect(brand_area.right - dpi_.logical_to_pixels(20) - toggle_w,
-                                      brand_area.top + dpi_.logical_to_pixels(96),
-                                      toggle_w, toggle_h);
+        // Theme toggle pill — right-aligned beneath the subtitle. CP-B10: now
+        // functional and cycles light -> dark -> high_contrast -> light.
+        RECT theme_toggle = theme_toggle_rect();
 
         // Brand title (italic serif) and subtitle at full sidebar width.
-        RECT brand_title = make_rect(brand_area.left + dpi_.logical_to_pixels(20),
-                                     brand_area.top + dpi_.logical_to_pixels(16),
-                                     sidebar.right - sidebar.left - dpi_.logical_to_pixels(40),
-                                     dpi_.logical_to_pixels(40));
-        RECT brand_subtitle = make_rect(brand_area.left + dpi_.logical_to_pixels(20),
-                                        brand_title.bottom + dpi_.logical_to_pixels(4),
-                                        sidebar.right - sidebar.left - dpi_.logical_to_pixels(40),
-                                        dpi_.logical_to_pixels(24));
+        const int brand_pad_x = px(tok::spacing_lg);
+        RECT brand_title = make_rect(brand_area.left + brand_pad_x,
+                                     brand_area.top + px(tok::spacing_md),
+                                     sidebar.right - sidebar.left - brand_pad_x * 2,
+                                     px(tok::font_title + tok::spacing_sm));
+        RECT brand_subtitle = make_rect(brand_area.left + brand_pad_x,
+                                        brand_title.bottom + px(tok::spacing_xs),
+                                        sidebar.right - sidebar.left - brand_pad_x * 2,
+                                        px(tok::control_height_sm));
 
         // Main area geometry.
         const int main_x = sidebar.right + gap;
@@ -643,9 +726,9 @@ private:
         RECT main = make_rect(main_x, content.top + outer,
                               main_w, rect_height(content) - outer * 2);
 
-        const int desc_h  = dpi_.logical_to_pixels(120);
-        const int prev_h  = dpi_.logical_to_pixels(300);
-        const int stat_h  = dpi_.logical_to_pixels(160);
+        const int desc_h  = px(tok::control_height_lg * 3 + tok::spacing_lg);
+        const int prev_h  = px(tok::control_height_lg * 7 + tok::spacing_lg);
+        const int stat_h  = px(tok::control_height_lg * 4);
 
         RECT desc_card = make_rect(main.left, main.top, main_w, desc_h);
         RECT preview_card = make_rect(main.left, desc_card.bottom + gap, main_w, prev_h);
@@ -660,21 +743,26 @@ private:
         nfui::fill_rect(target, sidebar, rail_fill);
 
         // ----- Theme toggle pill --------------------------------------------
+        const int toggle_h = rect_height(theme_toggle);
         const int toggle_r = toggle_h / 2;
         nfui::fill_rounded_rect(target, theme_toggle, toggle_r,
                                 p.surface_hover, p.border);
         // Small accent dot inside the pill, indicating the active state.
-        const int dot_d = std::max<int>(4, dpi_.logical_to_pixels(6));
-        RECT pill_dot = make_rect(theme_toggle.left + dpi_.logical_to_pixels(10),
+        const int dot_d = std::max<int>(4, px(tok::spacing_xs + tok::spacing_xs));
+        RECT pill_dot = make_rect(theme_toggle.left + px(tok::spacing_md - tok::spacing_xs),
                                   theme_toggle.top + (toggle_h - dot_d) / 2,
                                   dot_d, dot_d);
         nfui::fill_ellipse(target, pill_dot, p.accent);
-        // "Dark" label to the right of the dot.
-        RECT pill_label = make_rect(pill_dot.right + dpi_.logical_to_pixels(6),
+        // Dynamic label shows the currently-active mode; cycles on click.
+        const wchar_t* mode_label =
+            (mode_ == nfui::ThemeMode::light)        ? L"Light"
+            : (mode_ == nfui::ThemeMode::dark)       ? L"Dark"
+                                                    : L"High contrast";
+        RECT pill_label = make_rect(pill_dot.right + px(tok::spacing_xs),
                                     theme_toggle.top,
-                                    theme_toggle.right - pill_dot.right - dpi_.logical_to_pixels(8),
+                                    theme_toggle.right - pill_dot.right - px(tok::spacing_sm),
                                     toggle_h);
-        nfui::draw_text(target, pill_label, L"Dark",
+        nfui::draw_text(target, pill_label, mode_label,
                         fonts()->semibold(dpi_value, nfui::font_pt::sm), p.text,
                         DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX);
 
@@ -700,16 +788,16 @@ private:
             if (selected) {
                 nfui::fill_rounded_rect(target, item, pill_radius, p.surface_hover, p.surface_hover);
                 // 2 px coral left bar per the spec.
-                RECT bar = make_rect(item.left, item.top + dpi_.logical_to_pixels(4),
-                                     dpi_.logical_to_pixels(2),
-                                     rect_height(item) - dpi_.logical_to_pixels(8));
+                RECT bar = make_rect(item.left, item.top + px(tok::spacing_xs),
+                                     px(tok::spacing_xs / 2),
+                                     rect_height(item) - px(tok::spacing_xs) * 2);
                 nfui::fill_rect(target, bar, p.accent);
             }
 
             // Custom monochrome vector icon at the left of the row.
-            const int icon_side = dpi_.logical_to_pixels(18);
+            const int icon_side = px(tok::spacing_xl - tok::spacing_xs);
             RECT icon_bounds = make_rect(
-                item.left + dpi_.logical_to_pixels(16),
+                item.left + px(tok::spacing_md),
                 item.top + (rect_height(item) - icon_side) / 2,
                 icon_side, icon_side);
             const NavIcon nav_kind = (index == 0) ? NavIcon::Surface
@@ -718,12 +806,12 @@ private:
                                     :                NavIcon::Publish;
             draw_nav_icon(target, icon_bounds, nav_kind,
                           selected ? p.accent : p.text_secondary,
-                          dpi_.logical_to_pixels(1));
+                          px(tok::spacing_xs / 2));
 
             // Label.
-            RECT label = make_rect(icon_bounds.right + dpi_.logical_to_pixels(12),
+            RECT label = make_rect(icon_bounds.right + px(tok::spacing_md),
                                    item.top,
-                                   item.right - icon_bounds.right - dpi_.logical_to_pixels(12),
+                                   item.right - icon_bounds.right - px(tok::spacing_md),
                                    rect_height(item));
             nfui::draw_text(target, label, navigation_items[index],
                             selected ? fonts()->semibold(dpi_value, nfui::font_pt::base)
@@ -733,60 +821,67 @@ private:
         }
 
         // ----- Preview-first shell (description) card -----------------------
-        // Soft drop shadow then rounded fill so the card lifts off the bg.
-        nfui::paint_drop_shadow(target, desc_card, card_radius, 1, p.shadow);
+        // CP-B10: suppress decorative shadows in high contrast; cards read via
+        // 1px borders there.
+        if (!hc) {
+            nfui::paint_drop_shadow(target, desc_card, card_radius, 1, p.shadow);
+        }
         nfui::fill_rounded_rect(target, desc_card, card_radius, p.surface, p.border);
 
         // Title sits at the top of the card with a fixed height; the body rect is
         // a separate rect below it so DT_WORDBREAK can size to the remaining
         // vertical space without inheriting the title's reserved line.
-        RECT desc_title = make_rect(desc_card.left + dpi_.logical_to_pixels(20),
-                                    desc_card.top + dpi_.logical_to_pixels(20),
-                                    desc_card.right - desc_card.left - dpi_.logical_to_pixels(40),
-                                    dpi_.logical_to_pixels(28));
+        const int card_pad = px(tok::spacing_lg);
+        const int card_title_h = px(tok::font_title + tok::spacing_sm);
+        RECT desc_title = make_rect(desc_card.left + card_pad,
+                                    desc_card.top + card_pad,
+                                    desc_card.right - desc_card.left - card_pad * 2,
+                                    card_title_h);
         nfui::draw_text(target, desc_title, L"Preview-first shell",
                         fonts()->semibold(dpi_value, nfui::font_pt::md), p.text,
                         DT_LEFT | DT_TOP | DT_SINGLELINE | DT_NOPREFIX);
         RECT desc_body = make_rect(desc_title.left,
-                                   desc_title.bottom + dpi_.logical_to_pixels(8),
+                                   desc_title.bottom + px(tok::spacing_sm),
                                    rect_width(desc_title),
-                                   desc_card.bottom - desc_title.bottom - dpi_.logical_to_pixels(28));
+                                   desc_card.bottom - desc_title.bottom - card_pad);
         nfui::draw_text(target, desc_body,
                         L"Every change to the theme shows up here instantly, without recompiling or restarting.",
                         fonts()->regular(dpi_value, nfui::font_pt::sm), p.text_secondary,
                         DT_LEFT | DT_WORDBREAK | DT_NOPREFIX);
 
         // ----- Preview canvas card ------------------------------------------
-        nfui::paint_drop_shadow(target, preview_card, card_radius, 1, p.shadow);
+        if (!hc) {
+            nfui::paint_drop_shadow(target, preview_card, card_radius, 1, p.shadow);
+        }
         nfui::fill_rounded_rect(target, preview_card, card_radius, p.surface, p.border);
 
         // Title sits at the top of the card with a fixed height so the code
         // block anchors to the title baseline instead of the card bottom.
-        RECT preview_title = make_rect(preview_card.left + dpi_.logical_to_pixels(20),
-                                       preview_card.top + dpi_.logical_to_pixels(20),
-                                       preview_card.right - preview_card.left - dpi_.logical_to_pixels(40),
-                                       dpi_.logical_to_pixels(28));
+        RECT preview_title = make_rect(preview_card.left + card_pad,
+                                       preview_card.top + card_pad,
+                                       preview_card.right - preview_card.left - card_pad * 2,
+                                       card_title_h);
         nfui::draw_text(target, preview_title, L"Preview canvas",
                         fonts()->semibold(dpi_value, nfui::font_pt::md), p.text,
                         DT_LEFT | DT_TOP | DT_SINGLELINE | DT_NOPREFIX);
 
         // Code block: a slightly darker rounded rect inside the card. The
         // block's height is sized to comfortably hold 8 lines at the mono
-        // line height plus 14 logical px vertical padding.
-        const int line_height = dpi_.logical_to_pixels(20);
-        const int code_pad_x  = dpi_.logical_to_pixels(16);
-        const int code_pad_y  = dpi_.logical_to_pixels(14);
+        // line height plus vertical padding.
+        const int line_height = px(tok::font_title);
+        const int code_pad_x  = px(tok::spacing_md);
+        const int code_pad_y  = px(tok::font_subtitle);
         const int code_block_h = static_cast<int>(code_snippet.size()) * line_height + code_pad_y * 2;
-        RECT code_block = make_rect(preview_card.left + dpi_.logical_to_pixels(20),
-                                    preview_title.bottom + dpi_.logical_to_pixels(12),
-                                    preview_card.right - preview_card.left - dpi_.logical_to_pixels(40),
+        RECT code_block = make_rect(preview_card.left + card_pad,
+                                    preview_title.bottom + px(tok::spacing_md),
+                                    preview_card.right - preview_card.left - card_pad * 2,
                                     code_block_h);
-        nfui::fill_rounded_rect(target, code_block, dpi_.logical_to_pixels(6),
+        nfui::fill_rounded_rect(target, code_block, px(tok::radius_sm),
                                 nfui::darken(p.surface, 0.18f), p.border);
 
         // Render each line: right-aligned line number in the left margin,
         // then the tokenised code content.
-        const int line_num_w = dpi_.logical_to_pixels(30);
+        const int line_num_w = px(tok::spacing_xl - tok::spacing_xs);
         HFONT mono_font  = fonts()->mono(dpi_value, nfui::font_pt::sm);
         HFONT mono_xs    = fonts()->mono(dpi_value, nfui::font_pt::xs);
         for (std::size_t i = 0; i < code_snippet.size(); ++i) {
@@ -797,29 +892,31 @@ private:
             swprintf_s(line_str, L"%zu", i + 1);
             nfui::draw_text(target, ln_rect, line_str, mono_xs, p.text_secondary,
                             DT_RIGHT | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX);
-            const int code_x = code_block.left + code_pad_x + line_num_w + dpi_.logical_to_pixels(8);
+            const int code_x = code_block.left + code_pad_x + line_num_w + px(tok::spacing_sm);
             render_code_line(target, code_x, y, code_snippet[i], mono_font, p);
         }
 
         // ----- Stat cards ---------------------------------------------------
         auto draw_stat_card = [&](const RECT& card, const wchar_t* label_text,
                                   const wchar_t* value_text, const wchar_t* helper_text) {
-            nfui::paint_drop_shadow(target, card, card_radius, 1, p.shadow);
+            if (!hc) {
+                nfui::paint_drop_shadow(target, card, card_radius, 1, p.shadow);
+            }
             nfui::fill_rounded_rect(target, card, card_radius, p.surface, p.border);
 
-            RECT inner = inset_rect(card, dpi_.logical_to_pixels(20));
+            RECT inner = inset_rect(card, px(tok::spacing_lg));
             // Label (sm=13 muted).
             nfui::draw_text(target, inner, label_text,
                             fonts()->regular(dpi_value, nfui::font_pt::sm),
                             p.text_secondary,
                             DT_LEFT | DT_TOP | DT_SINGLELINE | DT_NOPREFIX);
             // Value (lg=20 bold accent coral).
-            inner.top += dpi_.logical_to_pixels(28);
+            inner.top += px(tok::font_title + tok::spacing_sm);
             nfui::draw_text(target, inner, value_text,
                             fonts()->bold(dpi_value, nfui::font_pt::lg), p.accent,
                             DT_LEFT | DT_TOP | DT_SINGLELINE | DT_NOPREFIX);
             // Helper description (sm=13 muted, wrapped).
-            inner.top += dpi_.logical_to_pixels(36);
+            inner.top += px(tok::font_title + tok::spacing_lg);
             nfui::draw_text(target, inner, helper_text,
                             fonts()->regular(dpi_value, nfui::font_pt::sm),
                             p.text_secondary,
@@ -835,6 +932,7 @@ private:
 
     HINSTANCE instance_{};
     nfui::ResourceContext resources_;
+    nfui::ThemeMode mode_{nfui::ThemeMode::dark};
     nfui::ThemePalette palette_;
     nfui::FontCache fonts_;
     nfui::StatusBar status_;
@@ -850,14 +948,30 @@ private:
 
 } // namespace
 
-int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int show_command) {
+int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR cmd_line, int show_command) {
     nfui::Application app({instance, show_command});
     if (!nfui::Application::initialize_process_dpi() ||
         !nfui::Application::initialize_common_controls()) {
         return 1;
     }
 
+    // CP-B10: parse --theme so the audit can capture light / dark / HC. Default
+    // remains dark to match the sample's identity.
+    auto parse_theme = [](PCWSTR cl) noexcept {
+        if (cl == nullptr) return nfui::ThemeMode::dark;
+        const wchar_t* tag = wcsstr(cl, L"--theme");
+        if (tag == nullptr) return nfui::ThemeMode::dark;
+        tag += 7;
+        while (*tag == L' ' || *tag == L'\t') ++tag;
+        if (*tag == L'"') ++tag;
+        if (wcsncmp(tag, L"light", 5) == 0) return nfui::ThemeMode::light;
+        if (wcsncmp(tag, L"dark", 4) == 0) return nfui::ThemeMode::dark;
+        if (wcsncmp(tag, L"high_contrast", 13) == 0) return nfui::ThemeMode::high_contrast;
+        return nfui::ThemeMode::dark;
+    };
+
     DarkStudioWindow window(instance);
+    (void)window.set_initial_theme(parse_theme(cmd_line));
     if (!window.create_main(show_command)) {
         return 2;
     }
