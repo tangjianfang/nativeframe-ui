@@ -254,16 +254,17 @@ if(BUILD_TESTING)
             ENVIRONMENT "NONFUI_SKIP_DIALOG=1"
         )
     endif()
-    add_test(NAME NativeFrameUIBoundaryCheck
-        COMMAND powershell -NoProfile -ExecutionPolicy Bypass -File
-                ${CMAKE_CURRENT_SOURCE_DIR}/tools/verify_boundaries.ps1
-                -Root ${CMAKE_CURRENT_SOURCE_DIR}
-    )
     add_test(NAME NativeFrameUIArchitectureCheck
         COMMAND powershell -NoProfile -ExecutionPolicy Bypass -File
                 ${CMAKE_CURRENT_SOURCE_DIR}/tools/verify_architecture.ps1
                 -Root ${CMAKE_CURRENT_SOURCE_DIR}
     )
+
+    # Quality checks (boundary + per-pixel diff) are registered through
+    # this single helper so the test list stays in lockstep with the
+    # scripts that own them. CP-B20 added the per-pixel diff scorer and
+    # its self-test to the helper.
+    nfui_add_quality_checks()
 
     # Pure-logic unit tests (no HWND, no message loop).
     add_executable(NativeFrameUILayoutTest tests/test_layout.cpp)

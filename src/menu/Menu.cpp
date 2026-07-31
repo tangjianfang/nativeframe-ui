@@ -357,7 +357,7 @@ bool MenuOwnerDraw::handle_draw_item(const DRAWITEMSTRUCT* dis) noexcept {
             stripe.right = stripe.left + stripe_w;
             const HBRUSH stripe_brush = CreateSolidBrush(p.accent.rgb);
             if (stripe_brush != nullptr) {
-                const HBRUSH old_b = SelectObject(dis->hDC, stripe_brush);
+                const HBRUSH old_b = static_cast<HBRUSH>(SelectObject(dis->hDC, stripe_brush));
                 const HPEN null_pen2 = CreatePen(PS_NULL, 0, 0);
                 const HGDIOBJ old_p = SelectObject(dis->hDC, null_pen2);
                 RoundRect(dis->hDC, stripe.left, stripe.top, stripe.right, stripe.bottom,
@@ -392,7 +392,7 @@ bool MenuOwnerDraw::handle_draw_item(const DRAWITEMSTRUCT* dis) noexcept {
         };
         const HBRUSH dot_brush = CreateSolidBrush(p.accent.rgb);
         if (dot_brush != nullptr) {
-            const HBRUSH old_b = SelectObject(dis->hDC, dot_brush);
+            const HBRUSH old_b = static_cast<HBRUSH>(SelectObject(dis->hDC, dot_brush));
             const HPEN null_pen3 = CreatePen(PS_NULL, 0, 0);
             const HGDIOBJ old_p = SelectObject(dis->hDC, null_pen3);
             Ellipse(dis->hDC, dot.left, dot.top, dot.right, dot.bottom);
