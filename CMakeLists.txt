@@ -124,14 +124,16 @@ nfui_add_resources(NativeFrameUISettingsDemo)
 add_executable(NativeFrameUIResourceGallery WIN32
     samples/NativeFrameUIResourceGallery/NativeFrameUIResourceGallery.cpp
 )
-# CP11: ResourceGallery uses two Buttons and one StatusBar.
-# nfui_window is needed because the sample owns a custom : public nfui::Window.
+# CP-B6: ResourceGallery now uses nfui::Menu for the themed File/View/Help
+# bar (MENUINFO background brush) plus one StatusBar. nfui_window is needed
+# because the sample owns a custom : public nfui::Window.
 target_link_libraries(NativeFrameUIResourceGallery PRIVATE
     NativeFrameUI::nfui_core
     NativeFrameUI::nfui_theme
     NativeFrameUI::nfui_window
     NativeFrameUI::nfui_button
     NativeFrameUI::nfui_frame
+    NativeFrameUI::nfui_menu
 )
 nfui_apply_compiler_options(NativeFrameUIResourceGallery)
 nfui_add_resources(NativeFrameUIResourceGallery)

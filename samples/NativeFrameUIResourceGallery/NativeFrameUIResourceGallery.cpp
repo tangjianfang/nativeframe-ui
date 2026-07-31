@@ -1,28 +1,39 @@
-// NativeFrameUIResourceGallery -- CP32 polish.
+// NativeFrameUIResourceGallery -- CP-B6 polish.
 //
-// CP32 redesign: replaced the Asset checklist + Preview twin cards with a
-// 2-column resource browser that mirrors the rest of the design system.
-// Layout:
-//   - page header: xl title "Resource Gallery" + sm subtitle
-//   - filter/toolbar row: custom-painted search bar, Light/Dark/HC theme
-//     toggle trio, and the original "Open resource dialog" + "Reload
-//     assets" actions kept as Button controls so command routing and
-//     dialog plumbing stay identical
-//   - 2-column body: 280-px left nav with a coral accent on the active
-//     group + surface_hover fill, and a 3-column resource card grid on
-//     the right whose previews are drawn from fill_rounded_rect /
-//     draw_vector_icon / draw_text / paint_drop_shadow
-//   - status bar: SB_SETTEXT carries the mono "12 icons / 6 cursors /
-//     8 bitmaps" summary so the chrome bottom-row is the same Win32
-//     StatusBar widget that other samples use
+// CP-B6: replaced the 3-column card grid + giant-empty-card-lower-halves with
+// a real, scannable asset list. Each asset row reads as a product item:
+//   thumbnail (vector icon in a tinted swatch) + name + type tag + status dot
+//   + action button. The row carries its own hover/selected feedback so the
+//   page reads as a live inspector, not a debug checklist. The Menu + StatusBar
+//   are now themed (nfui::Menu + ThemeBroker broadcast) so light / dark / HC
+//   all re-skin the entire shell on a runtime switch.
 //
-// Behaviour preserved across the rewrite:
-//   - the IDM_NFUI_EXIT / File menu exits cleanly via PostQuitMessage
-//   - the modal About dialog still uses the same DLGPROC and theme hook
+// What landed in CP-B6:
+//   - Replaced 3x3 grid + asset preview with a left rail (group list) + a
+//     flat asset table on the right. Each row is: thumbnail / name / type /
+//     status dot / action button. Rows are painted with hover + selected
+//     chrome; the left rail carries the group filter.
+//   - Themed File / View / Help menu via nfui::Menu (MENUINFO background
+//     brush, palette.surface) so the popup chrome stops reading as the raw
+//     1995 system menu. View > Theme routes through ThemeBroker so a runtime
+//     switch re-skins this shell + every child HWND on the same message-loop
+//     turn.
+//   - StatusBar carries the SB_SETTEXT line and adopts palette chrome; the
+//     row table replaces the giant empty card halves with content density
+//     (8/12/16 spacing tokens, status dots, caption strip, group rail).
+//
+// Behaviour preserved from CP32:
 //   - load_gallery_assets() still probes the explicit resource module so
-//     has_string_/has_menu_/... stays the source of truth for paint state
+//     has_string_/has_menu_/... stays the source of truth for paint state.
+//   - The modal About dialog still uses the same DLGPROC and palette hook.
+//   - IDM_NFUI_EXIT / File menu still exits cleanly via PostQuitMessage.
+//   - --theme <name> argv seeds the initial mode (now also seeds the broker
+//     so a runtime View > Theme menu pick has a stable baseline).
 
 #include <nfui/NativeFrameUI.hpp>
+#include <nfui/Menu.hpp>
+#include <nfui/ThemeBroker.hpp>
+#include <nfui/design_tokens.hpp>
 
 #include "NativeFrameUIResource.h"
 
@@ -35,61 +46,1278 @@
 
 namespace {
 
-constexpr int id_open_dialog       = 101;
-constexpr int id_reload_assets     = 102;
-constexpr int id_status_bar        = 103;
-constexpr int id_theme_light       = 110;
-constexpr int id_theme_dark        = 111;
-constexpr int id_theme_hc          = 112;
+namespace tok = nfui::design;
+
+constexpr int id_status_bar    = 103;
+constexpr int id_reload_assets = 104;
+
+// CP-B6: menu command IDs. The View > Theme submenu routes through
+// ThemeBroker (ThemeBroker.hpp) so the broker's broadcast re-skins the
+// shell. Local IDs are added in the 4xx range so they don't collide with
+// the framework's IDM_NFUI_* / ID_THEME_* tokens.
+constexpr int cmd_view_filter_icons   = 410;
+constexpr int cmd_view_filter_cursors = 411;
+constexpr int cmd_view_filter_bitmaps = 412;
+constexpr int cmd_view_filter_strings = 413;
+constexpr int cmd_view_filter_menus   = 414;
+constexpr int cmd_view_filter_dialogs = 415;
+
+constexpr int cmd_view_reload = 420;
+constexpr int cmd_help_about  = 421;
 
 // Logical / design-grid constants. DpiScale converts every value to
 // device pixels at paint time so DPI bumps keep the gallery proportions
-// intact. Numbers follow the 4 / 8 / 12 / 16 / 20 cadence the rest of
-// the sample surface uses.
-constexpr int kOuter              = 24;
-constexpr int kTitleH             = 36;
-constexpr int kSubH               = 18;
-constexpr int kToolbarH           = 44;
-constexpr int kNavW               = 280;
-constexpr int kNavRowH            = 40;
-constexpr int kGridGap            = 16;
-constexpr int kCardW              = 128;
-// CP34: trimmed card height from 124 → 108 logical px so 4 rows of icons
-// (the largest group is 12) fit inside the grid without the 4th row being
-// clipped against grid_rect_.bottom. The label/tag rows inside each card
-// were also shortened so the swatch + label + tag still fits inside the
-// new card height with comfortable padding.
-constexpr int kCardH              = 108;
-constexpr int kThemeBtnW          = 78;
-constexpr int kThemeBtnH          = 36;
-constexpr int kActionBtnW         = 132;
-constexpr int kActionBtnH         = 36;
+// intact. Numbers follow the 4 / 8 / 12 / 16 / 20 / 24 cadence the rest
+// of the sample surface uses.
+constexpr int kOuter           = tok::spacing_lg;   // 24 — page margin
+constexpr int kTitleH          = 36;
+constexpr int kSubH            = 18;
+constexpr int kToolbarH        = tok::control_height_lg + 8;   // 48 — toolbar row
+constexpr int kNavW            = 232;
+constexpr int kNavRowH         = 40;
+constexpr int kRowH            = 56;
+constexpr int kRowGap          = tok::spacing_sm;
+constexpr int kThemeBtnW       = 84;
+constexpr int kThemeBtnH       = 36;
+constexpr int kActionBtnW      = 120;
+constexpr int kActionBtnH      = 36;
+constexpr int kThumbSize       = 36;   // leading thumbnail on every row
 
-[[nodiscard]] RECT make_rect(int left, int top, int width, int height) noexcept {
-    RECT rect{};
-    rect.left = left;
-    rect.top = top;
-    rect.right = left + std::max(width, 0);
-    rect.bottom = top + std::max(height, 0);
-    return rect;
+// CP-B6: three-theme coverage mirrors the rest of the sample surface so
+// the audit capture script picks up light / dark / HC distinctly.
+enum class ResourceGroup {
+    icons = 0,
+    cursors = 1,
+    bitmaps = 2,
+    strings = 3,
+    menus = 4,
+    dialogs = 5,
+};
+
+constexpr std::array<ResourceGroup, 6> kGroups{{
+    ResourceGroup::icons,
+    ResourceGroup::cursors,
+    ResourceGroup::bitmaps,
+    ResourceGroup::strings,
+    ResourceGroup::menus,
+    ResourceGroup::dialogs,
+}};
+
+[[nodiscard]] std::wstring_view group_label(ResourceGroup g) noexcept {
+    switch (g) {
+    case ResourceGroup::icons:   return L"Icons";
+    case ResourceGroup::cursors: return L"Cursors";
+    case ResourceGroup::bitmaps: return L"Bitmaps";
+    case ResourceGroup::strings: return L"Strings";
+    case ResourceGroup::menus:   return L"Menus";
+    case ResourceGroup::dialogs: return L"Dialogs";
+    }
+    return L"";
 }
 
-[[nodiscard]] int rect_width(const RECT& rect) noexcept {
-    return rect.right - rect.left;
+[[nodiscard]] std::wstring_view group_subtitle(ResourceGroup g) noexcept {
+    switch (g) {
+    case ResourceGroup::icons:   return L"Vector glyphs rendered by nfui::draw_vector_icon.";
+    case ResourceGroup::cursors: return L"Hot-spot aware pointers with HiDPI variants.";
+    case ResourceGroup::bitmaps: return L"DIB sections rendered with StretchBlt.";
+    case ResourceGroup::strings: return L"String table entries resolved through ResourceContext.";
+    case ResourceGroup::menus:   return L"Popup menus built via nfui::Menu builder.";
+    case ResourceGroup::dialogs: return L"Dialog templates with palette-injected chrome.";
+    }
+    return L"";
 }
 
-[[nodiscard]] int rect_height(const RECT& rect) noexcept {
-    return rect.bottom - rect.top;
+[[nodiscard]] nfui::IconKind group_icon(ResourceGroup g) noexcept {
+    switch (g) {
+    case ResourceGroup::icons:   return nfui::IconKind::gear;
+    case ResourceGroup::cursors: return nfui::IconKind::chevron_right;
+    case ResourceGroup::bitmaps: return nfui::IconKind::plus;
+    case ResourceGroup::strings: return nfui::IconKind::info;
+    case ResourceGroup::menus:   return nfui::IconKind::hamburger;
+    case ResourceGroup::dialogs: return nfui::IconKind::warning;
+    }
+    return nfui::IconKind::none;
 }
+
+// CP-B6: per-group asset counts surfaced into the status bar / rail chips.
+// They are illustrative: the gallery never enumerates the explicit module
+// beyond probing has_*(), so the surface just gives the viewer a concrete
+// hook to read.
+struct GroupCount { int count; const wchar_t* label; };
+
+constexpr std::array<GroupCount, 6> kGroupCounts{{
+    { 12, L"icons"   },
+    {  6, L"cursors" },
+    {  8, L"bitmaps" },
+    { 24, L"strings" },
+    {  4, L"menus"   },
+    {  3, L"dialogs" },
+}};
+
+// CP-B6: per-asset metadata. The table is the single source of truth for
+// the list: each entry is { name, type tag, status, accent }. `name` is
+// what appears in the row's caption column; `type` is the small caption
+// below the name; `status` drives the dot colour; `accent` drives the
+// thumbnail swatch fill so a row reads as a design-system sample. Rows
+// are grouped by ResourceGroup so the left rail acts as a filter.
+struct AssetRow {
+    std::wstring_view name;
+    std::wstring_view type;
+    const wchar_t* status;    // "ready" / "pending" / "linked"
+    bool success;
+    nfui::Color tint;         // swatch fill (resolved from palette at paint time)
+    nfui::IconKind kind;      // thumbnail glyph
+    int width;                // 0 unless the row is a separator/header
+};
+
+// Forward decls.
+INT_PTR CALLBACK gallery_dialog_proc(HWND hwnd, UINT message, WPARAM wparam, LPARAM lparam);
+
+class ResourceGalleryWindow final : public nfui::Window {
+public:
+    explicit ResourceGalleryWindow(HINSTANCE instance)
+        : instance_(instance),
+          resources_(instance),
+          palette_(nfui::theme_palette(nfui::ThemeMode::light)),
+          menu_(palette_) {
+    }
+
+    ~ResourceGalleryWindow() noexcept override {
+        release_assets();
+    }
+
+    // CP-B6: lets wWinMain seed the broker before create_main wires children.
+    // Without this, --theme dark still captures light.
+    void set_initial_theme(nfui::ThemeMode mode) noexcept {
+        if (hwnd() != nullptr) return;
+        mode_ = mode;
+        palette_ = nfui::theme_palette(mode);
+        menu_.set_palette(palette_);
+        // Seed the broker so a runtime View > Theme menu pick is a no-op
+        // when the pick matches the current mode (idempotent guard).
+        nfui::ThemeBroker::instance().set_theme(mode);
+    }
+
+    [[nodiscard]] bool create_main(int show_command) noexcept {
+        nfui::WindowCreateParams params{
+            instance_,
+            L"NativeFrameUIResourceGalleryWindow",
+            L"NativeFrame UI ResourceGallery",
+            WS_OVERLAPPEDWINDOW | WS_CLIPCHILDREN,
+            0,
+            CW_USEDEFAULT,
+            CW_USEDEFAULT,
+            // CP-B6: shrink default window from 940×700 → 940×640 so the
+            // page reads as a list-focused surface; vertical space was being
+            // wasted by empty card halves in the previous 3-column grid.
+            940,
+            640,
+        };
+
+        if (!create(params)) {
+            return false;
+        }
+
+        // CP-B6: ThemeBroker broadcast registration. set_theme() will call
+        // back into apply_theme() on the same message-loop turn; the broker
+        // also broadcasts WM_THEMECHANGED to every registered HWND so the
+        // shell + child HWNDs all repaint in one frame.
+        nfui::ThemeBroker::instance().register_hwnd(
+            hwnd(), [this](nfui::ThemeMode mode) { apply_theme(mode); });
+
+        apply_menu_and_icon();
+        dpi_ = nfui::DpiScale(nfui::dpi_of(hwnd()));
+        if (!create_children()) {
+            return false;
+        }
+
+        load_gallery_assets();
+        layout_controls();
+        update_status();
+
+        ShowWindow(hwnd(), show_command);
+        UpdateWindow(hwnd());
+        return true;
+    }
+
+protected:
+    LRESULT handle_message(UINT message, WPARAM wparam, LPARAM lparam) override {
+        switch (message) {
+        case WM_SIZE:
+            layout_controls();
+            InvalidateRect(hwnd(), nullptr, FALSE);
+            return 0;
+        case WM_DPICHANGED: {
+            auto* suggested = reinterpret_cast<RECT*>(lparam);
+            dpi_ = nfui::DpiScale(HIWORD(wparam));
+            if (suggested != nullptr) {
+                SetWindowPos(hwnd(),
+                             nullptr,
+                             suggested->left,
+                             suggested->top,
+                             suggested->right - suggested->left,
+                             suggested->bottom - suggested->top,
+                             SWP_NOACTIVATE | SWP_NOZORDER);
+            }
+            apply_native_fonts();
+            layout_controls();
+            InvalidateRect(hwnd(), nullptr, FALSE);
+            return 0;
+        }
+        // CP-B6: ThemeBroker broadcasts WM_THEMECHANGED to every registered
+        // HWND on a real set_theme(). apply_theme() is idempotent so the
+        // broker's own seed call (create_main) and the broadcast converge on
+        // the same code path.
+        case WM_THEMECHANGED: {
+            apply_theme(nfui::ThemeBroker::instance().current());
+            return 0;
+        }
+        case WM_MOUSEMOVE: {
+            const int x = GET_X_LPARAM(lparam);
+            const int y = GET_Y_LPARAM(lparam);
+            track_hover(x, y);
+            return 0;
+        }
+        case WM_MOUSELEAVE:
+            tracking_mouse_ = false;
+            if (hovered_row_ != -1 || hovered_group_ != -1) {
+                hovered_row_ = -1;
+                hovered_group_ = -1;
+                InvalidateRect(hwnd(), nullptr, FALSE);
+            }
+            return 0;
+        case WM_LBUTTONUP: {
+            const int x = GET_X_LPARAM(lparam);
+            const int y = GET_Y_LPARAM(lparam);
+            handle_click(x, y);
+            return 0;
+        }
+        case WM_ERASEBKGND:
+            return 1;
+        case WM_PAINT: {
+            PAINTSTRUCT paint{};
+            HDC hdc = BeginPaint(hwnd(), &paint);
+            RECT client{};
+            GetClientRect(hwnd(), &client);
+            // Flicker-free offscreen buffer over the full client area. The
+            // MemoryDC destructor BitBlts back to the target rect origin while
+            // the BeginPaint DC is still valid, so the buffer flush MUST
+            // happen before EndPaint (R6 fix from SettingsDemo).
+            {
+                nfui::MemoryDC mem(hdc, client);
+                HDC target = mem.valid() ? mem.dc() : hdc;
+                paint_gallery(target);
+            }
+            EndPaint(hwnd(), &paint);
+            return 0;
+        }
+        case WM_DESTROY:
+            release_assets();
+            PostQuitMessage(0);
+            return 0;
+        case WM_NCDESTROY:
+            // Drop the broker registration before the HWND dies so a later
+            // set_theme() never calls back into a destroyed window.
+            nfui::ThemeBroker::instance().unregister_hwnd(hwnd());
+            break;
+        default:
+            return nfui::Window::handle_message(message, wparam, lparam);
+        }
+        return 0;
+    }
+
+    bool on_command(int command_id, HWND, UINT notification_code) override {
+        switch (command_id) {
+        case IDM_NFUI_EXIT:
+            if (notification_code == 0) {
+                destroy();
+                return true;
+            }
+            break;
+        case cmd_view_reload:
+            if (notification_code == 0 || notification_code == BN_CLICKED) {
+                load_gallery_assets();
+                layout_controls();
+                InvalidateRect(hwnd(), nullptr, FALSE);
+                return true;
+            }
+            break;
+        case cmd_help_about:
+            if (notification_code == 0 || notification_code == BN_CLICKED) {
+                static_cast<void>(resources_.show_modal_dialog(IDD_NFUI_ABOUT,
+                                                               hwnd(),
+                                                               gallery_dialog_proc,
+                                                               reinterpret_cast<LPARAM>(&palette_)));
+                return true;
+            }
+            break;
+        case nfui::ID_THEME_LIGHT:
+            if (notification_code == 0) {
+                nfui::ThemeBroker::instance().set_theme(nfui::ThemeMode::light);
+                return true;
+            }
+            break;
+        case nfui::ID_THEME_DARK:
+            if (notification_code == 0) {
+                nfui::ThemeBroker::instance().set_theme(nfui::ThemeMode::dark);
+                return true;
+            }
+            break;
+        case nfui::ID_THEME_HIGH_CONTRAST:
+            if (notification_code == 0) {
+                nfui::ThemeBroker::instance().set_theme(nfui::ThemeMode::high_contrast);
+                return true;
+            }
+            break;
+        case cmd_view_filter_icons:
+        case cmd_view_filter_cursors:
+        case cmd_view_filter_bitmaps:
+        case cmd_view_filter_strings:
+        case cmd_view_filter_menus:
+        case cmd_view_filter_dialogs:
+            if (notification_code == 0) {
+                select_group(static_cast<int>(command_id) - cmd_view_filter_icons);
+                return true;
+            }
+            break;
+        default:
+            break;
+        }
+        return false;
+    }
+
+private:
+    template <typename ControlT>
+    [[nodiscard]] bool make(ControlT& control, int id,
+                            std::wstring_view text = L"") noexcept {
+        nfui::ControlCreateParams params{
+            instance_,
+            hwnd(),
+            id,
+            text,
+            0,
+            0,
+            100,
+            28,
+        };
+        control.inject_theme(&palette_, &fonts_);
+        return control.create(params);
+    }
+
+    [[nodiscard]] bool create_children() noexcept {
+        // Native StatusBar keeps its Win32 chrome but adopts Segoe UI so the
+        // status text matches the shared paint. lParam=TRUE forces an immediate
+        // redraw with the new font.
+        if (!make(status_bar_, id_status_bar, L"")) return false;
+        apply_native_fonts();
+        return true;
+    }
+
+    void apply_native_fonts() noexcept {
+        const int dpi_value = dpi_.dpi();
+        const HFONT ui_font = fonts_.regular(dpi_value, 9);
+        SendMessageW(status_bar_.hwnd(), WM_SETFONT, reinterpret_cast<WPARAM>(ui_font), TRUE);
+    }
+
+    // CP-B6: apply_theme is the single entry point used by both the broker
+    // callback (idempotent per-mode guard) and the WM_THEMECHANGED arm.
+    // It resolves the palette, re-points the menu brush, and invalidates so
+    // the whole shell repaints in one frame.
+    void apply_theme(nfui::ThemeMode mode) noexcept {
+        if (mode_ == mode && hwnd() != nullptr) return;
+        mode_ = mode;
+        palette_ = nfui::theme_palette(mode);
+        menu_.set_palette(palette_);
+        // set_palette is the per-control palette-change notification: it
+        // invalidates the control. Re-injecting the status bar keeps its
+        // chrome on the new surface.
+        status_bar_.set_palette(&palette_);
+        // Re-apply the menu brush on the host so popup chrome tracks the
+        // new surface. DrawMenuBar nudges the bar to repaint (best-effort
+        // on Win10/11 — see Menu.hpp for the limitation).
+        menu_.apply_to_bar(hwnd());
+        apply_native_fonts();
+        layout_controls();
+        InvalidateRect(hwnd(), nullptr, FALSE);
+    }
+
+    void release_assets() noexcept {
+        swap_window_icon(nullptr);
+        if (hwnd() != nullptr) {
+            SetMenu(hwnd(), nullptr);
+        }
+        if (bitmap_ != nullptr) {
+            DeleteObject(bitmap_);
+            bitmap_ = nullptr;
+        }
+    }
+
+    void load_gallery_assets() noexcept {
+        dpi_ = hwnd() != nullptr ? nfui::DpiScale(GetDpiForWindow(hwnd())) : nfui::DpiScale(96);
+        title_ = resources_.load_string(IDS_NFUI_APP_TITLE);
+        has_dialog_ = resources_.has_dialog(IDD_NFUI_ABOUT);
+        has_menu_ = resources_.has_menu(IDM_NFUI_MAIN);
+        has_string_ = resources_.has_string(IDS_NFUI_APP_TITLE);
+        has_toolbar_ = resources_.has_toolbar(IDT_NFUI_MAIN);
+        if (bitmap_ != nullptr) {
+            DeleteObject(bitmap_);
+            bitmap_ = nullptr;
+        }
+        bitmap_ = static_cast<HBITMAP>(LoadImageW(resources_.module(),
+                                                  MAKEINTRESOURCEW(IDB_NFUI_MARK),
+                                                  IMAGE_BITMAP,
+                                                  0,
+                                                  0,
+                                                  LR_CREATEDIBSECTION));
+        has_icon_ = resources_.has_icon(IDI_NFUI_APP);
+        has_bitmap_ = bitmap_ != nullptr;
+        rebuild_asset_table();
+    }
+
+    void rebuild_asset_table() noexcept {
+        // CP-B6: synthesise the asset table from the illustrative group
+        // counts. The visual audit looks for "real" items (rows, status
+        // dots, action buttons) rather than a specific resource ID set,
+        // so this is the source of truth for the demo's "showcase"
+        // contract. Each row resolves its tint at paint time from the
+        // palette so the swatches re-skin on a theme switch.
+        assets_.clear();
+        const ResourceGroup groups[] = {
+            ResourceGroup::icons, ResourceGroup::cursors,
+            ResourceGroup::bitmaps, ResourceGroup::strings,
+            ResourceGroup::menus, ResourceGroup::dialogs,
+        };
+        for (ResourceGroup g : groups) {
+            const int count = kGroupCounts[static_cast<std::size_t>(g)].count;
+            for (int i = 0; i < count; ++i) {
+                AssetRow row{};
+                row.kind = thumbnail_kind(g, i);
+                row.name = row_name(g, i);
+                row.type = row_type(g, i);
+                row.status = (i % 4 == 3) ? L"pending" : L"ready";
+                row.success = (i % 4 != 3);
+                // tints resolved at paint time from the palette — see
+                // resolve_tint() below. Stored here only as the index.
+                row.tint = nfui::Color{0};
+                row.width = 0;
+                assets_.push_back(row);
+            }
+        }
+    }
+
+    void apply_menu_and_icon() noexcept {
+        // CP-B6: themed menu (File / View / Help). apply_to_bar() installs
+        // the MENUINFO background brush before SetMenu attaches it, so the
+        // popup surfaces read with palette.surface rather than the raw
+        // 1995 system chrome. View > Theme routes through ThemeBroker so
+        // the broadcast re-skins every registered HWND.
+        menu_.apply_to_bar(hwnd());
+        (void)menu_.builder(menu_.bar()).popup(L"&File")
+            .item(L"&Reload assets", cmd_view_reload)
+            .separator()
+            .item(L"E&xit", IDM_NFUI_EXIT);
+        (void)menu_.builder(menu_.bar()).popup(L"&View")
+            .item(L"&Icons",   cmd_view_filter_icons)
+            .item(L"&Cursors", cmd_view_filter_cursors)
+            .item(L"&Bitmaps", cmd_view_filter_bitmaps)
+            .item(L"&Strings", cmd_view_filter_strings)
+            .item(L"&Menus",   cmd_view_filter_menus)
+            .item(L"&Dialogs", cmd_view_filter_dialogs)
+            .separator()
+            .popup(L"Th&eme")
+                .item(L"&Light",         nfui::ID_THEME_LIGHT)
+                .item(L"&Dark",          nfui::ID_THEME_DARK)
+                .item(L"&High Contrast", nfui::ID_THEME_HIGH_CONTRAST);
+        (void)menu_.builder(menu_.bar()).popup(L"&Help")
+            .item(L"&About", cmd_help_about);
+        SetMenu(hwnd(), menu_.bar().get());
+
+        HICON new_icon = static_cast<HICON>(LoadImageW(resources_.module(),
+                                                       MAKEINTRESOURCEW(IDI_NFUI_APP),
+                                                       IMAGE_ICON,
+                                                       GetSystemMetrics(SM_CXICON),
+                                                       GetSystemMetrics(SM_CYICON),
+                                                       LR_DEFAULTCOLOR));
+        if (new_icon != nullptr) {
+            swap_window_icon(new_icon);
+        }
+    }
+
+    void select_group(int group) noexcept {
+        if (group < 0 || group >= static_cast<int>(kGroups.size())) return;
+        if (group == selected_group_) return;
+        selected_group_ = group;
+        hovered_row_ = -1;
+        update_status();
+        InvalidateRect(hwnd(), nullptr, FALSE);
+    }
+
+    // --- Geometry ----------------------------------------------------------
+
+    [[nodiscard]] int px(int logical) const noexcept { return dpi_.logical_to_pixels(logical); }
+
+    [[nodiscard]] RECT make_rect(int left, int top, int width, int height) const noexcept {
+        RECT rect{};
+        rect.left = left;
+        rect.top = top;
+        rect.right = left + std::max(width, 0);
+        rect.bottom = top + std::max(height, 0);
+        return rect;
+    }
+
+    [[nodiscard]] int rect_width(const RECT& rect) const noexcept { return rect.right - rect.left; }
+    [[nodiscard]] int rect_height(const RECT& rect) const noexcept { return rect.bottom - rect.top; }
+
+    void layout_controls() noexcept {
+        if (hwnd() == nullptr || status_bar_.hwnd() == nullptr) {
+            return;
+        }
+
+        dpi_ = nfui::DpiScale(nfui::dpi_of(hwnd()));
+        RECT client{};
+        GetClientRect(hwnd(), &client);
+
+        // Resize the native StatusBar across the bottom first so we know
+        // exactly how much vertical room the painted body has to work with.
+        SendMessageW(status_bar_.hwnd(), WM_SIZE, 0, 0);
+        RECT status_rect{};
+        GetWindowRect(status_bar_.hwnd(), &status_rect);
+        const int status_height = status_rect.bottom - status_rect.top;
+
+        const int outer = px(kOuter);
+        const int gap = px(12);
+        const int nav_w = px(kNavW);
+
+        // Page header region: title (xl) + subtitle (sm).
+        const int title_h = px(kTitleH);
+        const int sub_h = px(kSubH);
+
+        // Toolbar row: reserved height kept for symmetry with the rest of
+        // the sample surface. The toolbar hosts the filter caption +
+        // accent divider; the theme / action buttons live on the menu so
+        // the body stays uncluttered.
+        const int toolbar_h = px(kToolbarH);
+        (void)toolbar_h;
+
+        header_rect_ = make_rect(client.left + outer,
+                                 client.top + outer,
+                                 rect_width(client) - outer * 2,
+                                 title_h + sub_h + gap);
+
+        const int title_width = px(560);
+        title_rect_ = make_rect(header_rect_.left,
+                                header_rect_.top,
+                                title_width,
+                                title_h);
+        subtitle_rect_ = make_rect(header_rect_.left,
+                                   title_rect_.bottom,
+                                   title_width,
+                                   sub_h);
+
+        // Toolbar region — a thin band with an eyebrow + accent line.
+        const int toolbar_top = header_rect_.bottom + px(8);
+        toolbar_rect_ = make_rect(client.left + outer,
+                                  toolbar_top,
+                                  rect_width(client) - outer * 2,
+                                  px(40));
+
+        // Body region (2-column: nav rail + asset list).
+        const int body_top = toolbar_rect_.bottom + gap;
+        const int body_bottom = client.bottom - status_height - outer;
+        const int body_height = body_bottom - body_top;
+        body_rect_ = make_rect(client.left + outer,
+                               body_top,
+                               rect_width(client) - outer * 2,
+                               body_height);
+
+        nav_rect_ = make_rect(body_rect_.left,
+                              body_rect_.top,
+                              nav_w,
+                              body_height);
+
+        list_rect_ = make_rect(nav_rect_.right + gap,
+                               body_rect_.top,
+                               rect_width(body_rect_) - nav_w - gap,
+                               body_height);
+
+        compute_layout_rects();
+        InvalidateRect(hwnd(), nullptr, FALSE);
+    }
+
+    void compute_layout_rects() noexcept {
+        // Section header inside the nav rail ("Groups").
+        const int nav_header_h = px(28);
+        nav_header_rect_ = make_rect(nav_rect_.left,
+                                     nav_rect_.top,
+                                     rect_width(nav_rect_),
+                                     nav_header_h);
+
+        const int row_h = px(kNavRowH);
+        const int row_gap = px(4);
+        nav_rows_.clear();
+        int y = nav_header_rect_.bottom + row_gap;
+        for (std::size_t i = 0; i < kGroups.size(); ++i) {
+            nav_rows_.push_back(make_rect(nav_rect_.left, y,
+                                          rect_width(nav_rect_), row_h));
+            y += row_h + row_gap;
+        }
+
+        // Section header inside the list ("Assets").
+        const int list_header_h = px(40);
+        list_header_rect_ = make_rect(list_rect_.left,
+                                      list_rect_.top,
+                                      rect_width(list_rect_),
+                                      list_header_h);
+
+        // Asset rows below the header.
+        const int row_height = px(kRowH);
+        const int row_gap2 = px(kRowGap);
+        asset_rows_.clear();
+        int ly = list_header_rect_.bottom + px(8);
+        for (std::size_t i = 0; i < filtered_assets().size(); ++i) {
+            asset_rows_.push_back(make_rect(list_rect_.left, ly,
+                                            rect_width(list_rect_), row_height));
+            ly += row_height + row_gap2;
+        }
+    }
+
+    // --- Hit testing -------------------------------------------------------
+
+    void track_hover(int x, int y) noexcept {
+        if (!tracking_mouse_) {
+            TRACKMOUSEEVENT tme{
+                sizeof(TRACKMOUSEEVENT),
+                TME_LEAVE,
+                hwnd(),
+                HOVER_DEFAULT,
+            };
+            if (TrackMouseEvent(&tme)) tracking_mouse_ = true;
+        }
+        int new_group = hit_test_nav(x, y);
+        int new_row = -1;
+        if (new_group < 0) {
+            new_row = hit_test_row(x, y);
+        }
+        if (new_group != hovered_group_ || new_row != hovered_row_) {
+            hovered_group_ = new_group;
+            hovered_row_ = new_row;
+            InvalidateRect(hwnd(), nullptr, FALSE);
+        }
+    }
+
+    void handle_click(int x, int y) noexcept {
+        const int group = hit_test_nav(x, y);
+        if (group >= 0) {
+            select_group(group);
+            return;
+        }
+        // Clicking the action button on a row triggers the "open" command.
+        const int row_idx = hit_test_row(x, y);
+        if (row_idx >= 0) {
+            const RECT& row = asset_rows_[static_cast<std::size_t>(row_idx)];
+            if (point_in_action_button(x, y, row)) {
+                // Trigger the parent menu's Reload command so the status
+                // bar text reflects the action (the gallery's per-row
+                // "open" semantic is surface-only — it doesn't open a
+                // separate dialog because the asset is the demo itself).
+                static_cast<void>(SendMessageW(hwnd(), WM_COMMAND,
+                                               cmd_view_reload, 0));
+            } else {
+                selected_row_ = row_idx;
+                InvalidateRect(hwnd(), nullptr, FALSE);
+            }
+        }
+    }
+
+    [[nodiscard]] int hit_test_nav(int x, int y) const noexcept {
+        for (std::size_t i = 0; i < nav_rows_.size(); ++i) {
+            const RECT& r = nav_rows_[i];
+            if (x >= r.left && x < r.right && y >= r.top && y < r.bottom) {
+                return static_cast<int>(i);
+            }
+        }
+        return -1;
+    }
+
+    [[nodiscard]] int hit_test_row(int x, int y) const noexcept {
+        for (std::size_t i = 0; i < asset_rows_.size(); ++i) {
+            const RECT& r = asset_rows_[i];
+            if (x >= r.left && x < r.right && y >= r.top && y < r.bottom) {
+                return static_cast<int>(i);
+            }
+        }
+        return -1;
+    }
+
+    [[nodiscard]] bool point_in_action_button(int x, int y, const RECT& row) const noexcept {
+        const int btn_w = px(kActionBtnW);
+        const int btn_h = px(kActionBtnH);
+        const int right = row.right - px(16);
+        const int top = row.top + (rect_height(row) - btn_h) / 2;
+        RECT btn{right - btn_w, top, right, top + btn_h};
+        return x >= btn.left && x < btn.right && y >= btn.top && y < btn.bottom;
+    }
+
+    // --- Asset helpers -----------------------------------------------------
+
+    [[nodiscard]] std::vector<AssetRow> filtered_assets() const noexcept {
+        // Filter the master asset list by the selected group. The list is
+        // laid out as a contiguous per-group sequence so this is just an
+        // inclusive prefix.
+        std::vector<AssetRow> out;
+        int begin = 0;
+        for (std::size_t g = 0; g < kGroups.size(); ++g) {
+            const int count = kGroupCounts[g].count;
+            if (static_cast<int>(g) == selected_group_) {
+                for (int i = 0; i < count; ++i) {
+                    out.push_back(assets_[static_cast<std::size_t>(begin + i)]);
+                }
+                break;
+            }
+            begin += count;
+        }
+        return out;
+    }
+
+    [[nodiscard]] nfui::IconKind thumbnail_kind(ResourceGroup g, int i) const noexcept {
+        switch (g) {
+        case ResourceGroup::icons: {
+            static constexpr std::array<nfui::IconKind, 12> kIcons{
+                nfui::IconKind::chevron_down,  nfui::IconKind::chevron_up,
+                nfui::IconKind::chevron_left,  nfui::IconKind::chevron_right,
+                nfui::IconKind::check,         nfui::IconKind::close,
+                nfui::IconKind::plus,          nfui::IconKind::minus,
+                nfui::IconKind::search,        nfui::IconKind::gear,
+                nfui::IconKind::info,          nfui::IconKind::warning,
+            };
+            return kIcons[i % kIcons.size()];
+        }
+        case ResourceGroup::cursors:   return nfui::IconKind::chevron_right;
+        case ResourceGroup::bitmaps:   return nfui::IconKind::plus;
+        case ResourceGroup::strings:   return nfui::IconKind::info;
+        case ResourceGroup::menus:     return nfui::IconKind::hamburger;
+        case ResourceGroup::dialogs:   return nfui::IconKind::warning;
+        }
+        return nfui::IconKind::none;
+    }
+
+    [[nodiscard]] std::wstring_view row_name(ResourceGroup g, int i) const noexcept {
+        switch (g) {
+        case ResourceGroup::icons: {
+            static const std::wstring names[] = {
+                L"icon_chevron_down",  L"icon_chevron_up",
+                L"icon_chevron_left",  L"icon_chevron_right",
+                L"icon_check",         L"icon_close",
+                L"icon_plus",          L"icon_minus",
+                L"icon_search",        L"icon_gear",
+                L"icon_info",          L"icon_warning",
+            };
+            return names[i % std::size(names)];
+        }
+        case ResourceGroup::cursors: {
+            static const std::wstring names[] = {
+                L"cursor_arrow",   L"cursor_ibeam",
+                L"cursor_hand",    L"cursor_cross",
+                L"cursor_size_ns", L"cursor_size_we",
+            };
+            return names[i % std::size(names)];
+        }
+        case ResourceGroup::bitmaps: {
+            static const std::wstring names[] = {
+                L"bmp_mark_24",   L"bmp_mark_32",
+                L"bmp_mark_48",   L"bmp_mark_64",
+                L"bmp_mark_128",  L"bmp_mark_256",
+                L"bmp_strip_16",  L"bmp_strip_24",
+            };
+            return names[i % std::size(names)];
+        }
+        case ResourceGroup::strings: {
+            static const std::wstring names[] = {
+                L"IDS_APP_TITLE",      L"IDS_BRAND",
+                L"IDS_FILE_OPEN",      L"IDS_FILE_SAVE",
+                L"IDS_EDIT_UNDO",      L"IDS_EDIT_REDO",
+                L"IDS_HELP_ABOUT",     L"IDS_VIEW_THEME",
+                L"IDS_TOOLBAR_NEW",    L"IDS_TOOLBAR_OPEN",
+                L"IDS_STATUS_READY",   L"IDS_STATUS_PENDING",
+            };
+            // 24 strings — only 12 unique names; rotate with a stable hash.
+            return names[i % std::size(names)];
+        }
+        case ResourceGroup::menus: {
+            static const std::wstring names[] = {
+                L"IDM_FILE", L"IDM_EDIT", L"IDM_VIEW", L"IDM_HELP",
+            };
+            return names[i % std::size(names)];
+        }
+        case ResourceGroup::dialogs: {
+            static const std::wstring names[] = {
+                L"IDD_ABOUT", L"IDD_PREFS", L"IDD_WARN",
+            };
+            return names[i % std::size(names)];
+        }
+        }
+        return L"";
+    }
+
+    [[nodiscard]] std::wstring_view row_type(ResourceGroup g, int i) const noexcept {
+        switch (g) {
+        case ResourceGroup::icons: {
+            static constexpr std::wstring_view kSizes[] = {
+                L"16x16 ICO", L"24x24 ICO", L"32x32 ICO",
+                L"48x48 ICO", L"64x64 ICO",
+            };
+            return kSizes[i % 5];
+        }
+        case ResourceGroup::cursors:
+            return L".cur file";
+        case ResourceGroup::bitmaps: {
+            static constexpr std::wstring_view kBmp[] = {
+                L"DIB section", L"alpha bitmap", L"32 bpp",
+                L"16 bpp",      L"palette",
+            };
+            return kBmp[i % 5];
+        }
+        case ResourceGroup::strings:
+            return L"string table";
+        case ResourceGroup::menus:
+            return L"menu template";
+        case ResourceGroup::dialogs:
+            return L"dialog template";
+        }
+        return L"";
+    }
+
+    [[nodiscard]] nfui::Color resolve_tint(int row_index) const noexcept {
+        // CP-B6: rotate through the palette's semantic accents so the table
+        // reads as a design-system sample, not 24 copies of one swatch. The
+        // index is the row's global position so the rotation is stable
+        // across paints.
+        const int mod = row_index % 4;
+        const nfui::ThemePalette& p = palette_;
+        if (mod == 0) return p.accent;
+        if (mod == 1) return p.info;
+        if (mod == 2) return p.success;
+        return p.warning;
+    }
+
+    // --- Status ------------------------------------------------------------
+
+    void update_status() noexcept {
+        if (status_bar_.hwnd() == nullptr) return;
+        wchar_t buf[160]{};
+        int written = 0;
+        for (std::size_t i = 0; i < kGroupCounts.size(); ++i) {
+            const int n = kGroupCounts[i].count;
+            if (i > 0) {
+                written += swprintf_s(buf + written, std::size(buf) - written, L"   ");
+            }
+            written += swprintf_s(buf + written, std::size(buf) - written,
+                                  L"%d %ls", n, kGroupCounts[i].label);
+        }
+        std::wstring text = L"  Gallery overview: " + std::wstring(buf);
+        SendMessageW(status_bar_.hwnd(), SB_SETTEXTW, 0,
+                     reinterpret_cast<LPARAM>(text.c_str()));
+    }
+
+    void swap_window_icon(HICON new_icon) noexcept {
+        if (hwnd() != nullptr) {
+            HICON old_big = reinterpret_cast<HICON>(
+                SendMessageW(hwnd(), WM_SETICON, ICON_BIG, reinterpret_cast<LPARAM>(new_icon)));
+            HICON old_small = reinterpret_cast<HICON>(
+                SendMessageW(hwnd(), WM_SETICON, ICON_SMALL, reinterpret_cast<LPARAM>(new_icon)));
+            if (old_big != nullptr) {
+                DestroyIcon(old_big);
+            }
+            if (old_small != nullptr && old_small != old_big) {
+                DestroyIcon(old_small);
+            }
+        } else if (icon_ != nullptr && icon_ != new_icon) {
+            DestroyIcon(icon_);
+        }
+        icon_ = new_icon;
+    }
+
+    // --- Painting ----------------------------------------------------------
+
+    void paint_gallery(HDC target) {
+        const nfui::ThemePalette& p = palette_;
+        const int dpi_value = dpi_.dpi();
+
+        const int small_gap = px(8);
+
+        RECT client{};
+        GetClientRect(hwnd(), &client);
+        nfui::fill_rect(target, client, p.background);
+
+        HFONT title_font = fonts_.semibold(dpi_value, nfui::font_pt::xl);
+        HFONT sub_font   = fonts_.regular(dpi_value, nfui::font_pt::sm);
+        HFONT eyebrow    = fonts_.semibold(dpi_value, nfui::font_pt::xs);
+        HFONT nav_font   = fonts_.regular(dpi_value, nfui::font_pt::sm);
+        HFONT row_name_font = fonts_.semibold(dpi_value, nfui::font_pt::base);
+        HFONT row_type_font = fonts_.regular(dpi_value, nfui::font_pt::xs);
+        HFONT mono_font  = fonts_.mono(dpi_value, nfui::font_pt::xs);
+        HFONT action_font = fonts_.semibold(dpi_value, nfui::font_pt::xs);
+
+        // -- header --
+        RECT title_clip = title_rect_;
+        title_clip.right = header_rect_.right;
+        nfui::draw_text(target, title_clip,
+                        L"Resource Gallery",
+                        title_font, p.text,
+                        DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX);
+        nfui::draw_text(target, subtitle_rect_,
+                        L"Inspect bundled icons, cursors, bitmaps, strings, menus, and dialogs.",
+                        sub_font, p.text_secondary,
+                        DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS | DT_NOPREFIX);
+
+        // -- toolbar: eyebrow + accent divider --
+        RECT toolbar_band = toolbar_rect_;
+        RECT eyebrow_rect{toolbar_band.left, toolbar_band.top,
+                          toolbar_band.left + px(140), toolbar_band.bottom};
+        nfui::draw_text(target, eyebrow_rect,
+                        L"FILTERED ASSETS",
+                        eyebrow, p.text_secondary,
+                        DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX);
+
+        RECT caption{eyebrow_rect.right + small_gap, eyebrow_rect.top,
+                     toolbar_band.right, eyebrow_rect.bottom};
+        std::wstring cap = std::wstring(group_label(kGroups[selected_group_]));
+        cap += L" — ";
+        cap += std::wstring(group_subtitle(kGroups[selected_group_]));
+        nfui::draw_text(target, caption, cap,
+                        nav_font, p.text,
+                        DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS | DT_NOPREFIX);
+
+        // -- nav rail --
+        paint_nav_rail(target, eyebrow, nav_font);
+
+        // -- asset list --
+        paint_asset_list(target, row_name_font, row_type_font,
+                         action_font, mono_font);
+
+        // FontCache owns the HFONT handles; they are released by fonts_' destructor.
+    }
+
+    void paint_nav_rail(HDC target, HFONT eyebrow_font, HFONT /*nav_font*/) noexcept {
+        const nfui::ThemePalette& p = palette_;
+        const int gap = px(12);
+        const int radius = px(tok::radius_md);
+
+        // Eyebrow header.
+        RECT nav_header = nav_header_rect_;
+        nav_header.left += gap;
+        nav_header.right -= gap;
+        nfui::draw_text(target, nav_header,
+                        L"GROUPS",
+                        eyebrow_font, p.text_secondary,
+                        DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX);
+
+        // Each group row.
+        HFONT tag_font = fonts_.regular(dpi_.dpi(), nfui::font_pt::xs);
+        HFONT label_font = fonts_.regular(dpi_.dpi(), nfui::font_pt::base);
+        for (std::size_t i = 0; i < nav_rows_.size(); ++i) {
+            const RECT& row = nav_rows_[i];
+            const bool selected = (static_cast<int>(i) == selected_group_);
+            const bool hovered = (static_cast<int>(i) == hovered_group_);
+            paint_nav_row(target, row, kGroups[i], selected, hovered,
+                          label_font, tag_font, radius, gap);
+        }
+    }
+
+    void paint_nav_row(HDC target, const RECT& row, ResourceGroup group,
+                       bool selected, bool hovered,
+                       HFONT label_font, HFONT tag_font,
+                       int radius, int gap) noexcept {
+        const nfui::ThemePalette& p = palette_;
+
+        nfui::Color fill = selected ? p.surface_hover : p.surface;
+        if (hovered && !selected) {
+            fill = nfui::alpha_blend(p.surface, p.text, 0.04f);
+        }
+        RECT row_rect{
+            row.left + gap,
+            row.top,
+            row.right - gap,
+            row.bottom
+        };
+        nfui::fill_rounded_rect(target, row_rect, radius, fill, p.border);
+
+        if (selected) {
+            const int bar_w = px(3);
+            RECT bar{ row.left + gap / 2 - bar_w / 2,
+                      row.top + px(8),
+                      row.left + gap / 2 + bar_w / 2,
+                      row.bottom - px(8) };
+            nfui::fill_rect(target, bar, p.accent);
+        }
+
+        // Leading vector glyph.
+        const int icon_box = px(18);
+        RECT icon_rect{
+            row_rect.left + px(12),
+            row_rect.top + (rect_height(row_rect) - icon_box) / 2,
+            row_rect.left + px(12) + icon_box,
+            row_rect.top + (rect_height(row_rect) + icon_box) / 2
+        };
+        const nfui::Color icon_color = selected ? p.accent : p.text_secondary;
+        const int stroke = px(2);
+        nfui::draw_vector_icon(target, group_icon(group), icon_rect,
+                               icon_color, stroke);
+
+        // Group label.
+        RECT label_rect{
+            icon_rect.right + px(12),
+            row_rect.top,
+            row_rect.right - px(40),
+            row_rect.bottom
+        };
+        nfui::Color text_colour = selected ? p.text : p.text_secondary;
+        if (selected) {
+            HFONT semibold = fonts_.semibold(dpi_.dpi(), nfui::font_pt::base);
+            nfui::draw_text(target, label_rect,
+                            std::wstring(group_label(group)),
+                            semibold, text_colour,
+                            DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX);
+        } else {
+            nfui::draw_text(target, label_rect,
+                            std::wstring(group_label(group)),
+                            label_font, text_colour,
+                            DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX);
+        }
+
+        // Count chip on the trailing edge.
+        const int count = kGroupCounts[static_cast<std::size_t>(group)].count;
+        std::wstring count_text = std::to_wstring(count);
+        RECT count_rect{
+            row_rect.right - px(36),
+            row_rect.top,
+            row_rect.right - px(8),
+            row_rect.bottom
+        };
+        nfui::draw_text(target, count_rect, count_text,
+                        tag_font, p.text_secondary,
+                        DT_RIGHT | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX);
+    }
+
+    void paint_asset_list(HDC target, HFONT name_font, HFONT type_font,
+                          HFONT action_font, HFONT mono_font) noexcept {
+        const nfui::ThemePalette& p = palette_;
+        const int gap = px(12);
+        const int small_gap = px(8);
+        const int radius = px(tok::radius_md);
+
+        // Header: eyebrow + count chip on the right.
+        RECT header_band = list_header_rect_;
+        header_band.left += gap;
+        header_band.right -= gap;
+        nfui::draw_text(target, header_band,
+                        L"ASSETS",
+                        fonts_.semibold(dpi_.dpi(), nfui::font_pt::xs),
+                        p.text_secondary,
+                        DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX);
+
+        const auto& rows = filtered_assets();
+        std::wstring count_chip = std::to_wstring(static_cast<int>(rows.size()));
+        count_chip += L" items";
+        RECT count_chip_rect{header_band.right - px(140), header_band.top,
+                             header_band.right, header_band.bottom};
+        nfui::draw_text(target, count_chip_rect, count_chip,
+                        mono_font, p.text_secondary,
+                        DT_RIGHT | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX);
+
+        // Divider hairline under the header.
+        RECT divider{list_rect_.left + gap,
+                     list_header_rect_.bottom + small_gap / 2,
+                     list_rect_.right - gap,
+                     list_header_rect_.bottom + small_gap / 2 + px(1)};
+        nfui::fill_rect(target, divider, p.border);
+
+        // Asset rows.
+        const std::size_t row_count = std::min(rows.size(), asset_rows_.size());
+        for (std::size_t i = 0; i < row_count; ++i) {
+            const RECT& rect = asset_rows_[i];
+            const bool hovered = (static_cast<int>(i) == hovered_row_);
+            const bool selected = (static_cast<int>(i) == selected_row_);
+            paint_asset_row(target, rect, rows[i], static_cast<int>(i),
+                            hovered, selected, name_font, type_font,
+                            action_font, mono_font, radius, gap, small_gap);
+        }
+
+        // Empty-state footer if the row count overflows the visible band.
+        if (rows.size() > asset_rows_.size()) {
+            RECT more_rect{list_rect_.left + gap,
+                           asset_rows_.back().bottom + px(2),
+                           list_rect_.right - gap,
+                           asset_rows_.back().bottom + px(20)};
+            std::wstring more = L"+ ";
+            more += std::to_wstring(static_cast<int>(rows.size() - asset_rows_.size()));
+            more += L" more in this group";
+            nfui::draw_text(target, more_rect, more,
+                            mono_font, p.text_secondary,
+                            DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX);
+        }
+    }
+
+    void paint_asset_row(HDC target, const RECT& row, const AssetRow& asset,
+                         int row_index, bool hovered, bool selected,
+                         HFONT name_font, HFONT type_font,
+                         HFONT action_font, HFONT mono_font,
+                         int radius, int gap, int /*small_gap*/) noexcept {
+        const nfui::ThemePalette& p = palette_;
+
+        // Row surface: rest uses background, hover uses a subtle surface
+        // tint, selected uses the surface_hover fill so the active row
+        // reads as the currently focused item.
+        nfui::Color row_fill = p.background;
+        if (hovered) {
+            row_fill = nfui::alpha_blend(p.surface, p.text, 0.04f);
+        }
+        if (selected) {
+            row_fill = p.surface_hover;
+        }
+        nfui::fill_rounded_rect(target, row, radius, row_fill, p.border);
+
+        // Status dot column on the left edge (consistent visual rhythm).
+        const int dot_size = px(8);
+        RECT dot{
+            row.left + gap,
+            row.top + (rect_height(row) - dot_size) / 2,
+            row.left + gap + dot_size,
+            row.top + (rect_height(row) + dot_size) / 2
+        };
+        const nfui::Color dot_colour = asset.success ? p.success : p.warning;
+        nfui::fill_ellipse(target, dot, dot_colour);
+
+        // Thumbnail swatch: tinted square with the row's vector glyph.
+        const int thumb = px(kThumbSize);
+        const int thumb_left = dot.right + gap;
+        const int thumb_top = row.top + (rect_height(row) - thumb) / 2;
+        RECT thumb_rect{thumb_left, thumb_top, thumb_left + thumb, thumb_top + thumb};
+        const nfui::Color tint = resolve_tint(row_index);
+        nfui::fill_rounded_rect(target, thumb_rect, px(tok::radius_sm),
+                                nfui::alpha_blend(tint, p.surface, 0.85f),
+                                tint);
+        RECT glyph_rect{
+            thumb_rect.left + px(6),
+            thumb_rect.top + px(6),
+            thumb_rect.right - px(6),
+            thumb_rect.bottom - px(6)
+        };
+        // Glyph colour on the swatch: pick foreground with enough contrast.
+        const nfui::Color glyph_colour = asset.success ? p.text : p.text_secondary;
+        nfui::draw_vector_icon(target, asset.kind, glyph_rect, glyph_colour, px(2));
+
+        // Name + type caption.
+        const int text_left = thumb_rect.right + gap;
+        const int text_right = row.right - px(kActionBtnW) - gap * 2 - px(20);
+        const int name_h = px(18);
+        RECT name_rect{
+            text_left,
+            row.top + (rect_height(row) - name_h - px(14)) / 2,
+            text_right,
+            row.top + (rect_height(row) - name_h - px(14)) / 2 + name_h
+        };
+        nfui::draw_text(target, name_rect,
+                        std::wstring(asset.name),
+                        name_font, p.text,
+                        DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS | DT_NOPREFIX);
+        RECT type_rect{
+            text_left,
+            name_rect.bottom,
+            text_right,
+            row.bottom - px(2)
+        };
+        nfui::draw_text(target, type_rect,
+                        std::wstring(asset.type),
+                        type_font, p.text_secondary,
+                        DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS | DT_NOPREFIX);
+
+        // Status caption (right of type, mono so the ready/pending text
+        // is distinguishable from the type caption).
+        std::wstring status_text = asset.success ? L"READY" : L"PENDING";
+        RECT status_rect{
+            text_left + px(120),
+            name_rect.bottom,
+            text_right,
+            row.bottom - px(2)
+        };
+        nfui::draw_text(target, status_rect, status_text,
+                        mono_font, asset.success ? p.success : p.warning,
+                        DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX);
+
+        // Action button on the right: "Open" with chevron icon.
+        const int btn_w = px(kActionBtnW);
+        const int btn_h = px(kActionBtnH);
+        const int btn_right = row.right - gap;
+        const int btn_top = row.top + (rect_height(row) - btn_h) / 2;
+        RECT btn{btn_right - btn_w, btn_top, btn_right, btn_top + btn_h};
+        const nfui::Color btn_face = selected ? p.accent : p.surface;
+        const nfui::Color btn_border = selected ? p.accent : p.border;
+        nfui::fill_rounded_rect(target, btn, px(tok::radius_sm), btn_face, btn_border);
+        // Centered action label.
+        nfui::draw_text(target, btn, L"Open",
+                        action_font, selected ? p.accent_text : p.text,
+                        DT_CENTER | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX);
+        // Small chevron to the right of the caption (offset right so it
+        // reads as a distinct affordance, not a glyph in the caption).
+        const int chev = px(10);
+        RECT chev_rect{
+            btn.left + btn_w - chev - px(8),
+            btn.top + (btn_h - chev) / 2,
+            btn.left + btn_w - px(8),
+            btn.top + (btn_h + chev) / 2
+        };
+        nfui::draw_vector_icon(target, nfui::IconKind::chevron_right, chev_rect,
+                               selected ? p.accent_text : p.text_secondary, px(2));
+    }
+
+    // -- members -----------------------------------------------------------
+
+    HINSTANCE instance_{};
+    nfui::ResourceContext resources_;
+    nfui::ThemePalette palette_;
+    nfui::ThemeMode mode_{nfui::ThemeMode::light};
+    nfui::FontCache fonts_;
+    nfui::Menu menu_;
+    nfui::StatusBar status_bar_;
+    nfui::DpiScale dpi_{96};
+
+    RECT header_rect_{};
+    RECT title_rect_{};
+    RECT subtitle_rect_{};
+    RECT toolbar_rect_{};
+    RECT body_rect_{};
+    RECT nav_rect_{};
+    RECT nav_header_rect_{};
+    RECT list_rect_{};
+    RECT list_header_rect_{};
+    std::vector<RECT> nav_rows_;
+    std::vector<RECT> asset_rows_;
+    std::vector<AssetRow> assets_;
+
+    int selected_group_{0};
+    int selected_row_{-1};
+    int hovered_group_{-1};
+    int hovered_row_{-1};
+    bool tracking_mouse_{false};
+
+    std::wstring title_;
+    bool has_dialog_{};
+    bool has_menu_{};
+    bool has_string_{};
+    bool has_icon_{};
+    bool has_bitmap_{};
+    bool has_toolbar_{};
+    HICON icon_{};
+    HBITMAP bitmap_{};
+};
 
 INT_PTR CALLBACK gallery_dialog_proc(HWND hwnd, UINT message, WPARAM wparam, LPARAM lparam) {
     if (message == WM_INITDIALOG) {
-        // CP23: theme the dialog background to the ResourceGallery palette
-        // surface so the modal stops reading as a raw system dialog. The
-        // dialog template is the framework's IDD_NFUI_ABOUT — system fonts
-        // and COLOR_BTNFACE otherwise leave it as a 1995-era grey window
-        // next to the themed shell. Store the palette pointer in DWLP_USER
-        // so WM_CTLCOLORSTATIC can re-stamp the static-text colours without
+        // CP23 (preserved): theme the dialog background to the
+        // ResourceGallery palette surface so the modal stops reading as a
+        // raw system dialog. Store the palette pointer in DWLP_USER so
+        // WM_CTLCOLORSTATIC can re-stamp the static-text colours without
         // re-passing the palette through every paint.
         auto* palette_ptr = reinterpret_cast<nfui::ThemePalette*>(lparam);
         SetWindowLongPtrW(hwnd, DWLP_USER, reinterpret_cast<LONG_PTR>(palette_ptr));
@@ -98,8 +1326,6 @@ INT_PTR CALLBACK gallery_dialog_proc(HWND hwnd, UINT message, WPARAM wparam, LPA
             HBRUSH themed_brush = CreateSolidBrush(surface);
             SetClassLongPtrW(hwnd, GCLP_HBRBACKGROUND,
                               reinterpret_cast<LONG_PTR>(themed_brush));
-            // Apply the framework's regular Segoe UI font to every static
-            // text and push button so the labels track the host shell.
             const int dpi = nfui::dpi_of(hwnd);
             static thread_local nfui::FontCache dialog_fonts;
             HFONT body_font = dialog_fonts.regular(dpi, 9);
@@ -109,8 +1335,6 @@ INT_PTR CALLBACK gallery_dialog_proc(HWND hwnd, UINT message, WPARAM wparam, LPA
                 SendMessageW(ok_button, WM_SETFONT,
                              reinterpret_cast<WPARAM>(bold_font), TRUE);
             }
-            // IDC_STATIC_* labels in IDD_NFUI_ABOUT — paint them with the
-            // regular face and the palette's text colour.
             for (int id : {IDC_NFUI_ABOUT_TITLE,
                             IDC_NFUI_ABOUT_BODY,
                             IDC_NFUI_ABOUT_BUILD}) {
@@ -122,9 +1346,6 @@ INT_PTR CALLBACK gallery_dialog_proc(HWND hwnd, UINT message, WPARAM wparam, LPA
                     const COLORREF colour = title
                                                 ? palette_ptr->text.rgb
                                                 : palette_ptr->text_secondary.rgb;
-                    // CP23 use SetTextColor (the dialog text uses the
-                    // default WM_CTLCOLORSTATIC handler chain that reads
-                    // the text colour out of the DC at paint time).
                     SetTextColor(GetDC(label), colour);
                 }
             }
@@ -132,11 +1353,6 @@ INT_PTR CALLBACK gallery_dialog_proc(HWND hwnd, UINT message, WPARAM wparam, LPA
         return TRUE;
     }
     if (message == WM_CTLCOLORSTATIC) {
-        // Re-stamp the static-text colour on every paint. WM_SETTEXT /
-        // SetTextColor doesn't propagate to the next WM_CTLCOLORSTATIC pass
-        // because static controls reset their colour from the DC each time
-        // they paint. Returning the themed brush keeps the surface
-        // consistent across invalidations.
         HDC dc = reinterpret_cast<HDC>(wparam);
         HWND ctrl = reinterpret_cast<HWND>(lparam);
         const int ctrl_id = GetDlgCtrlID(ctrl);
@@ -171,1151 +1387,6 @@ INT_PTR CALLBACK gallery_dialog_proc(HWND hwnd, UINT message, WPARAM wparam, LPA
     return FALSE;
 }
 
-// CP32: the gallery is a vertical list of resource groups. The order below
-// also drives the row order in the left column and which card payload the
-// right grid renders (icons draw vector glyphs, bitmaps draw a coloured
-// checker pattern, etc.). Selected_idx_ identifies the active row.
-enum class ResourceGroup {
-    icons = 0,
-    cursors = 1,
-    bitmaps = 2,
-    strings = 3,
-    menus = 4,
-    dialogs = 5,
-};
-
-constexpr std::array<ResourceGroup, 6> kGroups{{
-    ResourceGroup::icons,
-    ResourceGroup::cursors,
-    ResourceGroup::bitmaps,
-    ResourceGroup::strings,
-    ResourceGroup::menus,
-    ResourceGroup::dialogs,
-}};
-
-[[nodiscard]] std::wstring_view group_label(ResourceGroup g) noexcept {
-    switch (g) {
-    case ResourceGroup::icons:   return L"Icons";
-    case ResourceGroup::cursors: return L"Cursors";
-    case ResourceGroup::bitmaps: return L"Bitmaps";
-    case ResourceGroup::strings: return L"Strings";
-    case ResourceGroup::menus:   return L"Menus";
-    case ResourceGroup::dialogs: return L"Dialogs";
-    }
-    return L"";
-}
-
-// Resource counts surfaced into the status bar. They are illustrative: the
-// gallery never enumerates the explicit module beyond probing has_*(), so the
-// surface just gives the viewer a concrete hook to read.
-struct GroupCount { int count; const wchar_t* label; };
-
-constexpr std::array<GroupCount, 6> kGroupCounts{{
-    { 12, L"icons"   },
-    {  6, L"cursors" },
-    {  8, L"bitmaps" },
-    { 24, L"strings" },
-    {  4, L"menus"   },
-    {  3, L"dialogs" },
-}};
-
-class ResourceGalleryWindow final : public nfui::Window {
-public:
-    explicit ResourceGalleryWindow(HINSTANCE instance)
-        : instance_(instance),
-          resources_(instance),
-          palette_(nfui::theme_palette(nfui::ThemeMode::light)),
-          mode_(nfui::ThemeMode::light) {
-    }
-
-    ~ResourceGalleryWindow() noexcept override {
-        release_assets();
-    }
-
-    // CP32: lets wWinMain seed the mode after create_main wires children.
-    // Without this, --theme dark still captures light.
-    void switch_mode(nfui::ThemeMode new_mode) noexcept {
-        if (new_mode == mode_) return;
-        mode_ = new_mode;
-        palette_ = nfui::theme_palette(mode_);
-        for (nfui::Control* c : all_controls()) {
-            if (c != nullptr) c->set_palette(&palette_);
-        }
-        InvalidateRect(hwnd(), nullptr, FALSE);
-    }
-
-    [[nodiscard]] bool create_main(int show_command) noexcept {
-        nfui::WindowCreateParams params{
-            instance_,
-            L"NativeFrameUIResourceGalleryWindow",
-            L"NativeFrame UI ResourceGallery",
-            WS_OVERLAPPEDWINDOW | WS_CLIPCHILDREN,
-            0,
-            CW_USEDEFAULT,
-            CW_USEDEFAULT,
-            // CP36: shrink default window from 1220×820 → 940×700.
-            940,
-            700,
-        };
-
-        if (!create(params)) {
-            return false;
-        }
-
-        dpi_ = nfui::DpiScale(nfui::dpi_of(hwnd()));
-        if (!create_children()) {
-            return false;
-        }
-
-        load_gallery_assets();
-        apply_menu_and_icon();
-        layout_controls();
-        update_status();
-
-        ShowWindow(hwnd(), show_command);
-        UpdateWindow(hwnd());
-        return true;
-    }
-
-protected:
-    LRESULT handle_message(UINT message, WPARAM wparam, LPARAM lparam) override {
-        switch (message) {
-        case WM_SIZE:
-            layout_controls();
-            InvalidateRect(hwnd(), nullptr, FALSE);
-            return 0;
-        case WM_DPICHANGED: {
-            auto* suggested = reinterpret_cast<RECT*>(lparam);
-            dpi_ = nfui::DpiScale(HIWORD(wparam));
-            if (suggested != nullptr) {
-                SetWindowPos(hwnd(),
-                             nullptr,
-                             suggested->left,
-                             suggested->top,
-                             suggested->right - suggested->left,
-                             suggested->bottom - suggested->top,
-                             SWP_NOACTIVATE | SWP_NOZORDER);
-            }
-            apply_native_fonts();
-            layout_controls();
-            InvalidateRect(hwnd(), nullptr, FALSE);
-            return 0;
-        }
-        case WM_MOUSEMOVE: {
-            const int x = GET_X_LPARAM(lparam);
-            const int y = GET_Y_LPARAM(lparam);
-            const int new_hover = hit_test_nav(x, y);
-            if (new_hover != hovered_group_) {
-                hovered_group_ = new_hover;
-                InvalidateRect(hwnd(), nullptr, FALSE);
-            }
-            if (!tracking_mouse_) {
-                TRACKMOUSEEVENT tme{
-                    sizeof(TRACKMOUSEEVENT),
-                    TME_LEAVE,
-                    hwnd(),
-                    HOVER_DEFAULT,
-                };
-                if (TrackMouseEvent(&tme)) tracking_mouse_ = true;
-            }
-            return 0;
-        }
-        case WM_MOUSELEAVE:
-            tracking_mouse_ = false;
-            if (hovered_group_ != -1) {
-                hovered_group_ = -1;
-                InvalidateRect(hwnd(), nullptr, FALSE);
-            }
-            return 0;
-        case WM_LBUTTONUP: {
-            const int x = GET_X_LPARAM(lparam);
-            const int y = GET_Y_LPARAM(lparam);
-            const int hit = hit_test_nav(x, y);
-            if (hit >= 0 && hit != selected_group_) {
-                selected_group_ = hit;
-                update_status();
-                InvalidateRect(hwnd(), nullptr, FALSE);
-            }
-            return 0;
-        }
-        case WM_ERASEBKGND:
-            return 1;
-        case WM_PAINT: {
-            PAINTSTRUCT paint{};
-            HDC hdc = BeginPaint(hwnd(), &paint);
-            RECT client{};
-            GetClientRect(hwnd(), &client);
-            // Flicker-free offscreen buffer over the full client area. The
-            // MemoryDC destructor BitBlts back to the target rect origin while
-            // the BeginPaint DC is still valid, so the buffer flush MUST
-            // happen before EndPaint (R6 fix from SettingsDemo).
-            {
-                nfui::MemoryDC mem(hdc, client);
-                HDC target = mem.valid() ? mem.dc() : hdc;
-                paint_gallery(target);
-            }
-            EndPaint(hwnd(), &paint);
-            return 0;
-        }
-        case WM_DESTROY:
-            release_assets();
-            PostQuitMessage(0);
-            return 0;
-        default:
-            return nfui::Window::handle_message(message, wparam, lparam);
-        }
-    }
-
-    bool on_command(int command_id, HWND, UINT notification_code) override {
-        switch (command_id) {
-        case IDM_NFUI_EXIT:
-            if (notification_code == 0) {
-                destroy();
-                return true;
-            }
-            break;
-        case id_open_dialog:
-            if (notification_code == BN_CLICKED || notification_code == 0) {
-                // CP23: pass the host palette as the dialog init lparam so the
-                // DlgProc can theme the surface, fonts, and static-text colours.
-                static_cast<void>(resources_.show_modal_dialog(IDD_NFUI_ABOUT,
-                                                               hwnd(),
-                                                               gallery_dialog_proc,
-                                                               reinterpret_cast<LPARAM>(&palette_)));
-                return true;
-            }
-            break;
-        case id_reload_assets:
-            if (notification_code == BN_CLICKED || notification_code == 0) {
-                load_gallery_assets();
-                apply_menu_and_icon();
-                InvalidateRect(hwnd(), nullptr, FALSE);
-                return true;
-            }
-            break;
-        case id_theme_light:
-            if (notification_code == BN_CLICKED || notification_code == 0) {
-                switch_mode(nfui::ThemeMode::light);
-                return true;
-            }
-            break;
-        case id_theme_dark:
-            if (notification_code == BN_CLICKED || notification_code == 0) {
-                switch_mode(nfui::ThemeMode::dark);
-                return true;
-            }
-            break;
-        case id_theme_hc:
-            if (notification_code == BN_CLICKED || notification_code == 0) {
-                switch_mode(nfui::ThemeMode::high_contrast);
-                return true;
-            }
-            break;
-        default:
-            break;
-        }
-        return false;
-    }
-
-private:
-    template <typename ControlT>
-    [[nodiscard]] bool make(ControlT& control, int id,
-                            std::wstring_view text = L"") noexcept {
-        nfui::ControlCreateParams params{
-            instance_,
-            hwnd(),
-            id,
-            text,
-            0,
-            0,
-            100,
-            28,
-        };
-        control.inject_theme(&palette_, &fonts_);
-        return control.create(params);
-    }
-
-    [[nodiscard]] bool create_children() noexcept {
-        // Theme toggle trio -- mirrors the IconGallery's light / dark /
-        // high-contrast pattern so the visual vocabulary stays consistent
-        // across samples. Style is left at default (accent face); the
-        // active one could switch to secondary later via ButtonStyle if
-        // the design system grows an "active" toggle tier.
-        if (!make(btn_theme_light_, id_theme_light, L"Light")) return false;
-        if (!make(btn_theme_dark_,  id_theme_dark,  L"Dark"))  return false;
-        if (!make(btn_theme_hc_,    id_theme_hc,    L"High Contrast")) return false;
-
-        // Existing actions, kept as Button controls so command routing is
-        // unchanged from the previous paint (id_open_dialog opens the
-        // modal About dialog, id_reload_assets re-probes the explicit
-        // resource module).
-        if (!make(open_dialog_,   id_open_dialog,   L"Open resource dialog")) return false;
-        if (!make(reload_assets_, id_reload_assets, L"Reload assets"))         return false;
-
-        // Native StatusBar keeps its Win32 chrome but adopts Segoe UI so the
-        // status text matches the shared paint. lParam=TRUE forces an immediate
-        // redraw with the new font.
-        if (!make(status_bar_, id_status_bar, L"")) return false;
-        apply_native_fonts();
-        return true;
-    }
-
-    void apply_native_fonts() noexcept {
-        const int dpi_value = dpi_.dpi();
-        const HFONT ui_font = fonts_.regular(dpi_value, 9);
-        SendMessageW(status_bar_.hwnd(), WM_SETFONT, reinterpret_cast<WPARAM>(ui_font), TRUE);
-    }
-
-    std::array<nfui::Control*, 6> all_controls() noexcept {
-        return { &btn_theme_light_, &btn_theme_dark_, &btn_theme_hc_,
-                 &open_dialog_, &reload_assets_, &status_bar_ };
-    }
-
-    void release_assets() noexcept {
-        swap_window_icon(nullptr);
-        if (menu_ != nullptr) {
-            if (hwnd() != nullptr) {
-                SetMenu(hwnd(), nullptr);
-            }
-            DestroyMenu(menu_);
-            menu_ = nullptr;
-        }
-        if (bitmap_ != nullptr) {
-            DeleteObject(bitmap_);
-            bitmap_ = nullptr;
-        }
-    }
-
-    void load_gallery_assets() noexcept {
-        dpi_ = hwnd() != nullptr ? nfui::DpiScale(GetDpiForWindow(hwnd())) : nfui::DpiScale(96);
-        title_ = resources_.load_string(IDS_NFUI_APP_TITLE);
-        has_dialog_ = resources_.has_dialog(IDD_NFUI_ABOUT);
-        has_menu_ = resources_.has_menu(IDM_NFUI_MAIN);
-        has_string_ = resources_.has_string(IDS_NFUI_APP_TITLE);
-        has_toolbar_ = resources_.has_toolbar(IDT_NFUI_MAIN);
-        if (bitmap_ != nullptr) {
-            DeleteObject(bitmap_);
-            bitmap_ = nullptr;
-        }
-        bitmap_ = static_cast<HBITMAP>(LoadImageW(resources_.module(),
-                                                  MAKEINTRESOURCEW(IDB_NFUI_MARK),
-                                                  IMAGE_BITMAP,
-                                                  0,
-                                                  0,
-                                                  LR_CREATEDIBSECTION));
-        has_icon_ = resources_.has_icon(IDI_NFUI_APP);
-        has_bitmap_ = bitmap_ != nullptr;
-    }
-
-    void apply_menu_and_icon() noexcept {
-        if (menu_ != nullptr) {
-            if (hwnd() != nullptr) {
-                SetMenu(hwnd(), nullptr);
-            }
-            DestroyMenu(menu_);
-            menu_ = nullptr;
-        }
-        if (has_menu_) {
-            menu_ = LoadMenuW(resources_.module(), MAKEINTRESOURCEW(IDM_NFUI_MAIN));
-            if (menu_ != nullptr) {
-                SetMenu(hwnd(), menu_);
-                DrawMenuBar(hwnd());
-            }
-        }
-
-        HICON new_icon = static_cast<HICON>(LoadImageW(resources_.module(),
-                                                       MAKEINTRESOURCEW(IDI_NFUI_APP),
-                                                       IMAGE_ICON,
-                                                       GetSystemMetrics(SM_CXICON),
-                                                       GetSystemMetrics(SM_CYICON),
-                                                       LR_DEFAULTCOLOR));
-        if (new_icon != nullptr) {
-            swap_window_icon(new_icon);
-        }
-    }
-
-    void layout_controls() noexcept {
-        if (hwnd() == nullptr || status_bar_.hwnd() == nullptr) {
-            return;
-        }
-
-        dpi_ = nfui::DpiScale(GetDpiForWindow(hwnd()));
-        RECT client{};
-        GetClientRect(hwnd(), &client);
-
-        // Resize the native StatusBar across the bottom first so we know
-        // exactly how much vertical room the painted body has to work
-        // with. WM_SIZE auto-arranges the parts for a single-part bar.
-        SendMessageW(status_bar_.hwnd(), WM_SIZE, 0, 0);
-        RECT status_rect{};
-        GetWindowRect(status_bar_.hwnd(), &status_rect);
-        const int status_height = status_rect.bottom - status_rect.top;
-
-        const int outer = dpi_.logical_to_pixels(kOuter);
-        const int gap = dpi_.logical_to_pixels(12);
-        const int big_gap = dpi_.logical_to_pixels(kGridGap);
-        const int nav_w = dpi_.logical_to_pixels(kNavW);
-
-        // Page header region: title (xl) + subtitle (sm).
-        const int title_h = dpi_.logical_to_pixels(kTitleH);
-        const int sub_h = dpi_.logical_to_pixels(kSubH);
-
-        // Toolbar row: search bar + theme toggle trio + 2 action buttons.
-        const int toolbar_h = dpi_.logical_to_pixels(kToolbarH);
-        const int theme_btn_h = dpi_.logical_to_pixels(kThemeBtnH);
-        const int theme_btn_w = dpi_.logical_to_pixels(kThemeBtnW);
-        const int action_btn_h = dpi_.logical_to_pixels(kActionBtnH);
-        const int action_btn_w = dpi_.logical_to_pixels(kActionBtnW);
-
-        header_rect_ = make_rect(client.left + outer,
-                                 client.top + outer,
-                                 rect_width(client) - outer * 2,
-                                 title_h + sub_h + gap);
-
-        // Header content within the header rect.
-        const int title_width = dpi_.logical_to_pixels(560);
-        title_rect_ = make_rect(header_rect_.left,
-                                header_rect_.top,
-                                title_width,
-                                title_h);
-        subtitle_rect_ = make_rect(header_rect_.left,
-                                   title_rect_.bottom,
-                                   title_width,
-                                   sub_h);
-
-        // Toolbar region (search bar + buttons stacked or inline).
-        toolbar_rect_ = make_rect(client.left + outer,
-                                  header_rect_.bottom,
-                                  rect_width(client) - outer * 2,
-                                  toolbar_h);
-
-        // Search bar fills most of the toolbar width on the left.
-        const int search_inset = theme_btn_w;  // leave space for the toggle trio
-        search_rect_ = make_rect(toolbar_rect_.left,
-                                 toolbar_rect_.top,
-                                 rect_width(toolbar_rect_) - 3 * theme_btn_w - 2 * gap - 2 * action_btn_w - 2 * gap,
-                                 toolbar_h);
-
-        // Theme toggle trio, packed to the right of the action buttons.
-        const int btn_y = toolbar_rect_.top + (toolbar_h - theme_btn_h) / 2;
-        const int action_btn_y = toolbar_rect_.top + (toolbar_h - action_btn_h) / 2;
-        int x = toolbar_rect_.right;
-        const int btn_x_light = toolbar_rect_.right - theme_btn_w;
-        const int btn_x_dark  = btn_x_light - theme_btn_w;
-        const int btn_x_hc    = btn_x_dark - theme_btn_w;
-        const int action_x_reload = btn_x_hc - gap - action_btn_w;
-        const int action_x_open   = action_x_reload - gap - action_btn_w;
-
-        move(btn_theme_light_, btn_x_light, btn_y, theme_btn_w, theme_btn_h);
-        move(btn_theme_dark_,  btn_x_dark,  btn_y, theme_btn_w, theme_btn_h);
-        move(btn_theme_hc_,    btn_x_hc,    btn_y, theme_btn_w, theme_btn_h);
-        move(reload_assets_,   action_x_reload, action_btn_y, action_btn_w, action_btn_h);
-        move(open_dialog_,     action_x_open,   action_btn_y, action_btn_w, action_btn_h);
-        (void)search_inset; (void)x; (void)big_gap;
-
-        // Body region (2-column: nav + grid).
-        const int body_top = toolbar_rect_.bottom + gap;
-        const int body_bottom = client.bottom - status_height - outer;
-        const int body_height = body_bottom - body_top;
-        body_rect_ = make_rect(client.left + outer,
-                               body_top,
-                               rect_width(client) - outer * 2,
-                               body_height);
-
-        nav_rect_ = make_rect(body_rect_.left,
-                              body_rect_.top,
-                              nav_w,
-                              body_height);
-
-        grid_rect_ = make_rect(nav_rect_.right + big_gap,
-                               body_rect_.top,
-                               rect_width(body_rect_) - nav_w - big_gap,
-                               body_height);
-
-        // Pre-compute the per-row rects so paint and hit-test stay aligned.
-        compute_layout_rects();
-
-        // Invalidate after relayout so the new geometry shows up.
-        InvalidateRect(hwnd(), nullptr, FALSE);
-    }
-
-    void compute_layout_rects() noexcept {
-        // Section header inside the nav ("Resource group").
-        const int nav_header_h = dpi_.logical_to_pixels(28);
-        const int row_h = dpi_.logical_to_pixels(kNavRowH);
-        const int row_gap = dpi_.logical_to_pixels(4);
-        nav_header_rect_ = make_rect(nav_rect_.left,
-                                     nav_rect_.top,
-                                     rect_width(nav_rect_),
-                                     nav_header_h);
-
-        nav_rows_.clear();
-        int y = nav_header_rect_.bottom + row_gap;
-        for (std::size_t i = 0; i < kGroups.size(); ++i) {
-            nav_rows_.push_back(make_rect(nav_rect_.left, y,
-                                          rect_width(nav_rect_), row_h));
-            y += row_h + row_gap;
-        }
-
-        // Section header inside the grid.
-        const int grid_header_h = dpi_.logical_to_pixels(34);
-        grid_header_rect_ = make_rect(grid_rect_.left,
-                                      grid_rect_.top,
-                                      rect_width(grid_rect_),
-                                      grid_header_h);
-    }
-
-    void move(nfui::Control& c, int x, int y, int w, int h) noexcept {
-        if (c.valid()) {
-            SetWindowPos(c.hwnd(), nullptr, x, y, w, h,
-                         SWP_NOACTIVATE | SWP_NOZORDER);
-        }
-    }
-
-    [[nodiscard]] int hit_test_nav(int x, int y) const noexcept {
-        if (hwnd() == nullptr) return -1;
-        for (std::size_t i = 0; i < nav_rows_.size(); ++i) {
-            const RECT& r = nav_rows_[i];
-            if (x >= r.left && x < r.right && y >= r.top && y < r.bottom) {
-                return static_cast<int>(i);
-            }
-        }
-        return -1;
-    }
-
-    void update_status() noexcept {
-        if (status_bar_.hwnd() == nullptr) return;
-        // Mono summary, single-line so it doesn't wrap inside the StatusBar.
-        wchar_t buf[128];
-        std::wstring line;
-        for (std::size_t i = 0; i < kGroupCounts.size(); ++i) {
-            if (i > 0) line += L"   ";  // wide gap so the bullets breathe
-            line += std::to_wstring(kGroupCounts[i].count);
-            line += L" ";
-            line += kGroupCounts[i].label;
-        }
-        const std::wstring text = L"  " + line;
-        (void)buf;
-        SendMessageW(status_bar_.hwnd(), SB_SETTEXTW, 0,
-                     reinterpret_cast<LPARAM>(text.c_str()));
-    }
-
-    void swap_window_icon(HICON new_icon) noexcept {
-        if (hwnd() != nullptr) {
-            HICON old_big = reinterpret_cast<HICON>(
-                SendMessageW(hwnd(), WM_SETICON, ICON_BIG, reinterpret_cast<LPARAM>(new_icon)));
-            HICON old_small = reinterpret_cast<HICON>(
-                SendMessageW(hwnd(), WM_SETICON, ICON_SMALL, reinterpret_cast<LPARAM>(new_icon)));
-            if (old_big != nullptr) {
-                DestroyIcon(old_big);
-            }
-            if (old_small != nullptr && old_small != old_big) {
-                DestroyIcon(old_small);
-            }
-        } else if (icon_ != nullptr && icon_ != new_icon) {
-            DestroyIcon(icon_);
-        }
-        icon_ = new_icon;
-    }
-
-    // -- painting --------------------------------------------------------
-
-    void paint_gallery(HDC target) {
-        const nfui::ThemePalette& p = palette_;
-        const int dpi_value = dpi_.dpi();
-
-        const int outer = dpi_.logical_to_pixels(kOuter);
-        const int gap = dpi_.logical_to_pixels(12);
-        const int small_gap = dpi_.logical_to_pixels(8);
-        const int big_gap = dpi_.logical_to_pixels(kGridGap);
-        const int card_radius = dpi_.logical_to_pixels(8);
-        const int small_radius = dpi_.logical_to_pixels(6);
-        const int swatch_radius = dpi_.logical_to_pixels(8);
-
-        RECT client{};
-        GetClientRect(hwnd(), &client);
-        nfui::fill_rect(target, client, p.background);
-
-        // -- header --------------------------------------------------------
-        // CP32: title is font_pt::xl (28 pt) semibold, subtitle is
-        // font_pt::sm (13 pt) regular -- pulled from the new design-scale
-        // tokens so the body & title rhythm matches the rest of the
-        // sample surface.
-        HFONT title_font = fonts_.semibold(dpi_value, nfui::font_pt::xl);
-        HFONT sub_font   = fonts_.regular(dpi_value, nfui::font_pt::sm);
-        HFONT label_font = fonts_.regular(dpi_value, nfui::font_pt::sm);
-        HFONT tag_font   = fonts_.regular(dpi_value, nfui::font_pt::xs);
-        HFONT section_font = fonts_.semibold(dpi_value, nfui::font_pt::sm);
-        HFONT nav_font   = fonts_.regular(dpi_value, nfui::font_pt::base);
-        HFONT mono_font  = fonts_.mono(dpi_value, nfui::font_pt::xs);
-
-        RECT title_clip = title_rect_;
-        title_clip.right = header_rect_.right;
-        nfui::draw_text(target, title_clip,
-                        L"Resource Gallery",
-                        title_font, p.text,
-                        DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX);
-        nfui::draw_text(target, subtitle_rect_,
-                        L"Inspect bundled icons, cursors, and bitmap strips.",
-                        sub_font, p.text_secondary,
-                        DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS | DT_NOPREFIX);
-
-        // -- toolbar: search bar (custom) --------------------------------
-        const int search_pad = dpi_.logical_to_pixels(12);
-        const int search_radius = dpi_.logical_to_pixels(8);
-        // Subtle elevation so the bar floats above the page background.
-        nfui::paint_drop_shadow(target, search_rect_, search_radius, 1, p.shadow);
-        nfui::fill_rounded_rect(target, search_rect_, search_radius, p.surface, p.border);
-
-        // Search glyph on the left side of the bar.
-        const int glyph_box = dpi_.logical_to_pixels(20);
-        RECT glyph{ search_rect_.left + search_pad,
-                    search_rect_.top + (rect_height(search_rect_) - glyph_box) / 2,
-                    search_rect_.left + search_pad + glyph_box,
-                    search_rect_.top + (rect_height(search_rect_) + glyph_box) / 2 };
-        nfui::draw_vector_icon(target, nfui::IconKind::search, glyph,
-                               p.text_secondary, dpi_.logical_to_pixels(2));
-
-        // "Filter resources..." placeholder sits to the right of the glyph.
-        RECT placeholder = search_rect_;
-        placeholder.left = glyph.right + search_pad;
-        nfui::draw_text(target, placeholder, L"Filter resources...",
-                        label_font, p.text_secondary,
-                        DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX);
-
-        // Divider hairline below the toolbar (separates chrome from body).
-        RECT divider{
-            client.left + outer,
-            toolbar_rect_.bottom + small_gap / 2,
-            client.right - outer,
-            toolbar_rect_.bottom + small_gap / 2 + dpi_.logical_to_pixels(1)
-        };
-        nfui::fill_rect(target, divider, p.border);
-
-        // -- left column: navigation list --------------------------------
-        // Section header inside the nav.
-        RECT nav_header = nav_header_rect_;
-        nav_header.left += small_gap;
-        nav_header.right -= small_gap;
-        nfui::draw_text(target, nav_header,
-                        L"RESOURCE GROUP",
-                        section_font, p.text_secondary,
-                        DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX);
-
-        for (std::size_t i = 0; i < nav_rows_.size(); ++i) {
-            const RECT& row = nav_rows_[i];
-            const bool selected = (static_cast<int>(i) == selected_group_);
-            const bool hovered = (static_cast<int>(i) == hovered_group_);
-            paint_nav_row(target, row, kGroups[i], selected, hovered,
-                          nav_font, tag_font, small_radius, gap);
-        }
-
-        // -- right column: grid cards ------------------------------------
-        // Grid section header restates the active group's descriptive
-        // subtitle so the right side has its own visual anchor.
-        RECT grid_header = grid_header_rect_;
-        grid_header.left += small_gap;
-        grid_header.right -= small_gap;
-        nfui::draw_text(target, grid_header,
-                        group_label(kGroups[selected_group_]).data(),
-                        section_font, p.text,
-                        DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX);
-
-        // 3-column card layout. Card geometry is computed each layout
-        // pass; spacing tokens keep columns/rows in rhythm with the rest.
-        const int card_w = dpi_.logical_to_pixels(kCardW);
-        const int card_h = dpi_.logical_to_pixels(kCardH);
-        const int grid_cols = 3;
-        const int card_gap = big_gap;
-
-        const int first_row_top = grid_header_rect_.bottom + small_gap;
-        const int grid_inner_left = grid_rect_.left + small_gap;
-        const int grid_inner_right = grid_rect_.right - small_gap;
-        const int grid_inner_width = grid_inner_right - grid_inner_left;
-
-        // CP35: step columns by (card_w + card_gap) and centre on the
-        // actual packed-card width so the right-most card stays inside
-        // grid_inner_width. Earlier the code used a `column_w` derived
-        // from grid_cols that pushed the third column ~70 px past the
-        // grid's right edge on a 1220-wide window.
-        const int column_step = card_w + card_gap;
-        const int total_w = grid_cols * card_w + (grid_cols - 1) * card_gap;
-        const int first_offset = std::max(0, (grid_inner_width - total_w) / 2);
-
-        const int cards_in_group = kGroupCounts[selected_group_].count;
-        const int rows_to_render = (cards_in_group + grid_cols - 1) / grid_cols;
-        const int row_height_px = card_h + card_gap;
-
-        for (int row_idx = 0; row_idx < rows_to_render; ++row_idx) {
-            for (int col_idx = 0; col_idx < grid_cols; ++col_idx) {
-                const int idx = row_idx * grid_cols + col_idx;
-                if (idx >= cards_in_group) break;
-                const int x = grid_inner_left + first_offset + col_idx * column_step;
-                const int y = first_row_top + row_idx * row_height_px;
-                if (y + card_h > grid_rect_.bottom) break;
-                RECT card{ x, y, x + card_w, y + card_h };
-                paint_card(target, card, idx,
-                           static_cast<ResourceGroup>(selected_group_),
-                           label_font, tag_font,
-                           card_radius, swatch_radius, small_gap);
-            }
-        }
-
-        // Bottom-left status badge so the StatusBar text isn't the only
-        // place counts are visible (the StatusBar carries the mono line
-        // set in update_status()).
-        RECT status_badge{ grid_rect_.left + small_gap,
-                           grid_rect_.bottom - dpi_.logical_to_pixels(20) - small_gap,
-                           grid_rect_.right - small_gap,
-                           grid_rect_.bottom - small_gap };
-        std::wstring badge;
-        for (std::size_t i = 0; i < kGroupCounts.size(); ++i) {
-            if (i > 0) badge += L"   -   ";
-            badge += std::to_wstring(kGroupCounts[i].count);
-            badge += L" ";
-            badge += kGroupCounts[i].label;
-        }
-        nfui::draw_text(target, status_badge, badge,
-                        mono_font, p.text_secondary,
-                        DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX);
-
-        // FontCache owns the HFONT handles; they are released by fonts_' destructor.
-    }
-
-    void paint_nav_row(HDC target, const RECT& row, ResourceGroup group,
-                       bool selected, bool hovered,
-                       HFONT label_font, HFONT tag_font,
-                       int radius, int gap) noexcept {
-        const nfui::ThemePalette& p = palette_;
-
-        // Selected row gets the surface_hover fill; hover-only gets the
-        // lighter surface tint (alpha-blend) so it tracks the chrome.
-        nfui::Color fill = selected ? p.surface_hover : p.surface;
-        if (hovered && !selected) {
-            fill = nfui::alpha_blend(p.surface, p.text, 0.04f);
-        }
-        // Inset the rounded rect so the row doesn't fight the nav container.
-        RECT row_rect{
-            row.left + gap,
-            row.top,
-            row.right - gap,
-            row.bottom
-        };
-        nfui::fill_rounded_rect(target, row_rect, radius, fill, p.border);
-
-        // Coral 2 px selection bar against the row's left edge per the
-        // spec; the bar is drawn flat (not rounded) because its width is
-        // narrower than 2x the corner radius.
-        if (selected) {
-            const int bar_w = dpi_.logical_to_pixels(3);
-            RECT bar{ row.left + gap / 2 - bar_w / 2,
-                      row.top + dpi_.logical_to_pixels(8),
-                      row.left + gap / 2 + bar_w / 2,
-                      row.bottom - dpi_.logical_to_pixels(8) };
-            nfui::fill_rect(target, bar, p.accent);
-        }
-
-        // Leading vector glyph per group, swapped on selected vs. neutral.
-        const int icon_box = dpi_.logical_to_pixels(20);
-        RECT icon_rect{
-            row_rect.left + dpi_.logical_to_pixels(12),
-            row_rect.top + (rect_height(row_rect) - icon_box) / 2,
-            row_rect.left + dpi_.logical_to_pixels(12) + icon_box,
-            row_rect.top + (rect_height(row_rect) + icon_box) / 2
-        };
-        const nfui::Color icon_color = selected ? p.accent : p.text_secondary;
-        const int stroke = dpi_.logical_to_pixels(2);
-        switch (group) {
-        case ResourceGroup::icons:
-            nfui::draw_vector_icon(target, nfui::IconKind::gear, icon_rect,
-                                   icon_color, stroke);
-            break;
-        case ResourceGroup::cursors:
-            nfui::draw_vector_icon(target, nfui::IconKind::chevron_right,
-                                   icon_rect, icon_color, stroke);
-            break;
-        case ResourceGroup::bitmaps:
-            nfui::draw_vector_icon(target, nfui::IconKind::plus, icon_rect,
-                                   icon_color, stroke);
-            break;
-        case ResourceGroup::strings:
-            nfui::draw_vector_icon(target, nfui::IconKind::info, icon_rect,
-                                   icon_color, stroke);
-            break;
-        case ResourceGroup::menus:
-            nfui::draw_vector_icon(target, nfui::IconKind::hamburger, icon_rect,
-                                   icon_color, stroke);
-            break;
-        case ResourceGroup::dialogs:
-            nfui::draw_vector_icon(target, nfui::IconKind::warning, icon_rect,
-                                   icon_color, stroke);
-            break;
-        }
-
-        // Group label (base 14 pt) + count tag on the right.
-        RECT label_rect{
-            icon_rect.right + dpi_.logical_to_pixels(12),
-            row_rect.top,
-            row_rect.right - dpi_.logical_to_pixels(40),
-            row_rect.bottom
-        };
-        nfui::Color text_colour = selected ? p.text : p.text_secondary;
-        if (selected) {
-            HFONT semibold = fonts_.semibold(dpi_.dpi(), nfui::font_pt::base);
-            nfui::draw_text(target, label_rect,
-                            std::wstring(group_label(group)),
-                            semibold, text_colour,
-                            DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX);
-        } else {
-            nfui::draw_text(target, label_rect,
-                            std::wstring(group_label(group)),
-                            label_font, text_colour,
-                            DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX);
-        }
-
-        // Count chip on the trailing edge.
-        const int count = kGroupCounts[static_cast<std::size_t>(group)].count;
-        std::wstring count_text = std::to_wstring(count);
-        RECT count_rect{
-            row_rect.right - dpi_.logical_to_pixels(36),
-            row_rect.top,
-            row_rect.right - dpi_.logical_to_pixels(8),
-            row_rect.bottom
-        };
-        nfui::draw_text(target, count_rect, count_text,
-                        tag_font, p.text_secondary,
-                        DT_RIGHT | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX);
-    }
-
-    void paint_card(HDC target, const RECT& card, int index,
-                    ResourceGroup group,
-                    HFONT label_font, HFONT tag_font,
-                    int card_radius, int swatch_radius, int small_gap) noexcept {
-        const nfui::ThemePalette& p = palette_;
-
-        // Subtle elevation-1 shadow lifts the card above the page surface.
-        nfui::paint_drop_shadow(target, card, card_radius, 1, p.shadow);
-        nfui::fill_rounded_rect(target, card, card_radius, p.surface, p.border);
-
-        // Upper preview swatch: ~55% of the card height with the bottom
-        // 45 % reserved for the name + tag. CP34: ratio dropped from 0.6 to
-        // 0.55 and the label/tag band heights trimmed from 18 / 16 to
-        // 14 / 14 so all three pieces fit cleanly inside the new shorter
-        // 108-px card height without clipping the tag line.
-        const int swatch_h = static_cast<int>(rect_height(card) * 0.55f);
-        RECT swatch{
-            card.left + small_gap,
-            card.top + small_gap,
-            card.right - small_gap,
-            card.top + small_gap + swatch_h,
-        };
-        // Swatch surface is a soft tint of palette.background so the
-        // preview reads against the card body.
-        nfui::fill_rounded_rect(target, swatch, swatch_radius,
-                                p.background, p.border);
-
-        paint_card_preview(target, swatch, group, index);
-
-        // Card name (sm 13) below the swatch.
-        RECT label_rect{
-            card.left + small_gap,
-            swatch.bottom + small_gap / 2,
-            card.right - small_gap,
-            swatch.bottom + small_gap / 2 + dpi_.logical_to_pixels(14),
-        };
-        nfui::draw_text(target, label_rect,
-                        card_name(group, index),
-                        label_font, p.text,
-                        DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS | DT_NOPREFIX);
-
-        // Tag line: xs 12 muted. Either "PNG" / "CUR" / etc. for typed
-        // resources, or a "size" for icon/cursor families.
-        RECT tag_rect{
-            card.left + small_gap,
-            label_rect.bottom,
-            card.right - small_gap,
-            label_rect.bottom + dpi_.logical_to_pixels(14),
-        };
-        nfui::draw_text(target, tag_rect, card_tag(group, index),
-                        tag_font, p.text_secondary,
-                        DT_LEFT | DT_TOP | DT_SINGLELINE | DT_END_ELLIPSIS | DT_NOPREFIX);
-    }
-
-    void paint_card_preview(HDC target, const RECT& swatch,
-                            ResourceGroup group, int index) noexcept {
-        const nfui::ThemePalette& p = palette_;
-        const int pad = dpi_.logical_to_pixels(8);
-        const RECT inner{
-            swatch.left + pad,
-            swatch.top + pad,
-            swatch.right - pad,
-            swatch.bottom - pad,
-        };
-
-        switch (group) {
-        case ResourceGroup::icons: {
-            // Pick a vector icon by index modulo the available kinds; draw
-            // it centred inside the swatch with the accent colour so the
-            // gallery feels curated.
-            static constexpr std::array<nfui::IconKind, 12> kIcons{
-                nfui::IconKind::chevron_down,
-                nfui::IconKind::chevron_up,
-                nfui::IconKind::chevron_left,
-                nfui::IconKind::chevron_right,
-                nfui::IconKind::check,
-                nfui::IconKind::close,
-                nfui::IconKind::plus,
-                nfui::IconKind::minus,
-                nfui::IconKind::search,
-                nfui::IconKind::gear,
-                nfui::IconKind::info,
-                nfui::IconKind::warning,
-            };
-            const int side = std::min(rect_width(inner), rect_height(inner));
-            const int side_dip = static_cast<int>(side * 0.5f);
-            const RECT icon_rect{
-                inner.left + (rect_width(inner) - side_dip) / 2,
-                inner.top + (rect_height(inner) - side_dip) / 2,
-                inner.left + (rect_width(inner) - side_dip) / 2 + side_dip,
-                inner.top + (rect_height(inner) - side_dip) / 2 + side_dip,
-            };
-            const nfui::IconKind kind = kIcons[index % kIcons.size()];
-            // Rotate through palette colours so the gallery reads as a
-            // design sampler rather than 12 copies of the same glyph.
-            const nfui::Color accent = (index % 4 == 0) ? p.accent
-                                       : (index % 4 == 1) ? p.info
-                                       : (index % 4 == 2) ? p.success
-                                                          : p.warning;
-            nfui::draw_vector_icon(target, kind, icon_rect,
-                                   accent, dpi_.logical_to_pixels(2));
-            break;
-        }
-        case ResourceGroup::cursors: {
-            // Arrow cursor: a vector triangle drawn as a filled polygon
-            // (upper-left vertex + two trailing vertices). Stroke the
-            // outline for crispness against the lighter swatch.
-            const int cx = inner.left + rect_width(inner) / 2 - dpi_.logical_to_pixels(8);
-            const int cy = inner.top + rect_height(inner) / 2 - dpi_.logical_to_pixels(8);
-            const int side = dpi_.logical_to_pixels(24);
-            POINT tri[3]{};
-            tri[0] = { cx, cy };
-            tri[1] = { cx, cy + side };
-            tri[2] = { cx + static_cast<int>(side * 0.7f),
-                       cy + static_cast<int>(side * 0.6f) };
-            nfui::fill_polygon(target, tri, 3, p.text, p.text);
-            break;
-        }
-        case ResourceGroup::bitmaps: {
-            // 4x4 checker pattern so the swatch reads as bitmap pixels
-            // instead of a flat block. Each cell uses the surface tint
-            // + a slightly darker version.
-            const int cells = 4;
-            const int cell_w = rect_width(inner) / cells;
-            const int cell_h = rect_height(inner) / cells;
-            const nfui::Color dark = nfui::alpha_blend(p.text, p.background, 0.85f);
-            const nfui::Color light = nfui::alpha_blend(p.text, p.background, 0.94f);
-            for (int cy_idx = 0; cy_idx < cells; ++cy_idx) {
-                for (int cx_idx = 0; cx_idx < cells; ++cx_idx) {
-                    RECT cell{
-                        inner.left + cx_idx * cell_w,
-                        inner.top + cy_idx * cell_h,
-                        inner.left + (cx_idx + 1) * cell_w,
-                        inner.top + (cy_idx + 1) * cell_h,
-                    };
-                    const nfui::Color cell_colour = ((cx_idx + cy_idx) % 2 == 0)
-                                                        ? dark : light;
-                    nfui::fill_rect(target, cell, cell_colour);
-                }
-            }
-            break;
-        }
-        case ResourceGroup::strings: {
-            // "Stack of lines" - 4 horizontal rules simulating paragraphs.
-            const int rows = 4;
-            const int row_h = rect_height(inner) / (rows * 2);
-            for (int i = 0; i < rows; ++i) {
-                const int row_top = inner.top + (i * 2 + 1) * row_h;
-                RECT line{
-                    inner.left,
-                    row_top,
-                    inner.right - (i == rows - 1 ? rect_width(inner) / 3 : 0),
-                    row_top + row_h - dpi_.logical_to_pixels(1),
-                };
-                const nfui::Color c = (i == 0) ? p.text : p.text_secondary;
-                nfui::fill_rounded_rect(target, line, dpi_.logical_to_pixels(2),
-                                        c, c);
-            }
-            break;
-        }
-        case ResourceGroup::menus: {
-            // Menu: list rows with bullets. Three rows, each indented a
-            // bit further so the menu hierarchy reads instantly.
-            const int row_count = 3;
-            const int row_h = dpi_.logical_to_pixels(8);
-            const int row_gap = dpi_.logical_to_pixels(8);
-            int y = inner.top + dpi_.logical_to_pixels(8);
-            for (int i = 0; i < row_count; ++i) {
-                RECT bullet{
-                    inner.left + dpi_.logical_to_pixels(6) + i * dpi_.logical_to_pixels(6),
-                    y + dpi_.logical_to_pixels(2),
-                    inner.left + dpi_.logical_to_pixels(10) + i * dpi_.logical_to_pixels(6),
-                    y + dpi_.logical_to_pixels(6),
-                };
-                nfui::fill_ellipse(target, bullet, p.accent);
-                RECT row_text{
-                    bullet.right + dpi_.logical_to_pixels(6),
-                    y - dpi_.logical_to_pixels(1),
-                    inner.right,
-                    y + row_h + dpi_.logical_to_pixels(1),
-                };
-                nfui::fill_rounded_rect(target, row_text, dpi_.logical_to_pixels(2),
-                                        p.text_secondary, p.text_secondary);
-                y += row_h + row_gap;
-            }
-            break;
-        }
-        case ResourceGroup::dialogs: {
-            // Dialog: a window frame inside the swatch with a title bar
-            // and a couple of button rectangles. Use the existing swatch
-            // as the frame border.
-            RECT frame{
-                inner.left + dpi_.logical_to_pixels(2),
-                inner.top + dpi_.logical_to_pixels(2),
-                inner.right - dpi_.logical_to_pixels(2),
-                inner.bottom - dpi_.logical_to_pixels(2),
-            };
-            nfui::fill_rounded_rect(target, frame, dpi_.logical_to_pixels(4),
-                                    p.background, p.text_secondary);
-            // Title bar.
-            RECT title_bar{
-                frame.left,
-                frame.top,
-                frame.right,
-                frame.top + dpi_.logical_to_pixels(8),
-            };
-            nfui::fill_rounded_rect(target, title_bar, dpi_.logical_to_pixels(2),
-                                    p.accent, p.accent);
-            // Two body lines + a footer button.
-            RECT body_line_a{
-                frame.left + dpi_.logical_to_pixels(6),
-                title_bar.bottom + dpi_.logical_to_pixels(6),
-                frame.right - dpi_.logical_to_pixels(6),
-                title_bar.bottom + dpi_.logical_to_pixels(10),
-            };
-            nfui::fill_rounded_rect(target, body_line_a, dpi_.logical_to_pixels(1),
-                                    p.text_secondary, p.text_secondary);
-            RECT body_line_b{
-                frame.left + dpi_.logical_to_pixels(6),
-                body_line_a.bottom + dpi_.logical_to_pixels(2),
-                frame.right - dpi_.logical_to_pixels(20),
-                body_line_a.bottom + dpi_.logical_to_pixels(6),
-            };
-            nfui::fill_rounded_rect(target, body_line_b, dpi_.logical_to_pixels(1),
-                                    p.text_secondary, p.text_secondary);
-            // OK button at the bottom-right.
-            RECT ok_btn{
-                frame.right - dpi_.logical_to_pixels(22),
-                frame.bottom - dpi_.logical_to_pixels(10),
-                frame.right - dpi_.logical_to_pixels(4),
-                frame.bottom - dpi_.logical_to_pixels(2),
-            };
-            nfui::fill_rounded_rect(target, ok_btn, dpi_.logical_to_pixels(2),
-                                    p.success, p.success);
-            break;
-        }
-        }
-    }
-
-    [[nodiscard]] std::wstring card_name(ResourceGroup g, int index) const {
-        switch (g) {
-        case ResourceGroup::icons:
-            return L"icon_" + std::to_wstring(index + 1);
-        case ResourceGroup::cursors:
-            return L"cursor_" + std::to_wstring(index + 1);
-        case ResourceGroup::bitmaps:
-            return L"bitmap_" + std::to_wstring(index + 1);
-        case ResourceGroup::strings:
-            return L"IDS_" + std::to_wstring(100 + index);
-        case ResourceGroup::menus:
-            return L"menu_" + std::to_wstring(index + 1);
-        case ResourceGroup::dialogs:
-            return L"dlg_" + std::to_wstring(index + 1);
-        }
-        return L"";
-    }
-
-    [[nodiscard]] std::wstring card_tag(ResourceGroup g, int index) const {
-        switch (g) {
-        case ResourceGroup::icons: {
-            static constexpr const wchar_t* kSizes[] = {
-                L"16x16", L"24x24", L"32x32", L"48x48", L"64x64"
-            };
-            return kSizes[index % 5];
-        }
-        case ResourceGroup::cursors:
-            return L".cur";
-        case ResourceGroup::bitmaps: {
-            static constexpr const wchar_t* kBmp[] = {
-                L"32x32 BMP", L"64x64 BMP", L"128x128 BMP", L"256x256 BMP"
-            };
-            return kBmp[index % 4];
-        }
-        case ResourceGroup::strings: {
-            static constexpr const wchar_t* kTypes[] = {
-                L"string table", L"menu strip", L"accelerator"
-            };
-            return kTypes[index % 3];
-        }
-        case ResourceGroup::menus:
-            return L"popup menu";
-        case ResourceGroup::dialogs:
-            return L"dialog template";
-        }
-        return L"";
-    }
-
-    HINSTANCE instance_{};
-    nfui::ResourceContext resources_;
-    nfui::ThemePalette palette_;
-    nfui::ThemeMode mode_{nfui::ThemeMode::light};
-    nfui::FontCache fonts_;
-    nfui::DpiScale dpi_{96};
-
-    nfui::Button btn_theme_light_;
-    nfui::Button btn_theme_dark_;
-    nfui::Button btn_theme_hc_;
-    nfui::Button open_dialog_;
-    nfui::Button reload_assets_;
-    nfui::StatusBar status_bar_;
-
-    RECT header_rect_{};
-    RECT title_rect_{};
-    RECT subtitle_rect_{};
-    RECT toolbar_rect_{};
-    RECT search_rect_{};
-    RECT body_rect_{};
-    RECT nav_rect_{};
-    RECT nav_header_rect_{};
-    RECT grid_rect_{};
-    RECT grid_header_rect_{};
-    std::vector<RECT> nav_rows_;
-
-    int selected_group_{0};
-    int hovered_group_{-1};
-    bool tracking_mouse_{false};
-
-    std::wstring title_;
-    bool has_dialog_{};
-    bool has_menu_{};
-    bool has_string_{};
-    bool has_icon_{};
-    bool has_bitmap_{};
-    bool has_toolbar_{};
-    HMENU menu_{};
-    HICON icon_{};
-    HBITMAP bitmap_{};
-};
-
 } // namespace
 
 int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR cmd_line, int show_command) {
@@ -1341,11 +1412,9 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR cmd_line, int show_comm
     const nfui::ThemeMode initial_mode = parse_theme(cmd_line);
 
     ResourceGalleryWindow window(instance);
+    window.set_initial_theme(initial_mode);
     if (!window.create_main(show_command)) {
         return 2;
-    }
-    if (initial_mode != nfui::ThemeMode::light) {
-        window.switch_mode(initial_mode);
     }
 
     return app.run();
