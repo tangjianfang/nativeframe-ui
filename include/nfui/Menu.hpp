@@ -6,12 +6,14 @@
 
 #include <memory>
 #include <string>
+#include <unordered_map>
 #include <vector>
 
 namespace nfui {
 
 class Menu;
 class MenuBuilder;
+class MenuOwnerDraw;
 
 // CP24-A: RAII HMENU wrapper. Owns the menu handle and (optionally) the
 // themed background brush attached via MENUINFO. DestroyMenu / DeleteObject
@@ -72,6 +74,49 @@ private:
     friend class MenuBuilder;
 };
 
+// CP-B15: per-item menu chrome paint / measure helper. Host HWNDs that
+// build a Menu with enable_owner_draw() must forward WM_DRAWITEM /
+// WM_MEASUREITEM / WM_MENUCHAR to this class. The dispatcher reads the
+// item payload (a pointer the builder stashed via SetMenuItemInfo at
+// append time) and paints the themed item onto the DC.
+//
+// The helper owns a cache of item label strings keyed by item id so the
+// paint path can resolve a label without keeping the host's Menu in
+// scope. Each Menu with enable_owner_draw() owns its own dispatcher; the
+// dispatcher survives as long as the Menu does.
+class MenuOwnerDraw {
+public:
+    explicit MenuOwnerDraw(const ThemePalette& palette) noexcept;
+
+    // WM_MEASUREITEM dispatcher: returns a 24 logical px tall item
+    // (DPI-scaled). Width is reported as 0 so Windows sizes the menu by
+    // content. The host HWND's WindowProc must call this from its
+    // WM_MEASUREITEM arm.
+    void handle_measure_item(MEASUREITEMSTRUCT* mis) noexcept;
+
+    // WM_DRAWITEM dispatcher: paints the themed item chrome onto
+    // mis->hDC inside the supplied item rect. Returns true if the item
+    // was painted (caller must skip DefWindowProc for it), false if the
+    // helper has no record for the item (the system draws it).
+    bool handle_draw_item(const DRAWITEMSTRUCT* dis) noexcept;
+
+    // Insert / update the label cache. The builder calls this implicitly
+    // when emitting MF_OWNERDRAW items; consumers should not need to
+    // touch the cache directly.
+    void register_label(int command_id, std::wstring label, bool is_separator = false) noexcept;
+
+private:
+    const ThemePalette& palette_;
+    // CP-B15: flat map keyed by command id. Owner-draw menus are small
+    // (dozens, not thousands), so a std::unordered_map avoids the cost
+    // of sorting and lets the dispatcher hit in O(1).
+    struct Entry {
+        std::wstring label;
+        bool is_separator{false};
+    };
+    std::unordered_map<int, Entry> entries_;
+};
+
 // CP24-A: fluent builder for OwnedMenu. Holds a reference to the menu and
 // a brush (palette.surface) so sub-popups created via popup() inherit the
 // same themed chrome. Builder lifetime is bound to the caller.
@@ -92,13 +137,33 @@ public:
     [[nodiscard]] MenuBuilder& separator() noexcept;
     [[nodiscard]] MenuBuilder& check_item(const std::wstring& label, int command_id, bool checked) noexcept;
 
+    // CP-B15: opt this builder (and every popup child it creates) into
+    // per-item owner-draw. Subsequent item / separator / check_item calls
+    // emit MF_OWNERDRAW entries and stash the label as item data so the
+    // host HWND's WM_DRAWITEM handler can paint themed chrome (rounded
+    // selection, accent for checked, palette.divider hairline). Requires
+    // Menu::enable_owner_draw() to have been called on the owning Menu.
+    [[nodiscard]] MenuBuilder& with_owner_draw() noexcept {
+        owner_draw_ = true;
+        return *this;
+    }
+
 private:
-    explicit MenuBuilder(OwnedMenu& menu, HBRUSH brush, HMENU target) noexcept
-        : menu_(menu), brush_(brush), target_(target) {}
+    explicit MenuBuilder(OwnedMenu& menu, HBRUSH brush, HMENU target,
+                         bool owner_draw, Menu* parent = nullptr) noexcept
+        : menu_(menu), brush_(brush), target_(target), owner_draw_(owner_draw), parent_(parent) {}
 
     OwnedMenu& menu_;
     HBRUSH brush_{};
     HMENU target_{};
+    // CP-B15: propagates to every popup() child so a with_owner_draw()
+    // call on the bar builder enables MF_OWNERDRAW for every item the
+    // builder produces (and every item produced by its descendants).
+    bool owner_draw_{false};
+    // CP-B15: pointer back to the owning Menu so the builder can reach
+    // the lazily-created owner_draw_ dispatcher. nullptr for standalone
+    // builders (the test harness uses one without a Menu parent).
+    Menu* parent_{nullptr};
 
     friend class Menu;
 };
@@ -160,16 +225,23 @@ public:
     // --theme seed). Does NOT re-attach the menu to a host HWND — the
     // caller still owns SetMenu.
     //
-    // CP-A4: the popup chrome is delivered via MENUINFO's `hbrBack` (a
-    // palette.surface brush built in apply_palette()). The host HWND's
-    // uxtheme background is suppressed by apply_to_bar() so the brush is
-    // the only source of pixel on the popup. Full per-item self-paint
-    // (rounded corners, drop shadow, selection highlight, item icons)
-    // requires MF_OWNERDRAW on every AppendMenuW + a WM_DRAWITEM handler
-    // on the menu owner; that is a separate CP (deferred — the MENUINFO
-    // approach covers the popup bg, which is the visible regression in
-    // the audit captures).
+    // CP-B15: a palette swap propagates to the MenuOwnerDraw dispatcher
+    // by reference (the dispatcher holds a const pointer). Callers using
+    // owner-draw chrome see the new palette on the next WM_DRAWITEM
+    // cycle without any explicit refresh.
     void set_palette(ThemePalette palette) noexcept { palette_ = std::move(palette); }
+
+    // CP-B15: enables MF_OWNERDRAW for every item the builder produces
+    // and returns a reference to a per-menu MenuOwnerDraw dispatcher the
+    // host HWND forwards WM_DRAWITEM / WM_MEASUREITEM to. Call this BEFORE
+    // calling builder(); subsequent builder().with_owner_draw() calls
+    // turn on MF_OWNERDRAW. The dispatcher survives as long as this Menu.
+    [[nodiscard]] MenuOwnerDraw& enable_owner_draw() noexcept;
+
+    // CP-B15: read-only accessor used by MenuBuilder to resolve the
+    // lazily-created dispatcher when emitting MF_OWNERDRAW items.
+    // Returns nullptr until enable_owner_draw() is called.
+    [[nodiscard]] MenuOwnerDraw* owner_draw() const noexcept { return owner_draw_.get(); }
 
     // Item label helpers.
     [[nodiscard]] static std::wstring escape_mnemonic(const std::wstring& text) noexcept;
@@ -177,6 +249,13 @@ public:
 private:
     ThemePalette palette_;
     OwnedMenu bar_;
+    // CP-B15: lazily created on first enable_owner_draw() call. Host
+    // HWND forwards WM_DRAWITEM / WM_MEASUREITEM here. nullptr until
+    // enable_owner_draw() is called, so existing callers that use
+    // MENUINFO-only chrome pay no memory cost.
+    std::unique_ptr<MenuOwnerDraw> owner_draw_;
+
+    friend class MenuBuilder;
 };
 
 } // namespace nfui

@@ -92,10 +92,11 @@ void StatusBar::paint_chrome(HDC dc) noexcept {
     fill_rect(target, paint_bounds, fill);
 
     // Top hairline so the bar reads as a distinct band against the window
-    // chrome above it.
+    // chrome above it. CP-B16: reads palette.divider (distinct from border)
+    // so the bar separator stays hairline rather than structural.
     RECT hairline = paint_bounds;
     hairline.bottom = hairline.top + hairline_h;
-    fill_rect(target, hairline, p.border);
+    fill_rect(target, hairline, p.divider);
 
     // Read live text via SB_GETTEXTW. The two-step call (length then copy)
     // matches how ComCtl32 v6 status bars expect to be queried; callers that
@@ -139,16 +140,16 @@ void StatusBar::paint_chrome(HDC dc) noexcept {
                   DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS | DT_NOPREFIX);
     }
 
-    // CP-A4: 1px divider line above the size-grip reservation so the grip
+    // CP-B16: 1px divider line above the size-grip reservation so the grip
     // reads as a distinct chrome element rather than a free-floating patch.
-    // `border` is the closest palette token available — there is no separate
-    // `divider` field. The line spans the grip column only (not the full
-    // bar width) so it does not duplicate the top hairline.
+    // Reads palette.divider (the hairline token distinct from border). The
+    // line spans the grip column only (not the full bar width) so it does
+    // not duplicate the top hairline.
     RECT grip_divider = paint_bounds;
     grip_divider.left = paint_bounds.right - grip;
     grip_divider.bottom = paint_bounds.bottom - grip;
     grip_divider.top = std::max(static_cast<int>(grip_divider.bottom - hairline_h), 0);
-    fill_rect(target, grip_divider, p.border);
+    fill_rect(target, grip_divider, p.divider);
 
     // Size grip — three diagonal rows of dots in palette.text_secondary.
     // text_secondary is tuned to remain perceptible against the bar surface

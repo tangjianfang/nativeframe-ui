@@ -34,7 +34,9 @@ struct ThemePalette {
     Color background;          // window chrome
     Color surface;             // cards / panels
     Color surface_hover;
+    Color surface_variant;     // CP-B17: elevated / nested surface (alt rows, tabs, cards)
     Color border;
+    Color divider;             // CP-B16: hairline separator (distinct from border)
     Color text;
     Color text_secondary;
     Color accent;

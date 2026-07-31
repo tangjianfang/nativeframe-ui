@@ -279,20 +279,28 @@ public:
         // CP28: extend the menu to match the reference (File / Edit / View /
         // Run / Window / Help). Each popup() returns a builder targeting the
         // new submenu; the chained .item() calls populate that submenu.
-        (void)menu_.builder(menu_.bar()).popup(L"&File")
+        //
+        // CP-B15: with_owner_draw() opts every item on this builder into
+        // MF_OWNERDRAW; handle_message() below forwards WM_DRAWITEM /
+        // WM_MEASUREITEM to the dispatcher returned by enable_owner_draw().
+        // The chrome now reads from palette.surface_variant for selection,
+        // palette.divider for separators, and palette.accent for the
+        // checked-state dot — matching every other themed control.
+        menu_.enable_owner_draw();
+        (void)menu_.builder(menu_.bar()).with_owner_draw().popup(L"&File")
             .item(L"&New",   idm_new)
             .item(L"&Open",  idm_open)
             .item(L"&Save",  idm_save)
             .separator()
             .item(L"E&xit",  IDM_NFUI_EXIT);
-        (void)menu_.builder(menu_.bar()).popup(L"&Edit")
+        (void)menu_.builder(menu_.bar()).with_owner_draw().popup(L"&Edit")
             .item(L"&Undo", idm_new)
             .item(L"&Redo", idm_open)
             .separator()
             .item(L"Cu&t",  idm_save)
             .item(L"&Copy", idm_run)
             .item(L"&Paste",idm_debug);
-        (void)menu_.builder(menu_.bar()).popup(L"&View")
+        (void)menu_.builder(menu_.bar()).with_owner_draw().popup(L"&View")
             .item(L"&Zoom In",  idm_search)
             .item(L"Zoom &Out", idm_new)
             .separator()
@@ -307,15 +315,15 @@ public:
                 .item(L"&Light",         idm_theme_light)
                 .item(L"&Dark",          idm_theme_dark)
                 .item(L"&High Contrast", idm_theme_hc);
-        (void)menu_.builder(menu_.bar()).popup(L"&Run")
+        (void)menu_.builder(menu_.bar()).with_owner_draw().popup(L"&Run")
             .item(L"&Run",   idm_run)
             .item(L"&Debug", idm_debug);
-        (void)menu_.builder(menu_.bar()).popup(L"&Window")
+        (void)menu_.builder(menu_.bar()).with_owner_draw().popup(L"&Window")
             .item(L"&Cascade",      idm_new)
             .item(L"&Tile",         idm_open)
             .separator()
             .item(L"Close &All",    idm_save);
-        (void)menu_.builder(menu_.bar()).popup(L"&Help")
+        (void)menu_.builder(menu_.bar()).with_owner_draw().popup(L"&Help")
             .item(L"&About", command_about);
         SetMenu(hwnd(), menu_.bar().get());
 
@@ -372,6 +380,27 @@ protected:
         case WM_CONTEXTMENU:
             show_context_menu(GET_X_LPARAM(lparam), GET_Y_LPARAM(lparam));
             return 0;
+        // CP-B15: route menu paint / measure through the dispatcher so the
+        // themed chrome (selection highlight, accent stripe, divider hairline,
+        // checked dot) reaches the menu without uxtheme interference. Owner
+        // menus forward WM_MEASUREITEM BEFORE showing, so the system sizes
+        // rows according to the dispatcher's itemHeight.
+        case WM_MEASUREITEM: {
+            auto* mis = reinterpret_cast<MEASUREITEMSTRUCT*>(lparam);
+            if (mis != nullptr && menu_.owner_draw() != nullptr) {
+                menu_.owner_draw()->handle_measure_item(mis);
+                return TRUE;
+            }
+            return 0;
+        }
+        case WM_DRAWITEM: {
+            auto* dis = reinterpret_cast<DRAWITEMSTRUCT*>(lparam);
+            if (dis != nullptr && menu_.owner_draw() != nullptr
+                && menu_.owner_draw()->handle_draw_item(dis)) {
+                return TRUE;
+            }
+            return 0;
+        }
         case WM_MOUSEMOVE: {
             const int x = GET_X_LPARAM(lparam);
             const int y = GET_Y_LPARAM(lparam);
@@ -888,8 +917,12 @@ private:
         // menu surface carries the host palette. The popup is local — the
         // OS dismisses it on click or escape and we destroy it after
         // TrackPopupMenu returns.
+        //
+        // CP-B15: enable_owner_draw() is idempotent — the bar already
+        // turned it on, so this is a no-op here. with_owner_draw() on the
+        // builder turns MF_OWNERDRAW on for the single Refresh item.
         nfui::OwnedMenu popup = menu_.make_popup();
-        (void)menu_.builder(popup).item(L"&Refresh", context_refresh);
+        (void)menu_.builder(popup).with_owner_draw().item(L"&Refresh", context_refresh);
         TrackPopupMenu(popup.get(), TPM_RIGHTBUTTON, x, y, 0, hwnd(), nullptr);
     }
 
