@@ -33,6 +33,22 @@ public:
     [[nodiscard]] int max() const noexcept { return max_; }
     [[nodiscard]] bool vertical() const noexcept { return vertical_; }
 
+    // CP-B19: static helper invoked by ListView / TreeView / Edit custom-draw
+    // subclass procs to paint the themed thumb into an arbitrary track rect.
+    // The forwarding contract (see docs/CHROME_QA.md):
+    //   - `target` is the destination HDC (control's CDDS_POSTPAINT HDC).
+    //   - `track` is the band along the right / bottom edge where the thumb
+    //     lives, in client coordinates of the host control.
+    //   - `position`, `min`, `max` mirror SetScrollPos / GetScrollPos.
+    //   - `palette` is the active ThemePalette (passed explicitly so this
+    //     helper is independent of the Scrollbar instance).
+    // No native SCROLLBAR HWND is involved; the helper paints into the
+    // target DC directly. See Scrollbar::paint_chrome for the matching
+    // standalone-instance implementation.
+    static void paint_thumb_into(HDC target, const RECT& track, bool vertical,
+                                  int position, int min, int max,
+                                  const ThemePalette& palette) noexcept;
+
 protected:
     // CP-A4: react to palette changes by invalidating so the thumb's
     // accent + 60% alpha blend re-resolves against the new palette.

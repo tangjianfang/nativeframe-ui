@@ -34,6 +34,36 @@ RECT track_rect_for(HWND bar_hwnd, bool vertical) noexcept {
     return RECT{client.top, client.left, client.bottom, client.right};
 }
 
+// CP-B19: thumb geometry shared between the standalone Scrollbar instance
+// (which owns the band via GetClientRect) and the NM_CUSTOMDRAW forwarding
+// path used by ListView / TreeView / Edit (where the band is the right /
+// bottom edge of the host control's client area). Factoring the math
+// here keeps both paths in lockstep when we tweak thumb length or width.
+RECT thumb_rect_for(const RECT& track, bool vertical, int position,
+                     int min, int max, int width, int dpi) noexcept {
+    const DpiScale dpi_scale{dpi};
+    const int span = std::max(1, max - min);
+    const int track_len = vertical
+        ? (track.bottom - track.top)
+        : (track.right - track.left);
+    int thumb_len = track_len / 4;
+    if (thumb_len < dpi_scale.logical_to_pixels(24)) {
+        thumb_len = dpi_scale.logical_to_pixels(24);
+    }
+    const int clamped_pos = (position < min) ? min : (position > max ? max : position);
+    const int offset = (clamped_pos - min) * (track_len - thumb_len) / span;
+    if (vertical) {
+        const int track_w = static_cast<int>(track.right - track.left);
+        const int thickness = std::min(width, track_w);
+        const int left = track.left + (track_w - thickness) / 2;
+        return RECT{left, track.top + offset, left + thickness, track.top + offset + thumb_len};
+    }
+    const int track_h = static_cast<int>(track.bottom - track.top);
+    const int thickness = std::min(width, track_h);
+    const int top = track.top + (track_h - thickness) / 2;
+    return RECT{track.left + offset, top, track.left + offset + thumb_len, top + thickness};
+}
+
 } // namespace
 
 bool Scrollbar::create(const ControlCreateParams& params, bool vertical) noexcept {
@@ -124,29 +154,46 @@ RECT Scrollbar::thumb_rect() const noexcept {
     const int hover_w = dpi.logical_to_pixels(thumb_width_hover);
     const int width = hovered_thumb_ ? hover_w : rest_w;
     const RECT track = track_rect_for(bar_hwnd, vertical_);
-    const int span = std::max(1, max_ - min_);
-    // Fraction of the track the thumb occupies. Clamp to a sensible
-    // floor so a range like [0, 100] with position 50 still produces a
-    // visible thumb.
-    const int thumb_pixels = static_cast<int>(0.5f + (vertical_ ? (track.bottom - track.top) : (track.right - track.left)));
-    int thumb_len = thumb_pixels / 4;
-    if (thumb_len < dpi.logical_to_pixels(24)) {
-        thumb_len = dpi.logical_to_pixels(24);
+    return thumb_rect_for(track, vertical_, position_, min_, max_, width, dpi.dpi());
+}
+
+void Scrollbar::paint_thumb_into(HDC target, const RECT& track, bool vertical,
+                                  int position, int min, int max,
+                                  const ThemePalette& palette) noexcept {
+    if (target == nullptr) return;
+    if (track.right <= track.left || track.bottom <= track.top) return;
+
+    // CP-B19: forwarding contract. The forwarding host supplies a band
+    // along its right or bottom edge in its own client coordinates.
+    // We mirror the standalone instance's geometry by reusing the same
+    // helper, with width = rest (4 logical px) because the host control
+    // already paints its own hover state. A future CP could expand the
+    // thumb on hover inside the host control's custom draw if needed;
+    // for now we paint a single, stable-width thumb and let the host
+    // invalidate on hover via its own subclass proc.
+    HWND any_hwnd = WindowFromDC(target);
+    const int dpi = (any_hwnd != nullptr) ? dpi_of(any_hwnd) : 96;
+    const DpiScale dpi_scale{dpi};
+    const int width = dpi_scale.logical_to_pixels(thumb_width_rest);
+    const RECT thumb = thumb_rect_for(track, vertical, position, min, max, width, dpi);
+    if (thumb.right <= thumb.left || thumb.bottom <= thumb.top) return;
+
+    // Track is the host's existing background — we don't repaint it.
+    // Only the rounded thumb (alpha-blended accent + stroke border) is
+    // ours, matching paint_chrome on the standalone instance.
+    const int t_radius = static_cast<int>(std::min<long>(
+        (thumb.right - thumb.left), (thumb.bottom - thumb.top))) / 2;
+    fill_rect_alpha(target, thumb, palette.accent, thumb_alpha);
+    const HPEN pen = CreatePen(PS_SOLID, 1, palette.accent.rgb);
+    if (pen != nullptr) {
+        const HGDIOBJ old_pen = SelectObject(target, pen);
+        const HGDIOBJ old_brush = SelectObject(target, GetStockObject(NULL_BRUSH));
+        RoundRect(target, thumb.left, thumb.top, thumb.right, thumb.bottom,
+                  t_radius * 2, t_radius * 2);
+        SelectObject(target, old_brush);
+        SelectObject(target, old_pen);
+        DeleteObject(pen);
     }
-    const int clamped_pos = (position_ < min_) ? min_ : (position_ > max_ ? max_ : position_);
-    const int offset = vertical_
-        ? (clamped_pos - min_) * ((track.bottom - track.top) - thumb_len) / span
-        : (clamped_pos - min_) * ((track.right - track.left) - thumb_len) / span;
-    if (vertical_) {
-        const int track_w = static_cast<int>(track.right - track.left);
-        const int thickness = std::min(width, track_w);
-        const int left = track.left + (track_w - thickness) / 2;
-        return RECT{left, track.top + offset, left + thickness, track.top + offset + thumb_len};
-    }
-    const int track_h = static_cast<int>(track.bottom - track.top);
-    const int thickness = std::min(width, track_h);
-    const int top = track.top + (track_h - thickness) / 2;
-    return RECT{track.left + offset, top, track.left + offset + thumb_len, top + thickness};
 }
 
 void Scrollbar::paint_chrome(HDC dc) noexcept {
@@ -161,9 +208,7 @@ void Scrollbar::paint_chrome(HDC dc) noexcept {
 
     MemoryDC mem(dc, client);
     HDC target = mem.valid() ? mem.dc() : dc;
-    const int width = client.right - client.left;
-    const int height = client.bottom - client.top;
-    const RECT paint_bounds{0, 0, width, height};
+    const RECT paint_bounds{0, 0, client.right - client.left, client.bottom - client.top};
 
     // CP-A4: track is transparent — fill with the palette background so
     // the bar doesn't reveal any native chrome. This is invisible on
@@ -171,28 +216,11 @@ void Scrollbar::paint_chrome(HDC dc) noexcept {
     // between paints.
     fill_rect(target, paint_bounds, p.background);
 
-    // Thumb: 4px rounded at rest, 8px on hover. alpha_fill_rect
-    // composites against the filled background so the 60% alpha stays
-    // faithful across theme swaps.
-    const RECT thumb = thumb_rect();
-    if (thumb.right > thumb.left && thumb.bottom > thumb.top) {
-        const int t_radius = static_cast<int>(std::min<long>(
-            (thumb.right - thumb.left), (thumb.bottom - thumb.top))) / 2;
-        fill_rect_alpha(target, thumb, p.accent, thumb_alpha);
-        // Stroke-only rounded border so the thumb edge reads at small
-        // sizes (the 60% alpha fill would otherwise fade into the
-        // background on certain palettes).
-        const HPEN pen = CreatePen(PS_SOLID, 1, p.accent.rgb);
-        if (pen != nullptr) {
-            const HGDIOBJ old_pen = SelectObject(target, pen);
-            const HGDIOBJ old_brush = SelectObject(target, GetStockObject(NULL_BRUSH));
-            RoundRect(target, thumb.left, thumb.top, thumb.right, thumb.bottom,
-                      t_radius * 2, t_radius * 2);
-            SelectObject(target, old_brush);
-            SelectObject(target, old_pen);
-            DeleteObject(pen);
-        }
-    }
+    // CP-B19: the thumb paint is the same code path the NM_CUSTOMDRAW
+    // forwarding hosts use. Keep paint_thumb_into as the single source
+    // of truth so changing the chrome doesn't require a sync change in
+    // ListView / TreeView / Edit custom-draw handlers.
+    paint_thumb_into(target, paint_bounds, vertical_, position_, min_, max_, p);
 }
 
 void Scrollbar::on_paint(HDC dc, const PaintState& state) noexcept {

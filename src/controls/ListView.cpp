@@ -1,5 +1,6 @@
 #include <nfui/Controls/ListView.hpp>
 #include <nfui/Controls/Detail/effective_palette.hpp>
+#include <nfui/Controls/Scrollbar.hpp>
 #include <nfui/Dpi.hpp>
 #include <nfui/Paint.hpp>
 #include <nfui/ThemeBroker.hpp>
@@ -331,7 +332,13 @@ LRESULT ListView::handle_custom_draw(NMLVCUSTOMDRAW* cd) noexcept {
         // row text/item colours. The empty-area background is now handled by
         // ListView_SetBkColor after theme_disable_window_theme removed the
         // native theme override; this fill is a defensive guard.
-        return CDRF_NOTIFYITEMDRAW;
+        //
+        // CP-B19: also opt in to POSTPAINT so we can paint the themed
+        // scrollbar thumb on top of the native SCROLLBAR chrome. The native
+        // thumb is left visible underneath because its colour is the OS
+        // theme; our thumb is alpha-blended over it at 60%, producing a
+        // readable elevator in every theme.
+        return CDRF_NOTIFYITEMDRAW | CDRF_NOTIFYPOSTPAINT;
     }
     case CDDS_ITEMPREPAINT: {
         const LRESULT custom = on_custom_draw_item(cd);
@@ -349,6 +356,41 @@ LRESULT ListView::handle_custom_draw(NMLVCUSTOMDRAW* cd) noexcept {
         const ThemePalette& p = pal ? *pal : theme_palette(ThemeMode::light);
         const StatePalette sp = state_palette(p, ControlState::focused);
         paint_focus_border(cd->nmcd.hdc, cd->nmcd.rc, sp.accent, 2);
+        return CDRF_DODEFAULT;
+    }
+    case CDDS_POSTPAINT: {
+        // CP-B19: forward the scrollbar thumb paint. The native SCROLLBAR
+        // chrome is still visible underneath; paint_thumb_into composites
+        // the rounded accent over it. We only repaint when there is at
+        // least one scrollable pixel — GetScrollInfo returns range 0,0
+        // when nothing is scrollable, and painting into that band would
+        // waste a draw cycle.
+        const ThemePalette* pal = palette();
+        const ThemePalette& p = pal ? *pal : theme_palette(ThemeMode::light);
+        const DpiScale dpi{dpi_of(hwnd())};
+        const int sb_w = dpi.logical_to_pixels(16);  // SM_CXVSCROLL = 16 logical px
+        const int sb_h = dpi.logical_to_pixels(16);  // SM_CYHSCROLL = 16 logical px
+        SCROLLINFO si{};
+        si.cbSize = sizeof(si);
+        si.fMask = SIF_RANGE | SIF_POS | SIF_PAGE;
+        if (GetScrollInfo(hwnd(), SB_VERT, &si) != 0
+            && si.nMax > si.nMin
+            && (si.nMax - si.nMin) > static_cast<int>(si.nPage)) {
+            RECT track = cd->nmcd.rc;
+            track.left = track.right - sb_w;
+            // CP-B19: paint_thumb_into takes the absolute (min, max, pos)
+            // triple from GetScrollInfo and resolves thumb geometry itself.
+            Scrollbar::paint_thumb_into(cd->nmcd.hdc, track, true,
+                                        si.nPos, si.nMin, si.nMax, p);
+        }
+        if (GetScrollInfo(hwnd(), SB_HORZ, &si) != 0
+            && si.nMax > si.nMin
+            && (si.nMax - si.nMin) > static_cast<int>(si.nPage)) {
+            RECT track = cd->nmcd.rc;
+            track.top = track.bottom - sb_h;
+            Scrollbar::paint_thumb_into(cd->nmcd.hdc, track, false,
+                                        si.nPos, si.nMin, si.nMax, p);
+        }
         return CDRF_DODEFAULT;
     }
     default:

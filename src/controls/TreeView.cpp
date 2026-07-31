@@ -1,5 +1,6 @@
 #include <nfui/Controls/TreeView.hpp>
 #include <nfui/Controls/Detail/effective_palette.hpp>
+#include <nfui/Controls/Scrollbar.hpp>
 #include <nfui/Dpi.hpp>
 #include <nfui/Paint.hpp>
 #include <nfui/ThemeBroker.hpp>
@@ -137,6 +138,27 @@ LRESULT TreeView::handle_custom_draw(NMTVCUSTOMDRAW* cd) noexcept {
         const bool focused = (cd->nmcd.uItemState & CDIS_FOCUS) != 0;
         if (focused) {
             paint_focus_border(cd->nmcd.hdc, cd->nmcd.rc, p.accent, 1);
+        }
+        return CDRF_DODEFAULT;
+    }
+    case CDDS_POSTPAINT: {
+        // CP-B19: forward the scrollbar thumb paint. See ListView::handle_custom_draw
+        // for the matching contract and rationale. The native SCROLLBAR
+        // chrome underneath is left visible; the themed thumb composites
+        // over it at 60% alpha so the elevator reads in every palette.
+        const ThemePalette& p = detail::effective_palette(palette());
+        const DpiScale dpi{dpi_of(hwnd())};
+        const int sb_w = dpi.logical_to_pixels(16);  // SM_CXVSCROLL = 16 logical px
+        SCROLLINFO si{};
+        si.cbSize = sizeof(si);
+        si.fMask = SIF_RANGE | SIF_POS | SIF_PAGE;
+        if (GetScrollInfo(hwnd(), SB_VERT, &si) != 0
+            && si.nMax > si.nMin
+            && (si.nMax - si.nMin) > static_cast<int>(si.nPage)) {
+            RECT track = cd->nmcd.rc;
+            track.left = track.right - sb_w;
+            Scrollbar::paint_thumb_into(cd->nmcd.hdc, track, true,
+                                        si.nPos, si.nMin, si.nMax, p);
         }
         return CDRF_DODEFAULT;
     }
