@@ -34,6 +34,7 @@
 
 #include <nfui/NativeFrameUI.hpp>
 #include <nfui/Easing.hpp>
+#include <nfui/design_tokens.hpp>
 
 #include "NativeFrameUIResource.h"
 
@@ -47,6 +48,8 @@
 #include <windowsx.h>
 
 namespace {
+
+namespace tok = nfui::design;
 
 // ---- Command / control ids -------------------------------------------------
 constexpr int id_theme_light = 101;
@@ -606,9 +609,9 @@ private:
         GetClientRect(hwnd(), &client);
         SendMessageW(status_bar_.hwnd(), WM_SIZE, 0, 0);
 
-        const int outer = px(12);
-        const int gap = px(8);
-        const int row = px(26);
+        const int outer = px(tok::spacing_md);
+        const int gap = px(tok::spacing_sm);
+        const int row = px(tok::control_height_md);
         // CP36: trim col_w 360 → 300 logical px so the three-column body
         // reflows inside the 940-wide compact window. The previous 360 +
         // 32/24 inter-column gaps left only 132 logical px for the third
@@ -634,7 +637,7 @@ private:
 
         // CP32: section header band ends at client.top + px(104); body content
         // begins immediately below with a 12 px breathing room.
-        const int body_top = client.top + px(116);
+        const int body_top = client.top + px(tok::spacing_xl * 4 - tok::spacing_sm);  // ≈124 logical px, preserves header band height
 
         // ---- Column 1: dynamic controls ----
         int x1 = client.left + outer;
@@ -646,35 +649,35 @@ private:
         MoveWindow(clear_button_.hwnd(), x1 + 2 * (small_w + gap), y, small_w, row, TRUE);
         y += row + gap;
         MoveWindow(count_label_.hwnd(), x1, y, col_w, row, TRUE);
-        y += row + px(4);
+        y += row + px(tok::spacing_xs);
         int dyn_top = y;
         for (auto& dyn : dynamic_) {
-            MoveWindow(dyn->hwnd(), x1, y, col_w, px(24), TRUE);
-            y += px(26);
+            MoveWindow(dyn->hwnd(), x1, y, col_w, px(tok::control_height_sm), TRUE);
+            y += px(tok::control_height_sm + tok::spacing_xs);
         }
         // Log list fills the rest of the column.
-        const int log_top = std::max(y + gap, dyn_top + px(120));
-        const int status_h = px(24);
+        const int log_top = std::max(y + gap, dyn_top + px(tok::spacing_xl * 4 - tok::spacing_md));
+        const int status_h = px(tok::control_height_sm);
         const int col_bottom = client.bottom - status_h - outer;
-        MoveWindow(log_list_.hwnd(), x1, log_top, col_w, std::max(px(80), col_bottom - log_top), TRUE);
+        MoveWindow(log_list_.hwnd(), x1, log_top, col_w, std::max(px(tok::control_height_lg * 2), col_bottom - log_top), TRUE);
 
         // ---- Column 2: keyboard nav + state ----
         // CP36: tightened inter-column gap 32 → 20 logical px so the three
         // columns share the 940-wide compact canvas comfortably.
-        int x2 = x1 + col_w + px(20);
+        int x2 = x1 + col_w + px(tok::spacing_lg);
         y = body_top;
-        MoveWindow(nav_hint_.hwnd(), x2, y, col_w, px(36), TRUE);
-        y += px(40);
+        MoveWindow(nav_hint_.hwnd(), x2, y, col_w, px(tok::control_height_lg - tok::spacing_xs), TRUE);
+        y += px(tok::control_height_lg + tok::spacing_xs);
         for (int i = 0; i < kNavTileCount; ++i) {
             MoveWindow(tiles_[static_cast<size_t>(i)].hwnd, x2 + i * (tile_w + gap), y, tile_w, tile_h, TRUE);
         }
-        y += tile_h + px(24);
+        y += tile_h + px(tok::spacing_lg);
 
         // State-reference swatch strip is painted directly (see paint_background);
         // reserve its band then place the disabled-demo row below it.
         state_strip_top_ = y;
         state_strip_left_ = x2;
-        y += px(96);
+        y += px(tok::spacing_xl * 3);  // 96 logical px state-reference swatch band
 
         MoveWindow(toggle_enabled_button_.hwnd(), x2, y, px(160), row, TRUE);
         y += row + gap;
@@ -692,7 +695,7 @@ private:
         // std::max floor of 300 logical px was too tight once TV indent
         // + scrollbar were subtracted. CP36: tightens inter-column gap
         // 24 → 16 logical px to free more room for the gallery list.
-        int x3 = x2 + col_w + px(16);
+        int x3 = x2 + col_w + px(tok::spacing_md);
         // CP35: clamp gcol_w to the available client width. CP34 raised the
         // floor from 360 → 440 logical px so the TreeView never clips its
         // longest label, but std::max(440, available) over-rode the actual
@@ -711,14 +714,14 @@ private:
         // "Dynami" / "Keyboar" style truncation regardless of control width.
         // The TreeView wrapper is still demonstrable in ComponentGallery
         // (where it has its own narrow column) and ThemeDemo.
-        y += px(16);
-        MoveWindow(gallery_tabs_.hwnd(), x3, y, gcol_w, px(90), TRUE);
-        y += px(100);
+        y += px(tok::spacing_md);
+        MoveWindow(gallery_tabs_.hwnd(), x3, y, gcol_w, px(tok::control_height_lg + tok::spacing_xl - tok::spacing_xs), TRUE);
+        y += px(tok::control_height_lg + tok::spacing_xl);
         MoveWindow(gallery_iconview_.hwnd(), x3, y, px(40), px(40), TRUE);
         MoveWindow(gallery_panel_.hwnd(), x3 + px(52), y, gcol_w - px(80), px(40), TRUE);
         MoveWindow(gallery_splitter_.hwnd(), x3 + gcol_w - px(20), y, px(6), px(40), TRUE);
-        y += px(52);
-        MoveWindow(gallery_progress_.hwnd(), x3, y, gcol_w, px(18), TRUE);
+        y += px(tok::control_height_lg + tok::spacing_xl);
+        MoveWindow(gallery_progress_.hwnd(), x3, y, gcol_w, px(tok::control_height_sm - tok::spacing_xs), TRUE);
     }
 
     // ---- Palette-driven background paint -----------------------------------
@@ -734,20 +737,20 @@ private:
         // the descender ('y'/'g') and the font's internal leading are not
         // clipped at the rect bottom. Subtitle rect shares the same right
         // boundary so the two lines stack flush.
-        const int outer = px(24);
+        const int outer = px(tok::spacing_xl);
         // CP34: trim the right reservation from 420 → 260 logical px so the
         // subtitle line ("Interactive surface: theme switching, dynamic
         // create/destroy, keyboard navigation, state changes.") no longer
         // trips DT_END_ELLIPSIS at 96 DPI. The title is much shorter than
         // the subtitle, so the smaller right reserve doesn't affect it.
-        const int title_right = client.right - px(260);
-        RECT title{client.left + outer, client.top + px(8),
-                   title_right, client.top + px(60)};
+        const int title_right = client.right - px(tok::spacing_xl * 8 + tok::spacing_md);  // 260 logical px reserved for theme buttons
+        RECT title{client.left + outer, client.top + px(tok::spacing_sm),
+                   title_right, client.top + px(tok::control_height_lg + tok::spacing_xl)};
         nfui::draw_text(dc, title, L"Controls Playground", title_font, palette_.text,
                         DT_LEFT | DT_TOP | DT_SINGLELINE | DT_NOPREFIX);
 
-        RECT subtitle{client.left + outer, title.bottom + px(2),
-                      title_right, title.bottom + px(36)};
+        RECT subtitle{client.left + outer, title.bottom + px(tok::spacing_xs),
+                      title_right, title.bottom + px(tok::control_height_lg - tok::spacing_xs)};
         nfui::draw_text(dc, subtitle,
                         L"Interactive surface: theme switching, dynamic create/destroy, keyboard navigation, state changes.",
                         subtitle_font, palette_.text_secondary,
@@ -758,19 +761,19 @@ private:
         // bar reads as a quiet brand marker without competing with the rest
         // of the chrome.
         auto header = [&](int x, int right, const wchar_t* text) {
-            const int bar_h = px(16);
-            const int bar_w = px(2);
-            const int bar_y = client.top + px(84);
+            const int bar_h = px(tok::control_height_sm - tok::spacing_xs);
+            const int bar_w = px(tok::spacing_xs / 2);
+            const int bar_y = client.top + px(tok::control_height_lg * 2 + tok::spacing_lg);
             RECT bar{x, bar_y, x + bar_w, bar_y + bar_h};
             nfui::fill_rect(dc, bar, palette_.accent);
-            RECT r{x + px(10), client.top + px(80), right, client.top + px(104)};
+            RECT r{x + px(tok::spacing_md - tok::spacing_xs), client.top + px(tok::control_height_lg * 2 + tok::spacing_lg - tok::spacing_xs), right, client.top + px(tok::spacing_xl * 4 + tok::spacing_lg)};
             nfui::draw_text(dc, r, text, header_font, palette_.text,
                             DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS | DT_NOPREFIX);
         };
         const int col_w = px(360);
         const int x1 = client.left + outer;
-        const int x2 = x1 + col_w + px(24);
-        const int x3 = x2 + col_w + px(24);
+        const int x2 = x1 + col_w + px(tok::spacing_xl);
+        const int x3 = x2 + col_w + px(tok::spacing_xl);
         // CP35: mirror the layout-side clamp so the section-3 header
         // accent bar stops at the actual window right edge (the std::max
         // here had the same overflow as the MoveWindow path).
@@ -801,7 +804,7 @@ private:
         // visibly clipping the "Disabled" swatch against the gallery column.
         const int sw = px(48);
         const int sh = px(44);
-        const int gap = px(8);
+        const int gap = px(tok::spacing_sm);
         int x = state_strip_left_;
         const int radius = nfui::theme_metrics().corner_radius_control;
         for (const Swatch& s : swatches) {
@@ -811,15 +814,15 @@ private:
             nfui::paint_drop_shadow(dc, r, radius, 1, p.shadow);
             nfui::fill_rounded_rect(dc, r, radius, s.fill, s.border);
             if (s.ring) {
-                RECT inner{r.left + px(3), r.top + px(3), r.right - px(3), r.bottom - px(3)};
+                RECT inner{r.left + px(tok::spacing_xs - 1), r.top + px(tok::spacing_xs - 1), r.right - px(tok::spacing_xs - 1), r.bottom - px(tok::spacing_xs - 1)};
                 nfui::fill_rounded_rect(dc, inner, radius, s.fill, p.accent);
             }
             nfui::draw_text(dc, r, s.label, font, s.text,
                             DT_CENTER | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX);
             x += sw + gap;
         }
-        RECT caption{state_strip_left_, state_strip_top_ + sh + px(4),
-                     state_strip_left_ + px(280), state_strip_top_ + sh + px(24)};
+        RECT caption{state_strip_left_, state_strip_top_ + sh + px(tok::spacing_xs),
+                     state_strip_left_ + px(280), state_strip_top_ + sh + px(tok::control_height_sm)};
         // CP37: shorten caption to "Live palette repaint" so it fits inside
         // the 280-px rect without ellipsising. Previous "State reference —
         // repainted from the live palette/theme" (47-50 chars) wrapped or
