@@ -30,6 +30,40 @@ int wmain() {
                     L"light accent differs from accent_hover") && ok;
     }
 
+    // --- CP-B16/B17: divider + surface_variant tokens (FOLLOW_UP C+D) ---
+    {
+        const nfui::ThemePalette light = nfui::theme_palette(nfui::ThemeMode::light);
+        const nfui::ThemePalette dark  = nfui::theme_palette(nfui::ThemeMode::dark);
+        const nfui::ThemePalette hc    = nfui::theme_palette(nfui::ThemeMode::high_contrast);
+
+        // divider is non-zero, distinct from border, distinct from surface.
+        ok = expect(light.divider.rgb != 0, L"light divider is non-zero") && ok;
+        ok = expect(dark.divider.rgb  != 0, L"dark divider is non-zero")  && ok;
+        ok = expect(hc.divider.rgb    != 0, L"HC divider is non-zero")    && ok;
+        ok = expect(light.divider.rgb != light.border.rgb,
+                    L"light divider distinct from border") && ok;
+        ok = expect(dark.divider.rgb  != dark.border.rgb,
+                    L"dark divider distinct from border")  && ok;
+        ok = expect(hc.divider.rgb    != hc.border.rgb,
+                    L"HC divider distinct from border")    && ok;
+        ok = expect(light.divider.rgb != light.surface.rgb,
+                    L"light divider distinct from surface") && ok;
+
+        // surface_variant is distinct from surface and surface_hover.
+        ok = expect(light.surface_variant.rgb != 0, L"light surface_variant is non-zero") && ok;
+        ok = expect(dark.surface_variant.rgb  != 0, L"dark surface_variant is non-zero")  && ok;
+        ok = expect(hc.surface_variant.rgb    != 0, L"HC surface_variant is non-zero")    && ok;
+        ok = expect(light.surface_variant.rgb != light.surface.rgb &&
+                    light.surface_variant.rgb != light.surface_hover.rgb,
+                    L"light surface_variant distinct from surface / surface_hover") && ok;
+        ok = expect(dark.surface_variant.rgb  != dark.surface.rgb &&
+                    dark.surface_variant.rgb  != dark.surface_hover.rgb,
+                    L"dark surface_variant distinct from surface / surface_hover") && ok;
+        ok = expect(hc.surface_variant.rgb    != hc.surface.rgb &&
+                    hc.surface_variant.rgb    != hc.surface_hover.rgb,
+                    L"HC surface_variant distinct from surface / surface_hover") && ok;
+    }
+
     // --- theme_palette: Claude Code brand colors ---
     {
         const nfui::ThemePalette light = nfui::theme_palette(nfui::ThemeMode::light);

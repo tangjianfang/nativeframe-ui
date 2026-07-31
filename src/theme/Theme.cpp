@@ -70,7 +70,9 @@ ThemePalette theme_palette(ThemeMode mode) noexcept {
         // the brand coral stays distinct against the lifted surface.
         return ThemePalette{
             to_color(RGB(36, 36, 38)),    to_color(RGB(46, 46, 48)),    to_color(RGB(56, 56, 60)),
-            to_color(RGB(64, 64, 68)),    to_color(RGB(238, 238, 240)), to_color(RGB(170, 170, 176)),
+            to_color(RGB(40, 40, 42)),    // CP-B17: surface_variant — slightly recessed from surface for nested containers
+            to_color(RGB(64, 64, 68)),    to_color(RGB(58, 58, 62)),    // CP-B16: border + divider (divider 1 notch lighter than border)
+            to_color(RGB(238, 238, 240)), to_color(RGB(170, 170, 176)),
             to_color(RGB(232, 142, 110)), to_color(RGB(244, 165, 130)), to_color(RGB(255, 255, 255)),
             to_color(RGB(58, 46, 38)),    to_color(RGB(238, 238, 240)), to_color(RGB(232, 122, 108)),
             to_color(RGB(120, 184, 140)), to_color(RGB(232, 176, 70)),  to_color(RGB(96, 168, 216)),
@@ -107,7 +109,9 @@ ThemePalette theme_palette(ThemeMode mode) noexcept {
             to_color(RGB(0, 0, 0)),       // background   — pure black
             to_color(RGB(31, 31, 31)),    // surface      — subtle lift, paired with the white border for card separation
             to_color(RGB(96, 96, 96)),    // surface_hover — clears 3:1 vs background (3.34:1)
+            to_color(RGB(20, 20, 20)),    // CP-B17: surface_variant — recessed beneath surface for nested containers
             to_color(RGB(255, 255, 255)), // border       — white
+            to_color(RGB(96, 96, 96)),    // CP-B16: divider — hairline, distinct from border, clears 3:1 vs surface (3.34:1)
             to_color(RGB(255, 255, 255)), // text         — white
             to_color(RGB(220, 220, 220)), // text_secondary — 13.43:1 vs surface
             to_color(RGB(255, 235, 59)),  // accent       — yellow (brand)
@@ -127,7 +131,9 @@ ThemePalette theme_palette(ThemeMode mode) noexcept {
     default:
         return ThemePalette{
             to_color(RGB(250, 249, 245)), to_color(RGB(240, 238, 230)), to_color(RGB(232, 229, 219)),
-            to_color(RGB(219, 215, 204)), to_color(RGB(31, 30, 29)),    to_color(RGB(107, 104, 98)),
+            to_color(RGB(228, 225, 215)), // CP-B17: surface_variant — slightly recessed from surface
+            to_color(RGB(219, 215, 204)), to_color(RGB(207, 203, 191)), // CP-B16: divider — 1 notch lighter than border, hairline separator
+            to_color(RGB(31, 30, 29)),    to_color(RGB(107, 104, 98)),
             to_color(RGB(217, 119, 87)),  to_color(RGB(193, 95, 63)),   to_color(RGB(255, 255, 255)),
             to_color(RGB(242, 214, 200)), to_color(RGB(31, 30, 29)),    to_color(RGB(199, 84, 80)),
             to_color(RGB(77, 124, 95)),   to_color(RGB(184, 130, 31)),  to_color(RGB(76, 137, 194)),
@@ -187,7 +193,9 @@ ThemePalette lerp_palette(const ThemePalette& a, const ThemePalette& b, float t)
     out.background     = lerp_color(a.background,     b.background,     t);
     out.surface        = lerp_color(a.surface,        b.surface,        t);
     out.surface_hover  = lerp_color(a.surface_hover,  b.surface_hover,  t);
+    out.surface_variant = lerp_color(a.surface_variant, b.surface_variant, t);
     out.border         = lerp_color(a.border,         b.border,         t);
+    out.divider        = lerp_color(a.divider,        b.divider,        t);
     out.text           = lerp_color(a.text,           b.text,           t);
     out.text_secondary = lerp_color(a.text_secondary, b.text_secondary, t);
     out.accent         = lerp_color(a.accent,         b.accent,         t);
