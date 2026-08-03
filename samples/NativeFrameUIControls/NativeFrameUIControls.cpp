@@ -3,6 +3,7 @@
 #include "NativeFrameUIResource.h"
 
 #include <commctrl.h>
+#include <shellapi.h>
 #include <windows.h>
 #include <windowsx.h>
 
@@ -23,10 +24,36 @@ constexpr int id_panel = 108;
 constexpr int id_splitter = 109;
 constexpr int id_tooltip_target = 110;
 
+// Visual-audit parity with every other sample: `--theme <light|dark|
+// high_contrast>` seeds the initial palette before the first paint so the
+// audit capture reflects the requested mode instead of always light. The
+// audit harness quotes the value (--theme "dark"); CommandLineToArgvW
+// strips the quotes, so a plain wcscmp matches.
+nfui::ThemeMode parse_theme_mode() noexcept {
+    int argc = 0;
+    wchar_t** argv = CommandLineToArgvW(GetCommandLineW(), &argc);
+    if (argv == nullptr) return nfui::ThemeMode::light;
+
+    nfui::ThemeMode mode = nfui::ThemeMode::light;
+    for (int i = 1; i < argc - 1; ++i) {
+        if (wcscmp(argv[i], L"--theme") != 0) continue;
+        const wchar_t* value = argv[i + 1];
+        if (wcscmp(value, L"dark") == 0) {
+            mode = nfui::ThemeMode::dark;
+        } else if (wcscmp(value, L"high_contrast") == 0) {
+            mode = nfui::ThemeMode::high_contrast;
+        }
+        break;
+    }
+    LocalFree(argv);
+    return mode;
+}
+
 class ControlsWindow final : public nfui::Window {
 public:
-    explicit ControlsWindow(HINSTANCE instance) noexcept
-        : instance_(instance) {
+    ControlsWindow(HINSTANCE instance, nfui::ThemeMode initial_mode) noexcept
+        : instance_(instance),
+          mode_(initial_mode) {
     }
 
     ~ControlsWindow() noexcept {
@@ -53,7 +80,9 @@ public:
             return false;
         }
 
-        mode_ = nfui::ThemeMode::light;
+        // mode_ is seeded from the --theme launch argument; derive the
+        // palette from it so the very first paint already tracks the
+        // requested theme.
         palette_ = nfui::theme_palette(mode_);
 
         if (!create_children()) {
@@ -189,7 +218,9 @@ private:
     }
 
     [[nodiscard]] bool create_children() noexcept {
-        if (!create_child(theme_toggle_, id_theme_toggle, L"Switch to dark", 360, 12, 104, 28)) {
+        if (!create_child(theme_toggle_, id_theme_toggle,
+                          mode_ == nfui::ThemeMode::dark ? L"Switch to light" : L"Switch to dark",
+                          360, 12, 104, 28)) {
             return false;
         }
         if (!create_child(ok_, id_ok, L"OK", 16, 56, 96, 32)) {
@@ -276,7 +307,7 @@ private:
 
     HINSTANCE instance_{};
     HICON app_icon_{};
-    nfui::ThemeMode mode_{nfui::ThemeMode::light};
+    nfui::ThemeMode mode_;
     nfui::ThemePalette palette_{};
     nfui::FontCache fonts_{};
     nfui::Button theme_toggle_;
@@ -344,7 +375,7 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int show_command) {
         return 1;
     }
 
-    ControlsWindow window(instance);
+    ControlsWindow window(instance, parse_theme_mode());
     if (!window.create_main(show_command)) {
         return 2;
     }

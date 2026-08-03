@@ -286,7 +286,10 @@ public:
         // The chrome now reads from palette.surface_variant for selection,
         // palette.divider for separators, and palette.accent for the
         // checked-state dot — matching every other themed control.
-        menu_.enable_owner_draw();
+        // The returned MenuOwnerDraw& dispatcher is fetched again from
+        // menu_.owner_draw() inside handle_message, so the reference here
+        // is intentionally unused.
+        (void)menu_.enable_owner_draw();
         (void)menu_.builder(menu_.bar()).with_owner_draw().popup(L"&File")
             .item(L"&New",   idm_new)
             .item(L"&Open",  idm_open)

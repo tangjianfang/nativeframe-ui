@@ -3,7 +3,7 @@ title: CP15 fix user-visible defects + visual consistency
 date: 2026-07-23
 tags: [polish, controls, samples, button, statictext, dialog]
 severity: major
-status: in-progress
+status: resolved
 related:
   - 2026-07-23-cp2-corner-abruptness.md
   - 2026-07-23-cp3-component-states.md

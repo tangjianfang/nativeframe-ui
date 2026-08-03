@@ -4,7 +4,11 @@
 // the framework ships, shown in its expected state, plus a per-control
 // interaction-state matrix.
 
+#ifndef NOMINMAX
+// Compiler options already define NOMINMAX on the command line; guard the
+// local definition so the two cannot collide (C4005).
 #define NOMINMAX
+#endif
 #include <nfui/NativeFrameUI.hpp>
 #include <nfui/ThemeBroker.hpp>
 #include <nfui/design_tokens.hpp>
@@ -19,8 +23,6 @@
 #include <windowsx.h>
 
 namespace {
-
-namespace tok = nfui::design;
 
 namespace tok = nfui::design;
 
@@ -47,6 +49,7 @@ constexpr int id_tabs            = 120;
 constexpr int id_progress        = 121;
 constexpr int id_panel           = 122;
 constexpr int id_splitter        = 123;
+constexpr int id_propertygrid    = 124;
 // CP-B3: header theme chips. Mirror the ID_THEME_* tokens in
 // <nfui/ThemeBroker.hpp> so the command handler is a one-liner.
 constexpr int id_theme_light     = 130;
@@ -78,11 +81,11 @@ struct GalleryLayout {
     RECT subtitle{};
     RECT chip[3]{};
 
-    RECT card_rect[6]{};
-    LabelSlot card_title[6]{};
+    RECT card_rect[7]{};
+    LabelSlot card_title[7]{};
     int  card_count{0};
 
-    LabelSlot eyebrow[12]{};
+    LabelSlot eyebrow[13]{};
     int  eyebrow_count{0};
 
     RECT button[3]{};
@@ -99,17 +102,18 @@ struct GalleryLayout {
     RECT panel{};
     RECT splitter{};
     RECT tabs{};
+    RECT propertygrid{};
 
     RECT matrix_grid{};   // area holding the column headers + 7 rows
 
     void push_card(const RECT& r, const wchar_t* text, const RECT& title_rect) noexcept {
-        if (card_count >= 6) return;
+        if (card_count >= 7) return;
         card_rect[card_count]  = r;
         card_title[card_count] = LabelSlot{title_rect, text};
         ++card_count;
     }
     void push_eyebrow(const RECT& r, const wchar_t* text) noexcept {
-        if (eyebrow_count >= 12) return;
+        if (eyebrow_count >= 13) return;
         eyebrow[eyebrow_count] = LabelSlot{r, text};
         ++eyebrow_count;
     }
@@ -152,7 +156,7 @@ public:
             CW_USEDEFAULT,
             CW_USEDEFAULT,
             1240,
-            900,
+            1120,
         };
 
         if (!create(params)) {
@@ -278,6 +282,7 @@ private:
             &edit_, &static_left_, &static_center_, &static_right_,
             &listbox_, &combobox_, &listview_, &treeview_, &iconview_,
             &status_, &tabs_, &progress_, &panel_, &splitter_,
+            &property_grid_,
             &chip_light_, &chip_dark_, &chip_hc_,
         };
         for (nfui::Control* control : all) {
@@ -413,6 +418,44 @@ private:
         panel_.set_style(panel_style);
         if (!init(splitter_, id_splitter, L"")) return false;
 
+        // PropertyGrid — CP43. Four property types exercising the buffered
+        // edit model: edits land in the pending layer (accent value text) and
+        // are validated before they can commit. Integer Width rejects
+        // non-digits; the status bar reports each accepted edit.
+        if (!init(property_grid_, id_propertygrid, L"")) return false;
+        {
+            nfui::PropertyDef name;
+            name.name = L"Name";
+            name.type = nfui::PropertyType::string;
+            name.value = L"Button";
+            property_grid_.add_property(std::move(name));
+
+            nfui::PropertyDef width;
+            width.name = L"Width";
+            width.type = nfui::PropertyType::integer;
+            width.value = L"120";
+            property_grid_.add_property(std::move(width));
+
+            nfui::PropertyDef visible;
+            visible.name = L"Visible";
+            visible.type = nfui::PropertyType::boolean;
+            visible.value = L"true";
+            property_grid_.add_property(std::move(visible));
+
+            nfui::PropertyDef anchor;
+            anchor.name = L"Anchor";
+            anchor.type = nfui::PropertyType::choice;
+            anchor.value = L"Left";
+            anchor.choices = {L"Left", L"Top", L"Right", L"Bottom", L"Fill"};
+            property_grid_.add_property(std::move(anchor));
+
+            property_grid_.select(0);
+            property_grid_.set_on_value_changed(
+                [this](size_t index, const std::wstring& value) noexcept {
+                    update_grid_status(index, value);
+                });
+        }
+
         refresh_chip_styles();
         return true;
     }
@@ -421,8 +464,19 @@ private:
         if (status_.hwnd() == nullptr) {
             return;
         }
-        const wchar_t* text = L"Ready  \x2022  20 control classes  \x2022  7 \x00D7 6 interaction-state matrix";
+        const wchar_t* text = L"Ready  \x2022  21 control classes  \x2022  7 \x00D7 6 interaction-state matrix";
         SendMessageW(status_.hwnd(), SB_SETTEXTW, 0, reinterpret_cast<LPARAM>(text));
+    }
+
+    // Reports the latest accepted PropertyGrid edit in the status bar so the
+    // buffered-edit model is observable without an Apply button.
+    void update_grid_status(size_t index, const std::wstring& value) noexcept {
+        if (status_.hwnd() == nullptr) {
+            return;
+        }
+        const std::wstring name = property_grid_.model().at(index).name;
+        const std::wstring text = L"PropertyGrid  \x2022  " + name + L" = " + value + L"  (pending)";
+        SendMessageW(status_.hwnd(), SB_SETTEXTW, 0, reinterpret_cast<LPARAM>(text.c_str()));
     }
 
     // Active chip = accent face; the other two = secondary face. Re-applied on
@@ -641,13 +695,13 @@ private:
 
             out.push_eyebrow(RECT{inner_x, y, inner_x + inner_w, y + eyebrow_h}, L"LISTVIEW");
             y += eyebrow_h + gap_tiny;
-            out.listview = RECT{inner_x, y, inner_x + inner_w, y + px(140)};
-            y += px(140) + gap_grp;
+            out.listview = RECT{inner_x, y, inner_x + inner_w, y + px(116)};
+            y += px(116) + gap_grp;
 
             out.push_eyebrow(RECT{inner_x, y, inner_x + inner_w, y + eyebrow_h}, L"TREEVIEW");
             y += eyebrow_h + gap_tiny;
-            out.treeview = RECT{inner_x, y, inner_x + inner_w, y + px(140)};
-            y += px(140);
+            out.treeview = RECT{inner_x, y, inner_x + inner_w, y + px(116)};
+            y += px(116);
 
             const int card_bottom = y + pad;
             out.push_card(RECT{col2_x, card_top, col2_x + col2_w, card_bottom}, L"Collections", ct);
@@ -667,8 +721,23 @@ private:
                 out.panel = RECT{inner_x, cy, out.splitter.left - gap_row, cy + body_h};
                 cy += body_h;
             }
-            out.push_card(RECT{col2_x, cn_top, col2_x + col2_w, (std::min)(cy + pad, content_bottom)},
+            const int cn_bottom = cy + pad;
+            out.push_card(RECT{col2_x, cn_top, col2_x + col2_w, cn_bottom},
                           L"Containers", cct);
+
+            // PropertyGrid card fills whatever vertical room is left so the
+            // grid always has space for its header + rows.
+            const int pg_top = cn_bottom + gap_card;
+            int gy = pg_top + pad;
+            RECT gct{inner_x, gy, inner_x + inner_w, gy + title_h};
+            gy += title_h + gap_row;
+            out.push_eyebrow(RECT{inner_x, gy, inner_x + inner_w, gy + eyebrow_h}, L"PROPERTYGRID");
+            gy += eyebrow_h + gap_tiny;
+            const int grid_bottom = (std::max)(gy + px(80), content_bottom - pad);
+            out.propertygrid = RECT{inner_x, gy, inner_x + inner_w, grid_bottom};
+            out.push_card(RECT{col2_x, pg_top, col2_x + col2_w,
+                               (std::min)(grid_bottom + pad, content_bottom)},
+                          L"PropertyGrid", gct);
         }
 
         // ---- column 3: Interaction states + TabControl --------------------
@@ -765,6 +834,7 @@ private:
         move_to(panel_.hwnd(),    page.panel);
         move_to(splitter_.hwnd(), page.splitter);
         move_to(tabs_.hwnd(),     page.tabs);
+        move_to(property_grid_.hwnd(), page.propertygrid);
 
         InvalidateRect(hwnd(), nullptr, FALSE);
     }
@@ -969,6 +1039,7 @@ private:
     nfui::ProgressBar progress_;
     nfui::Panel       panel_;
     nfui::Splitter    splitter_;
+    nfui::PropertyGrid property_grid_;
 };
 
 } // namespace

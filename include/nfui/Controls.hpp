@@ -25,3 +25,4 @@
 #include <nfui/Controls/Slider.hpp>
 #include <nfui/Controls/Splitter.hpp>
 #include <nfui/Controls/Scrollbar.hpp>
+#include <nfui/Controls/PropertyGrid.hpp>

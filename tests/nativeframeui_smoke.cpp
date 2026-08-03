@@ -246,6 +246,84 @@ bool test_edit_self_paint_renders() {
     return border != surface;
 }
 
+// CP42: self-painted Tooltip. The tip window keeps the native TOOLTIPS_CLASS
+// machinery (tracking/timing) but paints every pixel from the injected
+// palette. Create one with the dark palette, add a tool, force a synchronous
+// paint cycle, and sample the centre pixel (surface fill) plus the top-left
+// corner pixel (border). The centre must match the dark palette surface
+// exactly — native ComCtl32 chrome could never produce that value in dark
+// mode — and the border must differ from the fill. Also assert the window
+// resized itself to fit the text (resize_to_text), which the native path
+// does with its own metrics.
+bool test_tooltip_self_paint_renders() {
+    HWND parent = CreateWindowExW(0, L"STATIC", L"", WS_OVERLAPPED,
+                                  CW_USEDEFAULT, CW_USEDEFAULT, 200, 100,
+                                  nullptr, nullptr,
+                                  GetModuleHandleW(nullptr), nullptr);
+    if (parent == nullptr) return false;
+    nfui::Tooltip tip;
+    nfui::ControlCreateParams params{};
+    params.instance = GetModuleHandleW(nullptr);
+    params.parent = parent;
+    // Tooltips are popups; drop the default WS_CHILD | WS_TABSTOP.
+    params.style = WS_POPUP;
+    if (!tip.create(params)) {
+        DestroyWindow(parent);
+        return false;
+    }
+    const nfui::ThemePalette dark = nfui::theme_palette(nfui::ThemeMode::dark);
+    tip.set_palette(&dark);
+
+    TOOLINFOW tool_info{};
+    tool_info.cbSize = sizeof(tool_info);
+    tool_info.uFlags = TTF_SUBCLASS;
+    tool_info.hwnd = parent;
+    tool_info.uId = 1;
+    GetClientRect(parent, &tool_info.rect);
+    wchar_t tip_text[] = L"Smoke tooltip text";
+    tool_info.lpszText = tip_text;
+    SendMessageW(tip.hwnd(), TTM_ADDTOOLW, 0,
+                 reinterpret_cast<LPARAM>(&tool_info));
+
+    // The CP42 resize hook should have sized the window to the measured
+    // text; the native creation size (100x24 from defaults) would not
+    // survive unless resize_to_text ran.
+    RECT tip_rect{};
+    GetWindowRect(tip.hwnd(), &tip_rect);
+    const int tip_w = tip_rect.right - tip_rect.left;
+    const int tip_h = tip_rect.bottom - tip_rect.top;
+    if (tip_w <= 0 || tip_h <= 0) {
+        DestroyWindow(tip.hwnd());
+        DestroyWindow(parent);
+        return false;
+    }
+
+    // Hidden windows never dispatch WM_PAINT; show no-activate so the
+    // self-paint path runs without stealing focus from the harness.
+    ShowWindow(tip.hwnd(), SW_SHOWNA);
+    InvalidateRect(tip.hwnd(), nullptr, TRUE);
+    UpdateWindow(tip.hwnd());
+
+    HDC dc = GetDC(tip.hwnd());
+    if (dc == nullptr) {
+        DestroyWindow(tip.hwnd());
+        DestroyWindow(parent);
+        return false;
+    }
+    const COLORREF centre = GetPixel(dc, tip_w / 2, tip_h / 2);
+    const COLORREF corner = GetPixel(dc, 0, 0);
+    ReleaseDC(tip.hwnd(), dc);
+
+    ShowWindow(tip.hwnd(), SW_HIDE);
+    DestroyWindow(tip.hwnd());
+    DestroyWindow(parent);
+
+    // Centre must be exactly the dark palette surface — only the self-paint
+    // path can produce it. The border pixel may blend slightly at the rounded
+    // corner, so only require it to differ from the fill.
+    return centre == dark.surface.rgb && corner != centre;
+}
+
 // CP-A3: self-painted ListView's custom-draw handler resolves row + header
 // backgrounds from the palette, so the header band and the row strip must
 // paint with two distinct fills in dark mode. We use the brief's exact
@@ -1829,6 +1907,10 @@ int wmain() {
     // bleed-through).
     ok = expect(test_statusbar_self_paint_renders(),
                 L"StatusBar self-paint paints surface with palette.surface (no uxtheme white island)") && ok;
+    // CP42: self-painted Tooltip must fill with palette.surface and size
+    // itself from the shared UI font metrics (no native dark-mode bleach).
+    ok = expect(test_tooltip_self_paint_renders(),
+                L"Tooltip self-paint fills with palette.surface and resizes to text") && ok;
 
     return ok ? 0 : 1;
 }

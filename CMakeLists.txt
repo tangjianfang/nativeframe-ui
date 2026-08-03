@@ -1,16 +1,19 @@
 cmake_minimum_required(VERSION 3.25)
 
-project(NativeFrameUI VERSION 1.1.0 LANGUAGES CXX RC)
+project(NativeFrameUI VERSION 1.2.0 LANGUAGES CXX RC)
 
 include(CTest)
 include(cmake/NativeFrameUICompilerOptions.cmake)
 include(cmake/NativeFrameUIResources.cmake)
 include(cmake/NativeFrameUIQualityChecks.cmake)
 
-# AutoTerminal integration: skip nfui_charts and nfui_charts_aa by default —
-# the charts module has compile errors when built with MSVC that we're not
-# ready to fix upstream. Set NFUI_BUILD_CHARTS=ON to opt back in.
-option(NFUI_BUILD_CHARTS "Build nfui_charts / nfui_charts_aa modules" OFF)
+# Charts module toggle. Historically defaulted to OFF while the charts
+# sources carried MSVC compile errors; those were fixed during the CP
+# polish cycles and the module now builds clean on MSVC v143 (verified
+# 2026-08: x64-debug build + NativeFrameUIChartInteractionTest pass),
+# so charts ship ON by default. Set NFUI_BUILD_CHARTS=OFF to exclude
+# nfui_charts / nfui_charts_aa and their samples from the build.
+option(NFUI_BUILD_CHARTS "Build nfui_charts / nfui_charts_aa modules" ON)
 
 include(cmake/nfui_core.cmake)
 include(cmake/nfui_command.cmake)
@@ -34,6 +37,7 @@ if(NFUI_BUILD_CHARTS)
 endif()
 include(cmake/nfui_menu.cmake)
 include(cmake/nfui_slider.cmake)
+include(cmake/nfui_propertygrid.cmake)
 
 add_library(NativeFrameUI INTERFACE)
 add_library(NativeFrameUI::NativeFrameUI ALIAS NativeFrameUI)
@@ -62,6 +66,7 @@ target_link_libraries(NativeFrameUI
         NativeFrameUI::nfui_frame
         NativeFrameUI::nfui_menu
         NativeFrameUI::nfui_slider
+        NativeFrameUI::nfui_propertygrid
 )
 if(NFUI_BUILD_CHARTS)
     target_link_libraries(NativeFrameUI INTERFACE NativeFrameUI::nfui_charts)
@@ -233,6 +238,11 @@ target_link_libraries(NativeFrameUIDialogTour PRIVATE
 nfui_apply_compiler_options(NativeFrameUIDialogTour)
 nfui_add_resources(NativeFrameUIDialogTour)
 
+# SDK packaging: install rules + find_package(NativeFrameUI) support.
+# Kept in a dedicated file so the build graph above stays focused on
+# targets; see cmake/NativeFrameUIInstall.cmake for the consumer contract.
+include(cmake/NativeFrameUIInstall.cmake)
+
 if(BUILD_TESTING)
     add_subdirectory(tools/visual_audit)
 
@@ -281,6 +291,11 @@ if(BUILD_TESTING)
     target_link_libraries(NativeFrameUIPersistenceTest PRIVATE NativeFrameUI::nfui_core)
     nfui_apply_compiler_options(NativeFrameUIPersistenceTest)
     add_test(NAME NativeFrameUIPersistenceTest COMMAND NativeFrameUIPersistenceTest)
+
+    add_executable(NativeFrameUIPropertyGridTest tests/test_property_grid.cpp)
+    target_link_libraries(NativeFrameUIPropertyGridTest PRIVATE NativeFrameUI::nfui_propertygrid)
+    nfui_apply_compiler_options(NativeFrameUIPropertyGridTest)
+    add_test(NAME NativeFrameUIPropertyGridTest COMMAND NativeFrameUIPropertyGridTest)
 
     if(NFUI_BUILD_CHARTS)
         add_executable(NativeFrameUIChartInteractionTest tests/test_chart_interaction.cpp)

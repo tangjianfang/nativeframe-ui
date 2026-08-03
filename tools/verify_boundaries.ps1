@@ -149,6 +149,7 @@ $allowedModuleDependencies = @{
     nfui_listview     = @('nfui_core', 'nfui_theme', 'nfui_control_base')
     nfui_treeview     = @('nfui_core', 'nfui_theme', 'nfui_control_base')
     nfui_iconview     = @('nfui_core', 'nfui_theme', 'nfui_control_base')
+    nfui_propertygrid = @('nfui_core', 'nfui_theme', 'nfui_control_base')
     nfui_frame        = @('nfui_core', 'nfui_theme', 'nfui_control_base')
     nfui_menu         = @('nfui_core', 'nfui_theme')
     nfui_slider       = @('nfui_core', 'nfui_theme', 'nfui_control_base')

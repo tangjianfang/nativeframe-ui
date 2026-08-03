@@ -4,7 +4,7 @@ date: 2026-07-22
 tags: [combobox, dropdown, ux]
 severity: major
 effort: medium
-status: deferred
+status: resolved
 ---
 
 CBS_DROPDOWNLIST renders via the OS listbox internally; the V1 ListBox
@@ -46,3 +46,16 @@ for V1.4.
 
 Track in `docs/KNOWLEDGE/polish/` for future revisit when a sample
 app specifically needs ComboBox dropdown theming.
+
+## Superseded (CP-A2, 2026-07)
+
+The WH_CALLWNDPROCEXT hook path was never needed. `nfui::ComboBox` now
+creates the control with `CBS_DROPDOWNLIST | CBS_OWNERDRAWFIXED |
+CBS_HASSTRINGS`: owner-draw applies to **both** the closed selection
+field and the transient `ComboLBox` popup items, because ComCtl32 sends
+`WM_DRAWITEM` (type `ODT_COMBOBOX`) for the popup rows to the control's
+parent — no hook, no OS-owned HWND lifetime problem. The reflection path
+in `ComboBox::visual_subclass_proc` draws every row from the injected
+palette (`draw_item`), and `paint_chrome()` paints the border / button /
+chevron from `state_palette()` per visual state. `theme_disable_window_theme`
+suppresses the ComCtl32 dark-chrome double-paint. This entry is resolved.

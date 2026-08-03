@@ -7,12 +7,58 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.2.0] - 2026-08-03
+
 ### Added
+- **PropertyGrid control (CP43)**: new `nfui_propertygrid` module.
+  `PropertyGridModel` keeps a committed value plus a pending edit per
+  row so a host dialog can offer OK / Cancel / Apply semantics without
+  the grid knowing about buttons. The self-painted grid renders
+  two-column name/value rows on the theme palette, with an in-place
+  borderless EDIT for string/integer values, click-to-toggle booleans,
+  click-to-cycle choices, keyboard navigation (Up/Down/Space/Enter/F2),
+  and per-type plus custom validation that keeps the editor open with a
+  danger border on bad input. Demonstrated in ComponentGallery; the
+  HWND-free model layer is unit-tested.
+- **Self-painted Tooltip (CP42)**: `Tooltip` retains the native
+  TOOLTIPS_CLASSW window for hover tracking and `TTM_ADDTOOL`
+  compatibility but intercepts WM_PAINT to fully self-draw the bubble
+  and measures its own size from the shared UI font. Tips now follow
+  the active palette instead of flashing the ComCtl32 default light
+  face in dark / high-contrast themes. Pixel-verified by a new
+  SmokeTest assertion.
+- **SDK packaging**: `cmake/NativeFrameUIInstall.cmake` ships install
+  rules and a relocatable CMake package. Downstream projects can now
+  `find_package(NativeFrameUI CONFIG REQUIRED)` and link
+  `NativeFrameUI::NativeFrameUI` (umbrella) or any per-component
+  `NativeFrameUI::nfui_*` target from an installed prefix. Public
+  headers and the explicit resource template are installed under
+  `include/nfui` / `include/nfui/resources`. Opt out via
+  `NFUI_ENABLE_INSTALL=OFF` when embedding through `add_subdirectory()`.
 - `nfui::TabControl::set_padding(int cx, int cy)` — additive forward of
   `TCM_SETPADDING` so consumers can tune horizontal / vertical padding
   around each tab. Three existing samples (Workbench, ThemeDemo,
   ComponentGallery) now use a DPI-scaled `(12, 4)` rhythm.
   (polish/CP8-tab-control)
+- `NativeFrameUIControls` now honours `--theme <light|dark|high_contrast>`
+  — the last sample without launch-theme support. All 14 demos now
+  produce genuine three-theme visual-audit captures.
+
+### Changed
+- `NFUI_BUILD_CHARTS` now defaults to **ON**: the charts module builds
+  clean on MSVC v143 and its interaction test passes, so the stale
+  "compile errors" opt-out rationale no longer applies.
+
+### Fixed
+- Build warnings across samples: unused locals in the Charts grid
+  layout (C4189), duplicate `NOMINMAX` definition in ComponentGallery
+  (C4005), discarded `[[nodiscard]]` dispatcher in Workbench (C4834).
+- Stale polish knowledge entries CP15 / CP16 marked resolved — their
+  fixes had already landed in the tree.
+- **ComboBox owner-draw status corrected**: the owner-draw ComboBox
+  polish entry was documented as deferred to V1.5+ pending a
+  `WH_CALLWNDPROCEXT` hook, but `CBS_OWNERDRAWFIXED` already covers the
+  popup list rows. The entry is marked resolved; no hook is needed.
 
 ## [1.0.0] - 2026-07-22
 
@@ -73,4 +119,5 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   switched to `nfui_control_base` after P2.1's rename (TODO comment
   predicted this).
 
+[1.2.0]: https://github.com/tangjianfang/nativeframe-ui/releases/tag/v1.2.0
 [1.0.0]: https://github.com/tangjianfang/nativeframe-ui/releases/tag/v1.0.0

@@ -2,7 +2,7 @@
 title: CP17 micro-animation / transition system
 date: 2026-07-23
 tags: [polish, animation, timer, transition, easing]
-status: in-progress
+status: resolved
 severity: polish
 effort: medium-large
 ---

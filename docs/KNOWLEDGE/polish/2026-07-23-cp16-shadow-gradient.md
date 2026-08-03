@@ -4,7 +4,7 @@ date: 2026-07-23
 tags: [polish, paint, shadow, gradient, panel, button, theme]
 severity: major
 effort: medium
-status: in-progress
+status: resolved
 related:
   - 2026-07-23-cp15-fix-visible-defects.md
   - 2026-07-23-cp3-component-states.md

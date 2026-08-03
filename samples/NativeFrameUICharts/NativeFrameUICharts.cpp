@@ -507,7 +507,6 @@ private:
         const int area_left = client.left + outer;
         const int area_top = header_band_top + header_band_h + gap;
         const int area_right = client.right - outer;
-        const int area_bottom = client.bottom - outer;
 
         // Per-card reserved vertical space: title strip + legend strip +
         // inner padding. The chart HWND sits between them inside the card
@@ -534,7 +533,6 @@ private:
                             + chart_h + card_gap + card_legend_h + card_padding;
 
         const int card_count = 5;
-        const int rows = (card_count + 1) / 2;  // 5 → 3 rows
         const int row_gap = dpi.logical_to_pixels(tok::spacing_sm);
         const int col_gap = grid_gap;
         const int stack_top = area_top;

@@ -30,8 +30,8 @@ slice without re-deriving context.
 | 9 | **Font Picker** — family / size / bold-italic / preview | M | |
 | 10 | **Date / Time Picker** — native base + self-painted pop-up calendar | M | |
 | 11 | **Numeric Up-Down** — spin button + edit | S | |
-| 12 | **Self-painted Tooltip** — current `nfui::Tooltip` is native; native bleaches in dark mode | S | unblocks dark-theme polish across all demos |
-| 13 | **Self-painted ComboBox** — drop-list and field both bleach in dark mode | M | |
+| 12 | **Self-painted Tooltip** — ~~current `nfui::Tooltip` is native; native bleaches in dark mode~~ **shipped CP42** — palette-driven self-paint over the native tracking machinery | S | done |
+| 13 | **Self-painted ComboBox** — drop-list and field both bleach in dark mode — **shipped CP5/CP-A2** — `CBS_OWNERDRAWFIXED` + `state_palette()` chrome | M | done |
 | 14 | **Snackbar / Toast** — bottom-right floater with auto-dismiss + queue | M | |
 | 15 | **Breadcrumb Bar** — tree path with click-to-navigate | M | |
 | 16 | **Collapsible Panel** — title bar + chevron + animated collapse | S | |
@@ -112,7 +112,7 @@ features, then platform or architecture projects last.
 
 | Slice | Items | Why |
 |-------|-------|-----|
-| CP42 — Polish foundation | 12 (self-paint Tooltip), 13 (self-paint ComboBox) | dark-mode demos leak everywhere; small and self-contained |
+| CP42 — Polish foundation | 12 (self-paint Tooltip), 13 (self-paint ComboBox) | **shipped** — ComboBox in CP5/CP-A2, Tooltip in CP42 (2026-08) |
 | CP43 — Inspector done right | 1 (Property Grid) | replaces the Workbench placeholder; replaces "Inspector — select an item" copy |
 | CP44 — Edit experience | 21 (file drop), 27 (Find), 22 (inline rename) | builds editing affordance for tree + files |
 | CP45 — Live configuration | 8 (Color Picker), 41 (theme editor) | lets users tune palette at runtime |

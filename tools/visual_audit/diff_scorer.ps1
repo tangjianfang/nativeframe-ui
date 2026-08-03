@@ -21,9 +21,9 @@
 #>
 [CmdletBinding()]
 param(
-    [string]$Root = (Resolve-Path "$PSScriptRoot/../..").Path,
-    [string]$AuditOutput = (Join-Path $Root 'docs/VISUAL_AUDIT'),
-    [string]$Baseline = (Join-Path $Root 'docs/VISUAL_AUDIT/baseline'),
+    [string]$Root = '',
+    [string]$AuditOutput = '',
+    [string]$Baseline = '',
     [int]$PixelThreshold = 12,           # any-channel diff above this counts as "diff pixel"
     [int]$MaxMean = 4,                   # per-file mean channel diff ceiling
     [int]$MaxPct = 5,                    # per-file diff-pixel share ceiling (% * 100, so 500 = 5%)
@@ -34,6 +34,27 @@ param(
 
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
+
+# Same launch-context hardening as run_audit.ps1 (CP33): $PSScriptRoot can
+# be empty when the script is invoked through a shell that does not
+# preserve the launch context, which used to collapse the default -Root
+# to "C:\..\..". Resolve from $PSCommandPath instead.
+$script:ScorerDir = if (![string]::IsNullOrWhiteSpace($PSScriptRoot)) {
+    $PSScriptRoot
+} elseif (![string]::IsNullOrWhiteSpace($PSCommandPath)) {
+    Split-Path -Parent $PSCommandPath
+} else {
+    $PWD.Path
+}
+if ([string]::IsNullOrWhiteSpace($Root)) {
+    $Root = (Resolve-Path (Join-Path $script:ScorerDir '..\..')).Path
+}
+if ([string]::IsNullOrWhiteSpace($AuditOutput)) {
+    $AuditOutput = Join-Path $Root 'docs\VISUAL_AUDIT'
+}
+if ([string]::IsNullOrWhiteSpace($Baseline)) {
+    $Baseline = Join-Path $Root 'docs\VISUAL_AUDIT\baseline'
+}
 
 Add-Type -AssemblyName System.Drawing
 

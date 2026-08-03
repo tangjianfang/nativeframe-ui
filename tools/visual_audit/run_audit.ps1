@@ -101,7 +101,7 @@ foreach ($result in $results) {
     $lines.Add("| $($result.Sample) | $($result.Theme) | $link | $($result.Status) |")
 }
 $lines.Add('')
-$lines.Add('Note: most samples currently ignore the `--theme` launch request. The three captures remain intentional audit evidence; identical images expose missing runtime theme support rather than being synthesized theme variants.')
+$lines.Add('Note: every sample honours the `--theme` launch request (Controls gained support in the V1.1 SDK-readiness pass); the three captures per demo are genuine theme variants, not re-captured light frames.')
 [System.IO.File]::WriteAllLines($indexPath, $lines, [System.Text.UTF8Encoding]::new($false))
 
 $failures = @($results | Where-Object { $_.Status -ne 'captured' })
